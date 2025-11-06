@@ -1,1588 +1,2316 @@
-import configparser
-import csv
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# === 1. MONKEY PATCH FIRST ===
+import eventlet
+
+# It's generally best practice to monkey patch at the very beginning
+# before other modules that might be affected are imported.
+eventlet.monkey_patch()
+# === 2. IMPORTS ===
 import datetime
-import os
-import platform
-import sys
 import time
-import webbrowser
-from tkinter import Tk, Toplevel, Event, TclError, StringVar, Frame, Menu, Label, Entry, SOLID, RIDGE, \
-    DISABLED, NORMAL, N, S, E, W, LEFT, messagebox, PhotoImage
-from tkinter.ttk import Combobox, Button
-from typing import Union, Optional, List, Dict, Tuple, TextIO, Any
-
-import pandas
+import threading
 import requests
-import streamtologger
-import tksheet
+import requests.packages.urllib3
+from typing import Dict, List, Any, Optional
+import sqlite3
+import pandas as pd
+import os
+import random
+from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO, emit
+# For web scraping
+from bs4 import BeautifulSoup
+# For NseTools integration
+from nsetools import Nse
 
-is_windows: bool = platform.system() == "Windows"
-is_windows_10_or_11: bool = is_windows and platform.release() == "10"
-if is_windows_10_or_11:
-    # noinspection PyUnresolvedReferences
-    import win10toast
+requests.packages.urllib3.disable_warnings(
+    requests.packages.urllib3.exceptions.InsecureRequestWarning)
+# --------------------------------------------------------------------------- #
+# CONFIG
+# --------------------------------------------------------------------------- #
+TELEGRAM_BOT_TOKEN = "8081075640:AAEDdrUSdg8BRX4CcKJ4W7jG1EOnSFTQPr4"
+TELEGRAM_CHAT_ID = "275529219"
+SEND_TEXT_UPDATES = True
+UPDATE_INTERVAL = 120  # 2 minutes (for history, Telegram, and PCR graph data points)
+MAX_HISTORY_ROWS_DB = 10000  # Max rows to keep in DB for a symbol
+LIVE_DATA_INTERVAL = 15  # 15 seconds (for summary cards and option chain tables)
+# DHANHQ API KEYS (FREE FROM dhan.co)
+DHAN_CLIENT_ID = "YOUR_CLIENT_ID"  # <<< IMPORTANT: Replace with your actual DHAN_CLIENT_ID
+DHAN_ACCESS_TOKEN = "YOUR_ACCESS_TOKEN"  # <<< IMPORTANT: Replace with your actual DHAN_ACCESS_TOKEN
+AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX"]
 
 
-# noinspection PyAttributeOutsideInit
-class Nse:
-    version: str = '5.6'
+# --------------------------------------------------------------------------- #
+# TELEGRAM
+# --------------------------------------------------------------------------- #
+def send_telegram_text(message: str):
+    if not SEND_TEXT_UPDATES or not TELEGRAM_BOT_TOKEN: return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message,
+        'parse_mode': 'HTML',
+        'disable_web_page_preview': True
+    }
+    for _ in range(3):
+        try:
+            r = requests.post(url, data=payload, timeout=15)
+            return r.status_code == 200
+        except requests.exceptions.RequestException as e:
+            print(f"Telegram send error: {e}")
+            time.sleep(3)
+    return False
 
-    def __init__(self, window: Tk) -> None:
-        self.intervals: List[int] = [1, 2, 3, 5, 10, 15]
-        self.stdout: TextIO = sys.stdout
-        self.stderr: TextIO = sys.stderr
-        self.previous_date: Optional[datetime.date] = None
-        self.previous_time: Optional[datetime.time] = None
-        self.time_difference_factor: int = 5
-        self.first_run: bool = True
-        self.stop: bool = False
-        self.dates: List[str] = [""]
-        self.indices: List[str] = []
-        self.stocks: List[str] = []
-        self.url_oc: str = "https://www.nseindia.com/option-chain"
-        self.url_index: str = "https://www.nseindia.com/api/option-chain-indices?symbol="
-        self.url_stock: str = "https://www.nseindia.com/api/option-chain-equities?symbol="
-        self.url_symbols: str = "https://www.nseindia.com/api/underlying-information"
-        self.url_icon_png: str = "https://raw.githubusercontent.com/VarunS2002/" \
-                                 "Python-NSE-Option-Chain-Analyzer/master/nse_logo.png"
-        self.url_icon_ico: str = "https://raw.githubusercontent.com/VarunS2002/" \
-                                 "Python-NSE-Option-Chain-Analyzer/master/nse_logo.ico"
-        self.url_update: str = "https://api.github.com/repos/VarunS2002/" \
-                               "Python-NSE-Option-Chain-Analyzer/releases/latest"
-        self.headers: Dict[str, str] = {
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                          'Chrome/130.0.0.0 Safari/537.36',
+
+# --------------------------------------------------------------------------- #
+# WEB DASHBOARD
+# --------------------------------------------------------------------------- #
+app = Flask(__name__, template_folder='.', static_folder='static')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+shared_data: Dict[str, Dict[str, Any]] = {}
+todays_history: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in AUTO_SYMBOLS}
+data_lock = threading.Lock()
+last_alert: Dict[str, float] = {sym: 0 for sym in AUTO_SYMBOLS}
+last_history_update: Dict[str, float] = {sym: 0 for sym in AUTO_SYMBOLS}  # Track last history update time per symbol
+# New: Store initial underlying values for calculating live feed change
+initial_underlying_values: Dict[str, Optional[float]] = {sym: None for sym in AUTO_SYMBOLS}
+
+
+@app.route('/')
+def index():
+    return render_template('dashboard.html')
+
+
+@socketio.on('connect')
+def handle_connect(sid=None):
+    with data_lock:
+        # Send initial live data
+        safe_live = {}
+        live_feed_summary = {}  # Prepare live feed summary for initial connect
+        for sym, data in shared_data.items():
+            # Check if 'summary' and 'strikes' exist before adding to safe_live
+            safe_live[sym] = {}  # Initialize for each symbol to avoid KeyError later
+            if 'summary' in data:
+                safe_live[sym]['summary'] = data['summary']
+            if 'strikes' in data:
+                safe_live[sym]['strikes'] = data['strikes']
+
+            # Also add live feed data to initial payload
+            if 'live_feed_summary' in data:  # Check if live_feed_summary exists in shared_data
+                live_feed_summary[sym] = data['live_feed_summary']
+
+            # Include chart data if available
+            if 'pcr_chart_data' in data:
+                safe_live[sym]['pcr_chart_data'] = data['pcr_chart_data']
+            if 'max_pain_chart_data' in data:
+                safe_live[sym]['max_pain_chart_data'] = data['max_pain_chart_data']
+            if 'ce_oi_chart_data' in data:
+                safe_live[sym]['ce_oi_chart_data'] = data['ce_oi_chart_data']
+            if 'pe_oi_chart_data' in data:
+                safe_live[sym]['pe_oi_chart_data'] = data['pe_oi_chart_data']
+
+        emit('update', {'live': safe_live, 'live_feed_summary': live_feed_summary}, to=sid)
+        # Send initial "today's" history for all symbols
+        emit('initial_todays_history', {'history': todays_history}, to=sid)
+
+
+def broadcast_live_update():
+    with data_lock:
+        safe_live = {}
+        live_feed_summary = {}  # Collect live feed summary for broadcast
+        for sym, data in shared_data.items():
+            safe_live[sym] = {}  # Initialize for each symbol
+            if 'summary' in data:
+                safe_live[sym]['summary'] = data['summary']
+            if 'strikes' in data:
+                safe_live[sym]['strikes'] = data['strikes']
+
+            if 'live_feed_summary' in data:  # Check if live_feed_summary exists in shared_data
+                live_feed_summary[sym] = data['live_feed_summary']
+
+            # Include chart data if available
+            if 'pcr_chart_data' in data:
+                safe_live[sym]['pcr_chart_data'] = data['pcr_chart_data']
+            if 'max_pain_chart_data' in data:
+                safe_live[sym]['max_pain_chart_data'] = data['max_pain_chart_data']
+            if 'ce_oi_chart_data' in data:
+                safe_live[sym]['ce_oi_chart_data'] = data['ce_oi_chart_data']
+            if 'pe_oi_chart_data' in data:
+                safe_live[sym]['pe_oi_chart_data'] = data['pe_oi_chart_data']
+
+        socketio.emit('update', {'live': safe_live, 'live_feed_summary': live_feed_summary})
+
+
+def broadcast_history_append(sym: str, new_history_item: Dict[str, Any]):
+    """Sends a single new history item to append to today's history on the frontend."""
+    with data_lock:
+        socketio.emit('todays_history_append', {'symbol': sym, 'item': new_history_item})
+
+
+@app.route('/history/<symbol>/<date_str>')
+def get_historical_data(symbol: str, date_str: str):
+    """API endpoint to fetch historical data for a specific symbol and date."""
+    try:
+        # Validate date_str format (YYYY-MM-DD)
+        datetime.datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD."}), 400
+    if symbol not in AUTO_SYMBOLS:
+        return jsonify({"error": f"Invalid symbol: {symbol}"}), 400
+    history_for_date: List[Dict[str, Any]] = []
+    with data_lock:  # Use data_lock as it's shared across Flask/SocketIO threads
+        # Access the analyzer's connection if it exists
+        if analyzer.conn:
+            cur = analyzer.conn.cursor()
+            # Filter by symbol and date part of timestamp
+            # ORDER BY timestamp DESC to get latest first from DB
+            cur.execute("""
+                SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit
+                FROM history
+                WHERE symbol = ? AND SUBSTR(timestamp, 1, 10) = ?
+                ORDER BY timestamp DESC
+            """, (symbol, date_str))
+            rows = cur.fetchall()
+            for r in rows:
+                history_for_date.append({
+                    'time': r[0].split()[1][:5],  # Just HH:MM
+                    'sp': r[1],
+                    'value': r[2],
+                    'call_oi': r[3],
+                    'put_oi': r[4],
+                    'pcr': r[5],
+                    'sentiment': r[6],
+                    'add_exit': r[7]
+                })
+        else:
+            return jsonify({"error": "Database not connected."}), 500
+    return jsonify({"history": history_for_date})
+
+
+# --------------------------------------------------------------------------- #
+# NSE + BSE ANALYZER
+# --------------------------------------------------------------------------- #
+class NseBseAnalyzer:
+    def __init__(self):
+        self.stop = threading.Event()
+        self.session = requests.Session()
+        self.nse_headers = {
+            'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
             'accept-language': 'en,gu;q=0.9,hi;q=0.8',
-            'accept-encoding': 'gzip, deflate, br'}
-        self.session: requests.Session = requests.Session()
-        self.cookies: Dict[str, str] = {}
-        self.get_symbols(window)
-        self.config_parser: configparser.ConfigParser = configparser.ConfigParser()
-        self.create_config(new=True) if not os.path.isfile('NSE-OCA.ini') else None
-        self.get_config()
-        self.log_file: Optional[TextIO] = None
-        self.log() if self.logging else None
-        self.units_str: str = 'in K' if self.option_mode == 'Index' else 'in 10s'
-        self.output_columns: Tuple[str, str, str, str, str, str, str, str, str] = (
-            'Time', 'Value', f'Call Sum\n({self.units_str})', f'Put Sum\n({self.units_str})',
-            f'Difference\n({self.units_str})', f'Call Boundary\n({self.units_str})',
-            f'Put Boundary\n({self.units_str})', 'Call ITM', 'Put ITM')
-        self.csv_headers: Tuple[str, str, str, str, str, str, str, str, str] = (
-            'Time', 'Value', f'Call Sum ({self.units_str})', f'Put Sum ({self.units_str})',
-            f'Difference ({self.units_str})',
-            f'Call Boundary ({self.units_str})', f'Put Boundary ({self.units_str})', 'Call ITM', 'Put ITM')
-        self.toaster: win10toast.ToastNotifier = win10toast.ToastNotifier() if is_windows_10_or_11 else None
-        self.get_icon()
-        self.login_win(window)
+            'accept-encoding': 'gzip, deflate, br',
+        }
+        self.dhan_headers = {
+            'access-token': DHAN_ACCESS_TOKEN,
+            'client-id': DHAN_CLIENT_ID,
+            'Content-Type': 'application/json'
+        }
+        self.url_oc = "https://www.nseindia.com/option-chain"
+        self.url_nse = "https://www.nseindia.com/api/option-chain-indices?symbol="
+        # Updated VIX URL for scraping
+        self.url_indiavix_groww = "https://groww.in/indices/india-vix"
+        self.url_dhan = "https://api.dhan.co/v2/optionchain"
+        self.db_path = 'nse_bse_data.db'
+        self.conn: Optional[sqlite3.Connection] = None
+        self._init_db()
+        # Changed pcr_data to pcr_graph_data for clarity
+        self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in AUTO_SYMBOLS if sym != "INDIAVIX"}
+        # New: Track last update time for PCR graph data points specifically
+        self.last_pcr_graph_update_time: Dict[str, float] = {sym: 0 for sym in AUTO_SYMBOLS if sym != "INDIAVIX"}
+        self._load_todays_history_from_db()  # Load today's history and reconstruct pcr_graph_data
+        # Load initial underlying values from DB or set to None
+        self._load_initial_underlying_values()
 
-    def get_symbols(self, window: Tk) -> None:
-        def create_error_window(error_window: Tk):
-            error_window.title("NSE-Option-Chain-Analyzer")
-            window_width: int = error_window.winfo_reqwidth()
-            window_height: int = error_window.winfo_reqheight()
-            position_right: int = int(error_window.winfo_screenwidth() / 2 - window_width / 2)
-            position_down: int = int(error_window.winfo_screenheight() / 2 - window_height / 2)
-            error_window.geometry("320x160+{}+{}".format(position_right, position_down))
-            messagebox.showerror(title="Error", message="Failed to fetch Symbols.\nThe program will now exit.")
-            error_window.destroy()
+        # Initialize nsetools
+        self.nse_tool = Nse()
 
+        # PCR reset date tracker (only for non-VIX symbols)
+        self.last_pcr_data_reset_date: Dict[str, datetime.date] = {sym: datetime.date.min for sym in AUTO_SYMBOLS if
+                                                                   sym != "INDIAVIX"}
+
+        threading.Thread(target=self.run_loop, daemon=True).start()
+
+    def _init_db(self):
         try:
-            request: requests.Response = self.session.get(self.url_oc, headers=self.headers, timeout=5)
-            self.cookies = dict(request.cookies)
-            response: requests.Response = self.session.get(self.url_symbols, headers=self.headers, timeout=5,
-                                                           cookies=self.cookies)
-        except Exception as err:
-            print(err, sys.exc_info()[0], "19")
-            create_error_window(window)
-            sys.exit()
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            cur = self.conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT, symbol TEXT, sp REAL, value REAL, -- SP and Value can be REAL for VIX
+                    call_oi REAL, put_oi REAL, pcr REAL, sentiment TEXT,
+                    add_exit TEXT
+                )
+            """)
+            cur.execute("PRAGMA table_info(history)")
+            cols = [column[1] for column in cur.fetchall()]
+            if 'add_exit' not in cols:
+                cur.execute("ALTER TABLE history ADD COLUMN add_exit TEXT")
+            # SQLite is flexible, so REAL type should handle both ints and floats.
+            self.conn.commit()
+        except Exception as e:
+            print(f"DB error: {e}")
+
+    def _load_todays_history_from_db(self):
+        """Loads today's history into todays_history for initial frontend display
+           and reconstructs pcr_graph_data from it based on UPDATE_INTERVAL."""
+        if not self.conn: return
         try:
-            json_data: Dict[str, Dict[str, List[Dict[str, Union[str, int]]]]] = response.json()
-        except Exception as err:
-            print(response)
-            print(err, sys.exc_info()[0], "20")
-            create_error_window(window)
-            sys.exit()
-        self.indices = [item['symbol'] for item in json_data['data']['IndexList']]
-        self.stocks = [item['symbol'] for item in json_data['data']['UnderlyingList']]
-
-    def get_icon(self) -> None:
-        self.icon_png_path: str
-        self.icon_ico_path: str
-        try:
-            # noinspection PyProtectedMember,PyUnresolvedReferences
-            base_path: str = sys._MEIPASS
-            self.icon_png_path = os.path.join(base_path, 'nse_logo.png')
-            self.icon_ico_path = os.path.join(base_path, 'nse_logo.ico')
-            self.load_nse_icon = True
-        except AttributeError:
-            if self.load_nse_icon:
-                try:
-                    icon_png_raw: requests.Response = requests.get(self.url_icon_png, headers=self.headers, stream=True)
-                    with open('.NSE-OCA.png', 'wb') as f:
-                        for chunk in icon_png_raw.iter_content(1024):
-                            f.write(chunk)
-                    self.icon_png_path = '.NSE-OCA.png'
-                    PhotoImage(file=self.icon_png_path)
-                except Exception as err:
-                    print(err, sys.exc_info()[0], "17")
-                    self.load_nse_icon = False
-                    return
-                if is_windows_10_or_11:
-                    try:
-                        icon_ico_raw: requests.Response = requests.get(self.url_icon_ico,
-                                                                       headers=self.headers, stream=True)
-                        with open('.NSE-OCA.ico', 'wb') as f:
-                            for chunk in icon_ico_raw.iter_content(1024):
-                                f.write(chunk)
-                        self.icon_ico_path = '.NSE-OCA.ico'
-                    except Exception as err:
-                        print(err, sys.exc_info()[0], "18")
-                        self.icon_ico_path = None
-                        return
-
-    def check_for_updates(self, auto: bool = True) -> None:
-        try:
-            release_data: requests.Response = requests.get(self.url_update, headers=self.headers, timeout=5)
-            latest_version: str = release_data.json()['tag_name']
-        except Exception as err:
-            print(err, sys.exc_info()[0], "21")
-            if not auto:
-                self.info.attributes('-topmost', False)
-                messagebox.showerror(title="Error", message="Failed to check for updates.")
-                self.info.attributes('-topmost', True)
-            return
-
-        if float(latest_version) > float(Nse.version):
-            self.info.attributes('-topmost', False) if not auto else None
-            update: bool = messagebox.askyesno(
-                title="New Update Available",
-                message=f"You are running version: {Nse.version}\n"
-                        f"Latest version: {latest_version}\n"
-                        f"Do you want to update now ?\n"
-                        f"{'You can disable auto check for updates from the menu.' if auto and self.update else ''}")
-            if update:
-                webbrowser.open_new("https://github.com/VarunS2002/Python-NSE-Option-Chain-Analyzer/releases/latest")
-                self.info.attributes('-topmost', False) if not auto else None
-            else:
-                self.info.attributes('-topmost', True) if not auto else None
-        else:
-            if not auto:
-                self.info.attributes('-topmost', False)
-                messagebox.showinfo(title="No Updates Available", message=f"You are running the latest version.\n"
-                                                                          f"Version: {Nse.version}")
-                self.info.attributes('-topmost', True)
-
-    def get_config(self) -> None:
-        try:
-            self.config_parser.read('NSE-OCA.ini')
-            try:
-                self.load_nse_icon: bool = self.config_parser.getboolean('main', 'load_nse_icon')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="load_nse_icon")
-                self.load_nse_icon: bool = self.config_parser.getboolean('main', 'load_nse_icon')
-            try:
-                self.index: str = self.config_parser.get('main', 'index')
-                if self.index not in self.indices:
-                    raise ValueError(f'{self.index} is not a valid index')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="index")
-                self.index: str = self.config_parser.get('main', 'index')
-            try:
-                self.stock: str = self.config_parser.get('main', 'stock')
-                if self.stock not in self.stocks:
-                    raise ValueError(f'{self.stock} is not a valid stock')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="stock")
-                self.stock: str = self.config_parser.get('main', 'stock')
-            try:
-                self.option_mode: str = self.config_parser.get('main', 'option_mode')
-                if self.option_mode not in ('Index', 'Stock'):
-                    raise ValueError(f'{self.option_mode} is not a valid option mode')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="option_mode")
-                self.option_mode: str = self.config_parser.get('main', 'option_mode')
-            try:
-                self.seconds: int = self.config_parser.getint('main', 'seconds')
-                if self.seconds not in (60, 120, 180, 300, 600, 900):
-                    raise ValueError(f'{self.seconds} is not a refresh interval')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="seconds")
-                self.seconds: int = self.config_parser.getint('main', 'seconds')
-            try:
-                self.live_export: bool = self.config_parser.getboolean('main', 'live_export')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="live_export")
-                self.live_export: bool = self.config_parser.getboolean('main', 'live_export')
-            try:
-                self.save_oc: bool = self.config_parser.getboolean('main', 'save_oc')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="save_oc")
-                self.save_oc: bool = self.config_parser.getboolean('main', 'save_oc')
-            try:
-                self.notifications: bool = self.config_parser.getboolean('main', 'notifications') \
-                    if is_windows_10_or_11 else False
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="notifications")
-                self.notifications: bool = self.config_parser.getboolean('main', 'notifications') \
-                    if is_windows_10_or_11 else False
-            try:
-                self.auto_stop: bool = self.config_parser.getboolean('main', 'auto_stop')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="auto_stop")
-                self.auto_stop: bool = self.config_parser.getboolean('main', 'auto_stop')
-            try:
-                self.update: bool = self.config_parser.getboolean('main', 'update')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="update")
-                self.update: bool = self.config_parser.getboolean('main', 'update')
-            try:
-                self.logging: bool = self.config_parser.getboolean('main', 'logging')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="logging")
-                self.logging: bool = self.config_parser.getboolean('main', 'logging')
-            try:
-                self.warn_late_update: bool = self.config_parser.getboolean('main', 'warn_late_update')
-            except (configparser.NoOptionError, ValueError) as err:
-                print(err, sys.exc_info()[0], "0")
-                self.create_config(attribute="warn_late_update")
-                self.warn_late_update: bool = self.config_parser.getboolean('main', 'warn_late_update')
-        except (configparser.NoSectionError, configparser.MissingSectionHeaderError,
-                configparser.DuplicateSectionError, configparser.DuplicateOptionError) as err:
-            print(err, sys.exc_info()[0], "0")
-            self.create_config(corrupted=True)
-            return self.get_config()
-
-    def create_config(self, new: bool = False, corrupted: bool = False, attribute: Optional[str] = None) -> None:
-        if new or corrupted:
-            if corrupted:
-                os.remove('NSE-OCA.ini')
-                self.config_parser = configparser.ConfigParser()
-            self.config_parser.read('NSE-OCA.ini')
-            self.config_parser.add_section('main')
-            self.config_parser.set('main', 'load_nse_icon', 'True')
-            self.config_parser.set('main', 'index', self.indices[0])
-            self.config_parser.set('main', 'stock', self.stocks[0])
-            self.config_parser.set('main', 'option_mode', 'Index')
-            self.config_parser.set('main', 'seconds', '60')
-            self.config_parser.set('main', 'live_export', 'False')
-            self.config_parser.set('main', 'save_oc', 'False')
-            self.config_parser.set('main', 'notifications', 'False')
-            self.config_parser.set('main', 'auto_stop', 'False')
-            self.config_parser.set('main', 'update', 'True')
-            self.config_parser.set('main', 'logging', 'False')
-            self.config_parser.set('main', 'warn_late_update', 'False')
-        elif attribute is not None:
-            if attribute == "load_nse_icon":
-                self.config_parser.set('main', 'load_nse_icon', 'True')
-            elif attribute == "index":
-                self.config_parser.set('main', 'index', self.indices[0])
-            elif attribute == "stock":
-                self.config_parser.set('main', 'stock', self.stocks[0])
-            elif attribute == "option_mode":
-                self.config_parser.set('main', 'option_mode', 'Index')
-            elif attribute == "seconds":
-                self.config_parser.set('main', 'seconds', '60')
-            elif attribute in ("live_export", "save_oc", "notifications", "auto_stop", "logging"):
-                self.config_parser.set('main', attribute, 'False')
-            elif attribute == "update":
-                self.config_parser.set('main', 'update', 'True')
-            elif attribute == "warn_late_update":
-                self.config_parser.set('main', 'warn_late_update', 'False')
-
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def get_data(self, event: Optional[Event] = None) -> Optional[Tuple[Optional[requests.Response], Any]]:
-        if self.first_run:
-            return self.get_data_first_run()
-        else:
-            return self.get_data_refresh()
-
-    def get_data_first_run(self) -> Optional[Tuple[Optional[requests.Response], Any]]:
-        response: Optional[requests.Response] = None
-        self.units_str = 'in K' if self.option_mode == 'Index' else 'in 10s'
-        self.output_columns: Tuple[str, str, str, str, str, str, str, str, str] = (
-            'Time', 'Value', f'Call Sum\n({self.units_str})', f'Put Sum\n({self.units_str})',
-            f'Difference\n({self.units_str})', f'Call Boundary\n({self.units_str})',
-            f'Put Boundary\n({self.units_str})', 'Call ITM', 'Put ITM')
-        self.csv_headers: Tuple[str, str, str, str, str, str, str, str, str] = (
-            'Time', 'Value', f'Call Sum ({self.units_str})', f'Put Sum ({self.units_str})',
-            f'Difference ({self.units_str})',
-            f'Call Boundary ({self.units_str})', f'Put Boundary ({self.units_str})', 'Call ITM', 'Put ITM')
-        self.round_factor: int = 1000 if self.option_mode == 'Index' else 10
-        if self.option_mode == 'Index':
-            self.index = self.index_var.get()
-            self.config_parser.set('main', 'index', f'{self.index}')
-        else:
-            self.stock = self.stock_var.get()
-            self.config_parser.set('main', 'stock', f'{self.stock}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-        url: str = self.url_index + self.index if self.option_mode == 'Index' else self.url_stock + self.stock
-        try:
-            response = self.session.get(url, headers=self.headers, timeout=5, cookies=self.cookies)
-        except Exception as err:
-            print(response)
-            print(err, sys.exc_info()[0], "1")
-            messagebox.showerror(title="Error", message="Error in fetching dates.\nPlease retry.")
-            self.dates.clear()
-            self.dates = [""]
-            self.date_menu.config(values=tuple(self.dates))
-            self.date_menu.current(0)
-            return
-        json_data: Dict[str, Any]
-        if response is not None:
-            try:
-                json_data = response.json()
-            except Exception as err:
-                print(response)
-                print(err, sys.exc_info()[0], "2")
-                json_data = {}
-        else:
-            json_data = {}
-        if json_data == {}:
-            messagebox.showerror(title="Error", message="Error in fetching dates.\nPlease retry.")
-            self.dates.clear()
-            self.dates = [""]
-            try:
-                self.date_menu.config(values=tuple(self.dates))
-                self.date_menu.current(0)
-            except TclError as err:
-                print(err, sys.exc_info()[0], "3")
-            return
-        self.dates.clear()
-        for dates in json_data['records']['expiryDates']:
-            self.dates.append(dates)
-        try:
-            self.date_menu.config(values=tuple(self.dates))
-            self.date_menu.current(0)
-        except TclError:
-            pass
-
-        return response, json_data
-
-    def get_data_refresh(self) -> Optional[Tuple[Optional[requests.Response], Any]]:
-        request: Optional[requests.Response] = None
-        response: Optional[requests.Response] = None
-        url: str = self.url_index + self.index if self.option_mode == 'Index' else self.url_stock + self.stock
-        try:
-            response = self.session.get(url, headers=self.headers, timeout=5, cookies=self.cookies)
-            if response.status_code == 401:
-                self.session.close()
-                self.session = requests.Session()
-                request = self.session.get(self.url_oc, headers=self.headers, timeout=5)
-                self.cookies = dict(request.cookies)
-                response = self.session.get(url, headers=self.headers, timeout=5, cookies=self.cookies)
-                print("reset cookies")
-        except Exception as err:
-            print(request)
-            print(response)
-            print(err, sys.exc_info()[0], "4")
-            try:
-                self.session.close()
-                self.session = requests.Session()
-                request = self.session.get(self.url_oc, headers=self.headers, timeout=5)
-                self.cookies = dict(request.cookies)
-                response = self.session.get(url, headers=self.headers, timeout=5, cookies=self.cookies)
-                print("reset cookies")
-            except Exception as err:
-                print(request)
-                print(response)
-                print(err, sys.exc_info()[0], "5")
-                return
-        if response is not None:
-            try:
-                json_data: Any = response.json()
-            except Exception as err:
-                print(response)
-                print(err, sys.exc_info()[0], "6")
-                json_data = {}
-        else:
-            json_data = {}
-        if json_data == {}:
-            return
-
-        return response, json_data
-
-    def login_win(self, window: Tk) -> None:
-        self.login: Tk = window
-        self.login.title("NSE-Option-Chain-Analyzer")
-        self.login.protocol('WM_DELETE_WINDOW', self.close_login)
-        window_width: int = self.login.winfo_reqwidth()
-        window_height: int = self.login.winfo_reqheight()
-        position_right: int = int(self.login.winfo_screenwidth() / 2 - window_width / 2)
-        position_down: int = int(self.login.winfo_screenheight() / 2 - window_height / 2)
-        self.login.geometry("320x160+{}+{}".format(position_right, position_down))
-        self.login.resizable(False, False)
-        self.login.iconphoto(True, PhotoImage(file=self.icon_png_path)) if self.load_nse_icon else None
-        self.login.rowconfigure(0, weight=1)
-        self.login.rowconfigure(1, weight=1)
-        self.login.rowconfigure(2, weight=1)
-        self.login.rowconfigure(3, weight=1)
-        self.login.rowconfigure(4, weight=1)
-        self.login.rowconfigure(5, weight=1)
-        self.login.columnconfigure(0, weight=1)
-        self.login.columnconfigure(1, weight=1)
-        self.login.columnconfigure(2, weight=1)
-
-        self.intervals_var: StringVar = StringVar()
-        self.intervals_var.set(str(self.intervals[0]))
-        self.index_var: StringVar = StringVar()
-        self.index_var.set(self.indices[0])
-        self.stock_var: StringVar = StringVar()
-        self.stock_var.set(self.stocks[0])
-        self.dates_var: StringVar = StringVar()
-        self.dates_var.set(self.dates[0])
-
-        option_mode_label: Label = Label(self.login, text="Mode: ", justify=LEFT)
-        option_mode_label.grid(row=0, column=0, sticky=N + S + W)
-        self.option_mode_btn: Button = Button(self.login, text=f"{'Index' if self.option_mode == 'Index' else 'Stock'}",
-                                              command=self.change_option_mode, width=10)
-        self.option_mode_btn.grid(row=0, column=1, sticky=N + S + E + W)
-        index_label: Label = Label(self.login, text="Index: ", justify=LEFT)
-        index_label.grid(row=1, column=0, sticky=N + S + W)
-        self.index_menu: Combobox = Combobox(self.login, textvariable=self.index_var, values=self.indices)
-        self.index_menu.config(width=15, state='readonly' if self.option_mode == 'Index' else DISABLED)
-        self.index_menu.grid(row=1, column=1, sticky=N + S + E)
-        self.index_menu.current(self.indices.index(self.index))
-        stock_label: Label = Label(self.login, text="Stock: ", justify=LEFT)
-        stock_label.grid(row=2, column=0, sticky=N + S + W)
-        self.stock_menu: Combobox = Combobox(self.login, textvariable=self.stock_var, values=self.stocks)
-        self.stock_menu.config(width=15, state='readonly' if self.option_mode == 'Stock' else DISABLED)
-        self.stock_menu.grid(row=2, column=1, sticky=N + S + E)
-        self.stock_menu.current(self.stocks.index(self.stock))
-        date_label: Label = Label(self.login, text="Expiry Date: ", justify=LEFT)
-        date_label.grid(row=3, column=0, sticky=N + S + W)
-        self.date_menu: Combobox = Combobox(self.login, textvariable=self.dates_var, state="readonly")
-        self.date_menu.config(width=15)
-        self.date_menu.grid(row=3, column=1, sticky=N + S + E)
-        self.date_get: Button = Button(self.login, text="Refresh", command=self.get_data, width=10)
-        self.date_get.grid(row=3, column=2, sticky=N + S + E + W)
-        sp_label: Label = Label(self.login, text="Strike Price (eg. 14750): ")
-        sp_label.grid(row=4, column=0, sticky=N + S + W)
-        self.sp_entry = Entry(self.login, width=18, relief=SOLID)
-        self.sp_entry.grid(row=4, column=1, sticky=N + S + E)
-        start_btn: Button = Button(self.login, text="Start", command=self.start, width=10)
-        start_btn.grid(row=4, column=2, rowspan=2, sticky=N + S + E + W)
-        intervals_label: Label = Label(self.login, text="Refresh Interval (in min): ", justify=LEFT)
-        intervals_label.grid(row=5, column=0, sticky=N + S + W)
-        self.intervals_menu: Combobox = Combobox(self.login, textvariable=self.intervals_var,
-                                                 values=[str(interval) for interval in self.intervals],
-                                                 state="readonly")
-        self.intervals_menu.config(width=15)
-        self.intervals_menu.grid(row=5, column=1, sticky=N + S + E)
-        self.intervals_menu.current(self.intervals.index(int(self.seconds / 60)))
-        self.sp_entry.focus_set()
-        self.get_data()
-
-        # noinspection PyUnusedLocal
-        def focus_widget(event: Event, mode: int) -> None:
-            if mode == 1:
-                self.get_data()
-                self.date_menu.focus_set()
-            elif mode == 2:
-                self.sp_entry.focus_set()
-
-        self.index_menu.bind('<Return>', lambda event, a=1: focus_widget(event, a))
-        self.index_menu.bind("<<ComboboxSelected>>", self.get_data)
-        self.stock_menu.bind('<Return>', lambda event, a=1: focus_widget(event, a))
-        self.stock_menu.bind("<<ComboboxSelected>>", self.get_data)
-        self.date_menu.bind('<Return>', lambda event, a=2: focus_widget(event, a))
-        self.sp_entry.bind('<Return>', self.start)
-
-        self.login.mainloop()
-
-    def change_option_mode(self) -> None:
-        if self.option_mode_btn['text'] == 'Index':
-            self.option_mode = 'Stock'
-            self.option_mode_btn.config(text='Stock')
-            self.index_menu.config(state=DISABLED)
-            self.stock_menu.config(state='readonly')
-        else:
-            self.option_mode = 'Index'
-            self.option_mode_btn.config(text='Index')
-            self.index_menu.config(state='readonly')
-            self.stock_menu.config(state=DISABLED)
-
-        self.config_parser.set('main', 'option_mode', f'{self.option_mode}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def start(self, event: Optional[Event] = None) -> None:
-        self.seconds = int(self.intervals_var.get()) * 60
-        self.config_parser.set('main', 'seconds', f'{self.seconds}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-        self.expiry_date: str = self.dates_var.get()
-        if self.expiry_date == "":
-            messagebox.showerror(title="Error", message="Incorrect Expiry Date.\nPlease enter correct Expiry Date.")
-            return
-        if self.live_export:
-            self.export_row(None)
-        try:
-            self.sp: int = int(self.sp_entry.get())
-            self.login.destroy()
-            self.main_win()
-        except ValueError as err:
-            print(err, sys.exc_info()[0], "7")
-            messagebox.showerror(title="Error", message="Incorrect Strike Price.\nPlease enter correct Strike Price.")
-
-    # noinspection PyUnusedLocal
-    def change_state(self, event: Optional[Event] = None) -> None:
-
-        if not self.stop:
-            self.stop = True
-            self.options.entryconfig(self.options.index(0), label="Start")
-            messagebox.showinfo(title="Stopped", message="Retrieving new data has been stopped.")
-        else:
-            self.stop = False
-            self.options.entryconfig(self.options.index(0), label="Stop")
-            messagebox.showinfo(title="Started", message="Retrieving new data has been started.")
-
-            self.main()
-
-    # noinspection PyUnusedLocal
-    def export(self, event: Optional[Event] = None) -> None:
-        sheet_data: List[List[str]] = self.sheet.get_sheet_data()
-        csv_exists: bool = os.path.isfile(
-            f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-{self.expiry_date}.csv")
-        try:
-            if not csv_exists:
-                with open(f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-{self.expiry_date}.csv",
-                          "a", newline="") as row:
-                    data_writer: csv.writer = csv.writer(row)
-                    data_writer.writerow(self.csv_headers)
-
-            with open(f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-{self.expiry_date}.csv",
-                      "a", newline="") as row:
-                data_writer: csv.writer = csv.writer(row)
-                data_writer.writerows(sheet_data)
-
-            messagebox.showinfo(title="Export Successful",
-                                message=f"Data has been exported to NSE-OCA-"
-                                        f"{self.index if self.option_mode == 'Index' else self.stock}-"
-                                        f"{self.expiry_date}.csv.")
-        except PermissionError as err:
-            print(err, sys.exc_info()[0], "12")
-            messagebox.showerror(title="Export Failed",
-                                 message=f"Failed to access NSE-OCA-"
-                                         f"{self.index if self.option_mode == 'Index' else self.stock}-"
-                                         f"{self.expiry_date}.csv.\n"
-                                         f"Permission Denied. Try closing any apps using it.")
-        except Exception as err:
-            print(err, sys.exc_info()[0], "8")
-            messagebox.showerror(title="Export Failed",
-                                 message="An error occurred while exporting the data.")
-
-    def export_row(self, values: Optional[List[Union[str, float]]]) -> None:
-        if values is None:
-            csv_exists: bool = os.path.isfile(
-                f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-{self.expiry_date}.csv")
-            try:
-                if not csv_exists:
-                    with open(
-                            f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-"
-                            f"{self.expiry_date}.csv",
-                            "a", newline="") as row:
-                        data_writer: csv.writer = csv.writer(row)
-                        data_writer.writerow(self.csv_headers)
-            except PermissionError as err:
-                print(err, sys.exc_info()[0], "13")
-                messagebox.showerror(title="Export Failed",
-                                     message=f"Failed to access NSE-OCA-"
-                                             f"{self.index if self.option_mode == 'Index' else self.stock}-"
-                                             f"{self.expiry_date}.csv.\n"
-                                             f"Permission Denied. Try closing any apps using it.")
-            except Exception as err:
-                print(err, sys.exc_info()[0], "9")
-        else:
-            try:
-                with open(f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-{self.expiry_date}.csv",
-                          "a", newline="") as row:
-                    data_writer: csv.writer = csv.writer(row)
-                    data_writer.writerow(values)
-            except PermissionError as err:
-                print(err, sys.exc_info()[0], "14")
-                messagebox.showerror(title="Export Failed",
-                                     message=f"Failed to access NSE-OCA-"
-                                             f"{self.index if self.option_mode == 'Index' else self.stock}-"
-                                             f"{self.expiry_date}.csv.\n"
-                                             f"Permission Denied. Try closing any apps using it.")
-            except Exception as err:
-                print(err, sys.exc_info()[0], "15")
-
-    # noinspection PyUnusedLocal
-    def toggle_live_export(self, event: Optional[Event] = None) -> None:
-        if self.live_export:
-            self.live_export = False
-            self.options.entryconfig(self.options.index(2), label="Live Exporting to CSV: Off")
-            messagebox.showinfo(title="Live Exporting Disabled",
-                                message="Data rows will not be exported.")
-        else:
-            self.live_export = True
-            self.options.entryconfig(self.options.index(2), label="Live Exporting to CSV: On")
-            messagebox.showinfo(title="Live Exporting Enabled",
-                                message=f"Data rows will be exported in real time to "
-                                        f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-"
-                                        f"{self.expiry_date}.csv.")
-
-        self.config_parser.set('main', 'live_export', f'{self.live_export}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-        self.export_row(None)
-
-    # noinspection PyUnusedLocal
-    def toggle_save_oc(self, event: Optional[Event] = None) -> None:
-        if self.save_oc:
-            self.save_oc = False
-            self.options.entryconfig(self.options.index(3), label="Dump Entire Option Chain to CSV: Off")
-            messagebox.showinfo(title="Dump Entire Option Chain Disabled",
-                                message=f"Entire Option Chain data will not be exported.")
-        else:
-            self.save_oc = True
-            self.options.entryconfig(self.options.index(3), label="Dump Entire Option Chain to CSV: On")
-            messagebox.showinfo(title="Dump Entire Option Chain Enabled",
-                                message=f"Entire Option Chain data will be exported to "
-                                        f"NSE-OCA-"
-                                        f"{self.index if self.option_mode == 'Index' else self.stock}-"
-                                        f"{self.expiry_date}-Full.csv.")
-
-        self.config_parser.set('main', 'save_oc', f'{self.save_oc}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def toggle_notifications(self, event: Optional[Event] = None) -> None:
-        if self.notifications:
-            self.notifications = False
-            self.options.entryconfig(self.options.index(4), label="Notifications: Off")
-            messagebox.showinfo(title="Notifications Disabled",
-                                message="You will not receive any Notifications.")
-        else:
-            self.notifications = True
-            self.options.entryconfig(self.options.index(4), label="Notifications: On")
-            messagebox.showinfo(title="Notifications Enabled",
-                                message="You will receive Notifications when the state of a label changes.")
-
-        self.config_parser.set('main', 'notifications', f'{self.notifications}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def toggle_auto_stop(self, event: Optional[Event] = None) -> None:
-        if self.auto_stop:
-            self.auto_stop = False
-            self.options.entryconfig(self.options.index(5), label="Stop automatically at 3:30pm: Off")
-            messagebox.showinfo(title="Auto Stop Disabled", message="Program will not automatically stop at 3:30pm")
-        else:
-            self.auto_stop = True
-            self.options.entryconfig(self.options.index(5), label="Stop automatically at 3:30pm: On")
-            messagebox.showinfo(title="Auto Stop Enabled", message="Program will automatically stop at 3:30pm")
-
-        self.config_parser.set('main', 'auto_stop', f'{self.auto_stop}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def toggle_warn_late_update(self, event: Optional[Event] = None) -> None:
-        if self.warn_late_update:
-            self.warn_late_update = False
-            self.options.entryconfig(self.options.index(6), label="Warn Late Server Updates: Off")
-            messagebox.showinfo(title="Warn Late Server Updates Disabled",
-                                message="Program will not alert you if the server updates late.")
-        else:
-            self.warn_late_update = True
-            self.options.entryconfig(self.options.index(6), label="Warn Late Server Updates: On")
-            messagebox.showinfo(title="Warn Late Server Updates Enabled",
-                                message="Program will alert you if the server update time is 5 minutes or more.")
-
-        self.config_parser.set('main', 'warn_late_update', f'{self.warn_late_update}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def toggle_updates(self, event: Optional[Event] = None) -> None:
-        if self.update:
-            self.update = False
-            self.options.entryconfig(self.options.index(8), label="Auto Check for Updates: Off")
-            messagebox.showinfo(title="Auto Checking for Updates Disabled",
-                                message="Program will not check for updates at start.")
-        else:
-            self.update = True
-            self.options.entryconfig(self.options.index(8), label="Auto Check for Updates: On")
-            messagebox.showinfo(title="Auto Checking for Updates Enabled",
-                                message="Program will check for updates at start.")
-
-        self.config_parser.set('main', 'update', f'{self.update}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def log(self, event: Optional[Event] = None) -> None:
-        if self.first_run and self.logging or not self.logging:
-            try:
-                # noinspection PyProtectedMember,PyUnresolvedReferences
-                base_path: str = sys._MEIPASS
-                self.log_file = open('NSE-OCA.log', 'a', buffering=1)
-                sys.stdout = self.log_file
-                sys.stderr = self.log_file
-            except AttributeError:
-                streamtologger.redirect(target="NSE-OCA.log",
-                                        header_format="[{timestamp:%Y-%m-%d %H:%M:%S} - {level:5}] ")
-            self.logging = True
-            print('----------Logging Started----------')
-
-            try:
-                # noinspection PyProtectedMember,PyUnresolvedReferences
-                base_path: str = sys._MEIPASS
-                print(platform.system() + ' ' + platform.release() + ' .exe version ' + Nse.version)
-            except AttributeError:
-                print(platform.system() + ' ' + platform.release() + ' .py version ' + Nse.version)
-                if not self.load_nse_icon:
-                    print("NSE icon loading disabled")
-
-            try:
-                self.options.entryconfig(self.options.index(9), label="Debug Logging: On")
-                messagebox.showinfo(title="Debug Logging Enabled",
-                                    message="Errors will be logged to NSE-OCA.log.")
-            except AttributeError:
-                pass
-        elif self.logging:
-            print('----------Logging Stopped----------')
-            sys.stdout = self.stdout
-            sys.stderr = self.stderr
-            try:
-                # noinspection PyProtectedMember,PyUnresolvedReferences
-                base_path: str = sys._MEIPASS
-                self.log_file.close()
-            except AttributeError:
-                streamtologger._is_redirected = False
-            self.logging = False
-            self.options.entryconfig(self.options.index(9), label="Debug Logging: Off")
-            messagebox.showinfo(title="Debug Logging Disabled", message="Errors will not be logged.")
-
-        self.config_parser.set('main', 'logging', f'{self.logging}')
-        with open('NSE-OCA.ini', 'w') as f:
-            self.config_parser.write(f)
-
-    # noinspection PyUnusedLocal
-    def links(self, link: str, event: Optional[Event] = None) -> None:
-
-        if link == "developer":
-            webbrowser.open_new("https://github.com/VarunS2002/")
-        elif link == "readme":
-            webbrowser.open_new("https://github.com/VarunS2002/Python-NSE-Option-Chain-Analyzer/blob/master/README.md/")
-        elif link == "license":
-            webbrowser.open_new("https://github.com/VarunS2002/Python-NSE-Option-Chain-Analyzer/blob/master/LICENSE/")
-        elif link == "releases":
-            webbrowser.open_new("https://github.com/VarunS2002/Python-NSE-Option-Chain-Analyzer/releases/")
-        elif link == "sources":
-            webbrowser.open_new("https://github.com/VarunS2002/Python-NSE-Option-Chain-Analyzer/")
-
-        self.info.attributes('-topmost', False)
-
-    def about_window(self) -> Toplevel:
-        self.info: Toplevel = Toplevel()
-        self.info.title("About")
-        window_width: int = self.info.winfo_reqwidth()
-        window_height: int = self.info.winfo_reqheight()
-        position_right: int = int(self.info.winfo_screenwidth() / 2 - window_width / 2)
-        position_down: int = int(self.info.winfo_screenheight() / 2 - window_height / 2)
-        self.info.geometry("250x150+{}+{}".format(position_right, position_down))
-        self.info.resizable(False, False)
-        self.info.iconphoto(True, PhotoImage(file=self.icon_png_path)) if self.load_nse_icon else None
-        self.info.attributes('-topmost', True)
-        self.info.grab_set()
-        self.info.focus_force()
-
-        return self.info
-
-    # noinspection PyUnusedLocal
-    def about(self, event: Optional[Event] = None) -> None:
-        self.info: Toplevel = self.about_window()
-        self.info.rowconfigure(0, weight=1)
-        self.info.rowconfigure(1, weight=1)
-        self.info.rowconfigure(2, weight=1)
-        self.info.rowconfigure(3, weight=1)
-        self.info.rowconfigure(4, weight=1)
-        self.info.columnconfigure(0, weight=1)
-        self.info.columnconfigure(1, weight=1)
-
-        heading: Label = Label(self.info, text="NSE-Option-Chain-Analyzer", relief=RIDGE,
-                               font=("TkDefaultFont", 10, "bold"))
-        heading.grid(row=0, column=0, columnspan=2, sticky=N + S + W + E)
-        version_label: Label = Label(self.info, text="Version:", relief=RIDGE)
-        version_label.grid(row=1, column=0, sticky=N + S + W + E)
-        version_val: Label = Label(self.info, text=f"{Nse.version}", relief=RIDGE)
-        version_val.grid(row=1, column=1, sticky=N + S + W + E)
-        dev_label: Label = Label(self.info, text="Developer:", relief=RIDGE)
-        dev_label.grid(row=2, column=0, sticky=N + S + W + E)
-        dev_val: Label = Label(self.info, text="Varun Shanbhag", fg="blue", cursor="hand2", relief=RIDGE)
-        dev_val.bind("<Button-1>", lambda click, link="developer": self.links(link, click))
-        dev_val.grid(row=2, column=1, sticky=N + S + W + E)
-        readme: Label = Label(self.info, text="README", fg="blue", cursor="hand2", relief=RIDGE)
-        readme.bind("<Button-1>", lambda click, link="readme": self.links(link, click))
-        readme.grid(row=3, column=0, sticky=N + S + W + E)
-        licenses: Label = Label(self.info, text="LICENSE", fg="blue", cursor="hand2", relief=RIDGE)
-        licenses.bind("<Button-1>", lambda click, link="license": self.links(link, click))
-        licenses.grid(row=3, column=1, sticky=N + S + W + E)
-        releases: Label = Label(self.info, text="Releases", fg="blue", cursor="hand2", relief=RIDGE)
-        releases.bind("<Button-1>", lambda click, link="releases": self.links(link, click))
-        releases.grid(row=4, column=0, sticky=N + S + W + E)
-        sources: Label = Label(self.info, text="Sources", fg="blue", cursor="hand2", relief=RIDGE)
-        sources.bind("<Button-1>", lambda click, link="sources": self.links(link, click))
-        sources.grid(row=4, column=1, sticky=N + S + W + E)
-        updates: Button = Button(self.info, text="Check for Updates",
-                                 command=lambda auto=False: self.check_for_updates(auto))
-        updates.grid(row=5, column=0, columnspan=2, sticky=N + S + W + E)
-        self.info.mainloop()
-
-    def close_login(self) -> None:
-        self.session.close()
-        if self.logging:
-            print('----------Quitting Program----------')
-        os.remove('.NSE-OCA.png') if os.path.isfile('.NSE-OCA.png') else None
-        os.remove('.NSE-OCA.ico') if os.path.isfile('.NSE-OCA.ico') else None
-        self.login.destroy()
-        sys.exit()
-
-    # noinspection PyUnusedLocal
-    def close_main(self, event: Optional[Event] = None) -> None:
-        ask_quit: bool = messagebox.askyesno("Quit", "All unsaved data will be lost.\nProceed to quit?", icon='warning',
-                                             default='no')
-        if ask_quit:
-            self.session.close()
-            if self.logging:
-                print('----------Quitting Program----------')
-            os.remove('.NSE-OCA.png') if os.path.isfile('.NSE-OCA.png') else None
-            os.remove('.NSE-OCA.ico') if os.path.isfile('.NSE-OCA.ico') else None
-            self.root.destroy()
-            sys.exit()
-        elif not ask_quit:
-            pass
-
-    def main_win(self) -> None:
-        self.root: Tk = Tk()
-        self.root.focus_force()
-        self.root.title("NSE-Option-Chain-Analyzer")
-        self.root.protocol('WM_DELETE_WINDOW', self.close_main)
-        window_width: int = self.root.winfo_reqwidth()
-        window_height: int = self.root.winfo_reqheight()
-        position_right: int = int(self.root.winfo_screenwidth() / 3 - window_width / 2)
-        position_down: int = int(self.root.winfo_screenheight() / 3 - window_height / 2)
-        self.root.geometry("815x560+{}+{}".format(position_right, position_down))
-        self.root.iconphoto(True, PhotoImage(file=self.icon_png_path)) if self.load_nse_icon else None
-        self.root.rowconfigure(0, weight=1)
-        self.root.columnconfigure(0, weight=1)
-
-        menubar: Menu = Menu(self.root)
-        self.options: Menu = Menu(menubar, tearoff=0)
-        self.options.add_command(label="Stop", accelerator="(Ctrl+X)", command=self.change_state)
-        self.options.add_command(label="Export Table to CSV", accelerator="(Ctrl+S)", command=self.export)
-        self.options.add_command(label=f"Live Exporting to CSV: {'On' if self.live_export else 'Off'}",
-                                 accelerator="(Ctrl+B)", command=self.toggle_live_export)
-        self.options.add_command(label=f"Dump Entire Option Chain to CSV: {'On' if self.save_oc else 'Off'}",
-                                 accelerator="(Ctrl+O)", command=self.toggle_save_oc)
-        self.options.add_command(label=f"Notifications: {'On' if self.notifications else 'Off'}",
-                                 accelerator="(Ctrl+N)", command=self.toggle_notifications,
-                                 state=NORMAL if is_windows_10_or_11 else DISABLED)
-        self.options.add_command(label=f"Stop automatically at 3:30pm: {'On' if self.auto_stop else 'Off'}",
-                                 accelerator="(Ctrl+K)", command=self.toggle_auto_stop)
-        self.options.add_command(label=f"Warn Late Server Updates: {'On' if self.warn_late_update else 'Off'}",
-                                 accelerator="(Ctrl+W)", command=self.toggle_warn_late_update)
-        self.options.add_separator()
-        self.options.add_command(label=f"Auto Check for Updates: {'On' if self.update else 'Off'}",
-                                 accelerator="(Ctrl+U)", command=self.toggle_updates)
-        self.options.add_command(label=f"Debug Logging: {'On' if self.logging else 'Off'}", accelerator="(Ctrl+L)",
-                                 command=self.log)
-        self.options.add_command(label="About", accelerator="(Ctrl+M)", command=self.about)
-        self.options.add_command(label="Quit", accelerator="(Ctrl+Q)", command=self.close_main)
-        menubar.add_cascade(label="Menu", menu=self.options)
-        self.root.config(menu=menubar)
-
-        self.root.bind('<Control-x>', self.change_state)
-        self.root.bind('<Control-s>', self.export)
-        self.root.bind('<Control-b>', self.toggle_live_export)
-        self.root.bind('<Control-o>', self.toggle_save_oc)
-        self.root.bind('<Control-n>', self.toggle_notifications) if is_windows_10_or_11 else None
-        self.root.bind('<Control-k>', self.toggle_auto_stop)
-        self.root.bind('<Control-w>', self.toggle_warn_late_update)
-        self.root.bind('<Control-u>', self.toggle_updates)
-        self.root.bind('<Control-l>', self.log)
-        self.root.bind('<Control-m>', self.about)
-        self.root.bind('<Control-q>', self.close_main)
-
-        top_frame: Frame = Frame(self.root)
-        top_frame.rowconfigure(0, weight=1)
-        top_frame.columnconfigure(0, weight=1)
-        top_frame.pack(fill="both", expand=True)
-
-        # noinspection PyTypeChecker
-        self.sheet: tksheet.Sheet = tksheet.Sheet(top_frame, column_width=85, align="center",
-                                                  headers=self.output_columns, header_font=("TkDefaultFont", 9, "bold"),
-                                                  empty_horizontal=0, empty_vertical=20, header_height=35)
-        self.sheet.enable_bindings(
-            ("toggle_select", "drag_select", "column_select", "row_select", "column_width_resize",
-             "arrowkeys", "right_click_popup_menu", "rc_select", "copy", "select_all"))
-        self.sheet.grid(row=0, column=0, sticky=N + S + W + E)
-
-        bottom_frame: Frame = Frame(self.root)
-        bottom_frame.rowconfigure(0, weight=1)
-        bottom_frame.rowconfigure(1, weight=1)
-        bottom_frame.rowconfigure(2, weight=1)
-        bottom_frame.rowconfigure(3, weight=1)
-        bottom_frame.rowconfigure(4, weight=1)
-        bottom_frame.rowconfigure(5, weight=1)
-        bottom_frame.columnconfigure(0, weight=1)
-        bottom_frame.columnconfigure(1, weight=1)
-        bottom_frame.columnconfigure(2, weight=1)
-        bottom_frame.columnconfigure(3, weight=1)
-        bottom_frame.columnconfigure(4, weight=1)
-        bottom_frame.columnconfigure(5, weight=1)
-        bottom_frame.columnconfigure(6, weight=1)
-        bottom_frame.columnconfigure(7, weight=1)
-        bottom_frame.pack(fill="both", expand=True)
-
-        oi_ub_label: Label = Label(bottom_frame, text="Open Interest Upper Boundary", relief=RIDGE,
-                                   font=("TkDefaultFont", 10, "bold"))
-        oi_ub_label.grid(row=0, column=0, columnspan=4, sticky=N + S + W + E)
-        max_call_oi_sp_label: Label = Label(bottom_frame, text="Strike Price 1:", relief=RIDGE,
-                                            font=("TkDefaultFont", 9, "bold"))
-        max_call_oi_sp_label.grid(row=1, column=0, sticky=N + S + W + E)
-        self.max_call_oi_sp_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_call_oi_sp_val.grid(row=1, column=1, sticky=N + S + W + E)
-        max_call_oi_label: Label = Label(bottom_frame, text=f"OI ({self.units_str}):", relief=RIDGE,
-                                         font=("TkDefaultFont", 9, "bold"))
-        max_call_oi_label.grid(row=1, column=2, sticky=N + S + W + E)
-        self.max_call_oi_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_call_oi_val.grid(row=1, column=3, sticky=N + S + W + E)
-        oi_lb_label: Label = Label(bottom_frame, text="Open Interest Lower Boundary", relief=RIDGE,
-                                   font=("TkDefaultFont", 10, "bold"))
-        oi_lb_label.grid(row=0, column=4, columnspan=4, sticky=N + S + W + E)
-        max_put_oi_sp_label: Label = Label(bottom_frame, text="Strike Price 1:", relief=RIDGE,
-                                           font=("TkDefaultFont", 9, "bold"))
-        max_put_oi_sp_label.grid(row=1, column=4, sticky=N + S + W + E)
-        self.max_put_oi_sp_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_put_oi_sp_val.grid(row=1, column=5, sticky=N + S + W + E)
-        max_put_oi_label: Label = Label(bottom_frame, text=f"OI ({self.units_str}):", relief=RIDGE,
-                                        font=("TkDefaultFont", 9, "bold"))
-        max_put_oi_label.grid(row=1, column=6, sticky=N + S + W + E)
-        self.max_put_oi_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_put_oi_val.grid(row=1, column=7, sticky=N + S + W + E)
-        max_call_oi_sp_2_label: Label = Label(bottom_frame, text="Strike Price 2:", relief=RIDGE,
-                                              font=("TkDefaultFont", 9, "bold"))
-        max_call_oi_sp_2_label.grid(row=2, column=0, sticky=N + S + W + E)
-        self.max_call_oi_sp_2_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_call_oi_sp_2_val.grid(row=2, column=1, sticky=N + S + W + E)
-        max_call_oi_2_label: Label = Label(bottom_frame, text=f"OI ({self.units_str}):", relief=RIDGE,
-                                           font=("TkDefaultFont", 9, "bold"))
-        max_call_oi_2_label.grid(row=2, column=2, sticky=N + S + W + E)
-        self.max_call_oi_2_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_call_oi_2_val.grid(row=2, column=3, sticky=N + S + W + E)
-        oi_lb_2_label: Label = Label(bottom_frame, text="Open Interest Lower Boundary", relief=RIDGE,
-                                     font=("TkDefaultFont", 10, "bold"))
-        oi_lb_2_label.grid(row=2, column=4, columnspan=4, sticky=N + S + W + E)
-        max_put_oi_sp_2_label: Label = Label(bottom_frame, text="Strike Price 2:", relief=RIDGE,
-                                             font=("TkDefaultFont", 9, "bold"))
-        max_put_oi_sp_2_label.grid(row=2, column=4, sticky=N + S + W + E)
-        self.max_put_oi_sp_2_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_put_oi_sp_2_val.grid(row=2, column=5, sticky=N + S + W + E)
-        max_put_oi_2_label: Label = Label(bottom_frame, text=f"OI ({self.units_str}):", relief=RIDGE,
-                                          font=("TkDefaultFont", 9, "bold"))
-        max_put_oi_2_label.grid(row=2, column=6, sticky=N + S + W + E)
-        self.max_put_oi_2_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.max_put_oi_2_val.grid(row=2, column=7, sticky=N + S + W + E)
-
-        oi_label: Label = Label(bottom_frame, text="Open Interest:", relief=RIDGE, font=("TkDefaultFont", 9, "bold"))
-        oi_label.grid(row=3, column=0, columnspan=2, sticky=N + S + W + E)
-        self.oi_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.oi_val.grid(row=3, column=2, columnspan=2, sticky=N + S + W + E)
-        pcr_label: Label = Label(bottom_frame, text="PCR:", relief=RIDGE, font=("TkDefaultFont", 9, "bold"))
-        pcr_label.grid(row=3, column=4, columnspan=2, sticky=N + S + W + E)
-        self.pcr_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.pcr_val.grid(row=3, column=6, columnspan=2, sticky=N + S + W + E)
-        call_exits_label: Label = Label(bottom_frame, text="Call Exits:", relief=RIDGE,
-                                        font=("TkDefaultFont", 9, "bold"))
-        call_exits_label.grid(row=4, column=0, columnspan=2, sticky=N + S + W + E)
-        self.call_exits_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.call_exits_val.grid(row=4, column=2, columnspan=2, sticky=N + S + W + E)
-        put_exits_label: Label = Label(bottom_frame, text="Put Exits:", relief=RIDGE, font=("TkDefaultFont", 9, "bold"))
-        put_exits_label.grid(row=4, column=4, columnspan=2, sticky=N + S + W + E)
-        self.put_exits_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.put_exits_val.grid(row=4, column=6, columnspan=2, sticky=N + S + W + E)
-        call_itm_label: Label = Label(bottom_frame, text="Call ITM:", relief=RIDGE, font=("TkDefaultFont", 9, "bold"))
-        call_itm_label.grid(row=5, column=0, columnspan=2, sticky=N + S + W + E)
-        self.call_itm_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.call_itm_val.grid(row=5, column=2, columnspan=2, sticky=N + S + W + E)
-        put_itm_label: Label = Label(bottom_frame, text="Put ITM:", relief=RIDGE, font=("TkDefaultFont", 9, "bold"))
-        put_itm_label.grid(row=5, column=4, columnspan=2, sticky=N + S + W + E)
-        self.put_itm_val: Label = Label(bottom_frame, text="", relief=RIDGE)
-        self.put_itm_val.grid(row=5, column=6, columnspan=2, sticky=N + S + W + E)
-
-        self.root.after(100, self.main)
-
-        self.root.mainloop()
-
-    def get_dataframe(self) -> Optional[Tuple[pandas.DataFrame, str, float]]:
-        try:
-            response: Optional[requests.Response]
-            json_data: Any
-            response, json_data = self.get_data()
-        except TypeError:
-            return
-        if response is None or json_data is None:
-            return
-
-        pandas.set_option('display.max_rows', None)
-        pandas.set_option('display.max_columns', None)
-        pandas.set_option('display.width', 400)
-
-        df: pandas.DataFrame = pandas.read_json(response.text)
-        df = df.transpose()
-
-        ce_values: List[dict] = [data['CE'] for data in json_data['records']['data'] if
-                                 "CE" in data and data['expiryDate'].lower() == self.expiry_date.lower()]
-        pe_values: List[dict] = [data['PE'] for data in json_data['records']['data'] if
-                                 "PE" in data and data['expiryDate'].lower() == self.expiry_date.lower()]
-        points: float = pe_values[0]['underlyingValue']
-        if points == 0:
-            for item in pe_values:
-                if item['underlyingValue'] != 0:
-                    points = item['underlyingValue']
-                    break
-        ce_data_f: pandas.DataFrame = pandas.DataFrame(ce_values)
-        pe_data_f: pandas.DataFrame = pandas.DataFrame(pe_values)
-
-        if ce_data_f.empty:
-            messagebox.showerror(title="Error",
-                                 message="Invalid Expiry Date.\nPlease restart and enter a new Expiry Date.")
-            self.change_state()
-            return
-        columns_ce: List[str] = ['openInterest', 'changeinOpenInterest', 'totalTradedVolume', 'impliedVolatility',
-                                 'lastPrice',
-                                 'change', 'bidQty', 'bidprice', 'askPrice', 'askQty', 'strikePrice']
-        columns_pe: List[str] = ['strikePrice', 'bidQty', 'bidprice', 'askPrice', 'askQty', 'change', 'lastPrice',
-                                 'impliedVolatility', 'totalTradedVolume', 'changeinOpenInterest', 'openInterest']
-        ce_data_f = ce_data_f[columns_ce]
-        pe_data_f = pe_data_f[columns_pe]
-        merged_inner: pandas.DataFrame = pandas.merge(left=ce_data_f, right=pe_data_f, left_on='strikePrice',
-                                                      right_on='strikePrice')
-        merged_inner.columns = ['Open Interest', 'Change in Open Interest', 'Traded Volume', 'Implied Volatility',
-                                'Last Traded Price', 'Net Change', 'Bid Quantity', 'Bid Price', 'Ask Price',
-                                'Ask Quantity', 'Strike Price', 'Bid Quantity', 'Bid Price', 'Ask Price',
-                                'Ask Quantity', 'Net Change', 'Last Traded Price', 'Implied Volatility',
-                                'Traded Volume', 'Change in Open Interest', 'Open Interest']
-        current_time: str = df['timestamp']['records']
-        return merged_inner, current_time, points
-
-    def set_values(self) -> None:
-        if self.first_run:
-            self.root.title(f"NSE-Option-Chain-Analyzer - {self.index if self.option_mode == 'Index' else self.stock} "
-                            f"- {self.expiry_date} - {self.sp}")
-
-        self.old_max_call_oi_sp: float
-        self.old_max_call_oi_sp_2: float
-        self.old_max_put_oi_sp: float
-        self.old_max_put_oi_sp_2: float
-
-        self.max_call_oi_val.config(text=self.max_call_oi)
-        self.max_call_oi_sp_val.config(text=self.max_call_oi_sp)
-        self.max_call_oi_2_val.config(text=self.max_call_oi_2)
-        self.max_call_oi_sp_2_val.config(text=self.max_call_oi_sp_2)
-        self.max_put_oi_val.config(text=self.max_put_oi)
-        self.max_put_oi_sp_val.config(text=self.max_put_oi_sp)
-        self.max_put_oi_2_val.config(text=self.max_put_oi_2)
-        self.max_put_oi_sp_2_val.config(text=self.max_put_oi_sp_2)
-
-        if self.first_run or self.old_max_call_oi_sp == self.max_call_oi_sp:
-            self.old_max_call_oi_sp = self.max_call_oi_sp
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Upper Boundary Strike Price changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_max_call_oi_sp} to {self.max_call_oi_sp}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_max_call_oi_sp = self.max_call_oi_sp
-
-        if self.first_run or self.old_max_call_oi_sp_2 == self.max_call_oi_sp_2:
-            self.old_max_call_oi_sp_2 = self.max_call_oi_sp_2
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Upper Boundary Strike Price 2 changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_max_call_oi_sp_2} to {self.max_call_oi_sp_2}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_max_call_oi_sp_2 = self.max_call_oi_sp_2
-
-        if self.first_run or self.old_max_put_oi_sp == self.max_put_oi_sp:
-            self.old_max_put_oi_sp = self.max_put_oi_sp
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Lower Boundary Strike Price changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_max_put_oi_sp} to {self.max_put_oi_sp}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_max_put_oi_sp = self.max_put_oi_sp
-
-        if self.first_run or self.old_max_put_oi_sp_2 == self.max_put_oi_sp_2:
-            self.old_max_put_oi_sp_2 = self.max_put_oi_sp_2
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Lower Boundary Strike Price 2 changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_max_put_oi_sp_2} to {self.max_put_oi_sp_2}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_max_put_oi_sp_2 = self.max_put_oi_sp_2
-
-        red: str = "#e53935"
-        green: str = "#00e676"
-        default: str = "SystemButtonFace" if is_windows else "#d9d9d9"
-
-        bg: str
-
-        self.old_oi_label: str
-        oi_label: str
-
-        if self.call_sum >= self.put_sum:
-            oi_label = "Bearish"
-            bg = red
-        else:
-            oi_label = "Bullish"
-            bg = green
-        self.oi_val.config(text=oi_label, bg=bg)
-
-        if self.first_run or self.old_oi_label == oi_label:
-            self.old_oi_label = oi_label
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Open Interest changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_oi_label} to {oi_label}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_oi_label = oi_label
-
-        if self.put_call_ratio >= 1:
-            self.pcr_val.config(text=self.put_call_ratio, bg=green)
-        else:
-            self.pcr_val.config(text=self.put_call_ratio, bg=red)
-
-        def set_itm_labels(call_change: float, put_change: float) -> str:
-            label: str = "No"
-            if put_change > call_change:
-                if put_change >= 0:
-                    if call_change <= 0:
-                        label = "Yes"
-                    elif put_change / call_change > 1.5:
-                        label = "Yes"
+            cur = self.conn.cursor()
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            for sym in AUTO_SYMBOLS:
+                cur.execute("""
+                    SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit
+                    FROM history
+                    WHERE symbol = ? AND SUBSTR(timestamp, 1, 10) = ?
+                    ORDER BY timestamp ASC
+                """, (sym, today_str))
+                rows = cur.fetchall()
+                todays_history[sym] = [] # Clear existing if any
+                if sym != "INDIAVIX":
+                    self.pcr_graph_data[sym] = [] # Clear PCR data for reconstruction
+
+                last_pcr_add_time = 0.0 # To simulate the 2-minute interval for graph data
+                for r in rows:
+                    history_item = {
+                        'time': r[0].split()[1][:5], # HH:MM
+                        'sp': r[1],
+                        'value': r[2],
+                        'call_oi': r[3],
+                        'put_oi': r[4],
+                        'pcr': r[5],
+                        'sentiment': r[6],
+                        'add_exit': r[7]
+                    }
+                    todays_history[sym].append(history_item)
+
+                    if sym != "INDIAVIX": # Reconstruct PCR data for charting
+                        # Reconstruct the timestamp for the 2-minute interval check
+                        item_datetime = datetime.datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S")
+                        item_timestamp_float = item_datetime.timestamp()
+
+                        if item_timestamp_float - last_pcr_add_time >= UPDATE_INTERVAL:
+                            self.pcr_graph_data[sym].append({"TIME": history_item['time'], "PCR": history_item['pcr']})
+                            last_pcr_add_time = item_timestamp_float
+                            # Update last_pcr_graph_update_time if this is the most recent entry
+                            self.last_pcr_graph_update_time[sym] = item_timestamp_float
+
+        except Exception as e:
+            print(f"History load error: {e}")
+
+    def _load_initial_underlying_values(self):
+        """Loads the first underlying value for each symbol from today's history in DB."""
+        if not self.conn: return
+        with data_lock:
+            cur = self.conn.cursor()
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            for sym in AUTO_SYMBOLS:
+                cur.execute("""
+                    SELECT value
+                    FROM history
+                    WHERE symbol = ? AND SUBSTR(timestamp, 1, 10) = ?
+                    ORDER BY timestamp ASC
+                    LIMIT 1
+                """, (sym, today_str))
+                result = cur.fetchone()
+                if result:
+                    initial_underlying_values[sym] = float(result[0])
                 else:
-                    if put_change / call_change < 0.5:
-                        label = "Yes"
-            if call_change <= 0:
-                label = "Yes"
-            return label
+                    initial_underlying_values[sym] = None  # No historical data for today yet
 
-        self.old_call_label: str
-        call: str = set_itm_labels(call_change=self.p5, put_change=self.p4)
-
-        if call == "No":
-            self.call_itm_val.config(text="No", bg=default)
-        else:
-            self.call_itm_val.config(text="Yes", bg=green)
-
-        if self.first_run or self.old_call_label == call:
-            self.old_call_label = call
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Call ITM changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_call_label} to {call}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_call_label = call
-
-        self.old_put_label: str
-        put: str = set_itm_labels(call_change=self.p7, put_change=self.p6)
-
-        if put == "No":
-            self.put_itm_val.config(text="No", bg=default)
-        else:
-            self.put_itm_val.config(text="Yes", bg=red)
-
-        if self.first_run or self.old_put_label == put:
-            self.old_put_label = put
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Put ITM changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_put_label} to {put}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_put_label = put
-
-        self.old_call_exits_label: str
-        call_exits_label: str
-
-        if self.call_boundary <= 0:
-            call_exits_label = "Yes"
-            bg = green
-        elif self.call_sum <= 0:
-            call_exits_label = "Yes"
-            bg = green
-        else:
-            call_exits_label = "No"
-            bg = default
-
-        self.call_exits_val.config(text=call_exits_label, bg=bg)
-        if self.first_run or self.old_call_exits_label == call_exits_label:
-            self.old_call_exits_label = call_exits_label
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Call Exits changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_call_exits_label} to {call_exits_label}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_call_exits_label = call_exits_label
-
-        self.old_put_exits_label: str
-        put_exits_label: str
-
-        if self.put_boundary <= 0:
-            put_exits_label = "Yes"
-            bg = red
-        elif self.put_sum <= 0:
-            put_exits_label = "Yes"
-            bg = red
-        else:
-            put_exits_label = "No"
-            bg = default
-
-        self.put_exits_val.config(text=put_exits_label, bg=bg)
-        if self.first_run or self.old_put_exits_label == put_exits_label:
-            self.old_put_exits_label = put_exits_label
-        else:
-            if self.notifications:
-                self.toaster.show_toast("Put Exits changed "
-                                        f"for {self.index if self.option_mode == 'Index' else self.stock}",
-                                        f"Changed from {self.old_put_exits_label} to {put_exits_label}",
-                                        duration=4, threaded=True,
-                                        icon_path=self.icon_ico_path if self.load_nse_icon else None)
-            self.old_put_exits_label = put_exits_label
-
-        output_values: List[Union[str, float]] = [self.str_current_time, self.points, self.call_sum,
-                                                  self.put_sum, self.difference,
-                                                  self.call_boundary, self.put_boundary, self.call_itm,
-                                                  self.put_itm]
-        self.sheet.insert_row(values=output_values, add_columns=True)
-        if self.live_export:
-            self.export_row(output_values)
-
-        last_row: int = self.sheet.get_total_rows() - 1
-
-        self.old_points: float
-        if self.first_run or self.points == self.old_points:
-            self.old_points = self.points
-        elif self.points > self.old_points:
-            self.sheet.highlight_cells(row=last_row, column=1, bg=green)
-            self.old_points = self.points
-        else:
-            self.sheet.highlight_cells(row=last_row, column=1, bg=red)
-            self.old_points = self.points
-        self.old_call_sum: float
-        if self.first_run or self.old_call_sum == self.call_sum:
-            self.old_call_sum = self.call_sum
-        elif self.call_sum > self.old_call_sum:
-            self.sheet.highlight_cells(row=last_row, column=2, bg=red)
-            self.old_call_sum = self.call_sum
-        else:
-            self.sheet.highlight_cells(row=last_row, column=2, bg=green)
-            self.old_call_sum = self.call_sum
-        self.old_put_sum: float
-        if self.first_run or self.old_put_sum == self.put_sum:
-            self.old_put_sum = self.put_sum
-        elif self.put_sum > self.old_put_sum:
-            self.sheet.highlight_cells(row=last_row, column=3, bg=green)
-            self.old_put_sum = self.put_sum
-        else:
-            self.sheet.highlight_cells(row=last_row, column=3, bg=red)
-            self.old_put_sum = self.put_sum
-        self.old_difference: float
-        if self.first_run or self.old_difference == self.difference:
-            self.old_difference = self.difference
-        elif self.difference > self.old_difference:
-            self.sheet.highlight_cells(row=last_row, column=4, bg=red)
-            self.old_difference = self.difference
-        else:
-            self.sheet.highlight_cells(row=last_row, column=4, bg=green)
-            self.old_difference = self.difference
-        self.old_call_boundary: float
-        if self.first_run or self.old_call_boundary == self.call_boundary:
-            self.old_call_boundary = self.call_boundary
-        elif self.call_boundary > self.old_call_boundary:
-            self.sheet.highlight_cells(row=last_row, column=5, bg=red)
-            self.old_call_boundary = self.call_boundary
-        else:
-            self.sheet.highlight_cells(row=last_row, column=5, bg=green)
-            self.old_call_boundary = self.call_boundary
-        self.old_put_boundary: float
-        if self.first_run or self.old_put_boundary == self.put_boundary:
-            self.old_put_boundary = self.put_boundary
-        elif self.put_boundary > self.old_put_boundary:
-            self.sheet.highlight_cells(row=last_row, column=6, bg=green)
-            self.old_put_boundary = self.put_boundary
-        else:
-            self.sheet.highlight_cells(row=last_row, column=6, bg=red)
-            self.old_put_boundary = self.put_boundary
-        self.old_call_itm: float
-        if self.first_run or self.old_call_itm == self.call_itm:
-            self.old_call_itm = self.call_itm
-        elif self.call_itm > self.old_call_itm:
-            self.sheet.highlight_cells(row=last_row, column=7, bg=green)
-            self.old_call_itm = self.call_itm
-        else:
-            self.sheet.highlight_cells(row=last_row, column=7, bg=red)
-            self.old_call_itm = self.call_itm
-        self.old_put_itm: float
-        if self.first_run or self.old_put_itm == self.put_itm:
-            self.old_put_itm = self.put_itm
-        elif self.put_itm > self.old_put_itm:
-            self.sheet.highlight_cells(row=last_row, column=8, bg=red)
-            self.old_put_itm = self.put_itm
-        else:
-            self.sheet.highlight_cells(row=last_row, column=8, bg=green)
-            self.old_put_itm = self.put_itm
-
-        if self.sheet.get_yview()[1] >= 0.9:
-            self.sheet.see(last_row)
-            self.sheet.set_yview(1)
-        self.sheet.refresh()
-
-    def main(self) -> None:
-        if self.stop:
-            return
-
+    def run_loop(self):
+        # Initial call to get cookies and session data
         try:
-            entire_oc: pandas.DataFrame
-            current_time: str
-            self.points: float
-            entire_oc, current_time, self.points = self.get_dataframe()
-        except TypeError:
-            self.root.after((self.seconds * 1000), self.main)
-            return
+            self.session.get(self.url_oc, headers=self.nse_headers, timeout=10, verify=False)
+        except requests.exceptions.RequestException as e:
+            print(f"Initial NSE session setup failed: {e}")
 
-        self.str_current_time: str = current_time.split(" ")[1]
-        current_date: datetime.date = datetime.datetime.strptime(current_time.split(" ")[0], '%d-%b-%Y').date()
-        current_time: datetime.time = datetime.datetime.strptime(current_time.split(" ")[1], '%H:%M:%S').time()
-        if self.first_run:
-            self.previous_date = current_date
-            self.previous_time = current_time
-        elif current_date > self.previous_date:
-            self.previous_date = current_date
-            self.previous_time = current_time
-        elif current_date == self.previous_date:
-            if current_time > self.previous_time:
-                time_difference: float = 0
-                if current_time.hour > self.previous_time.hour:
-                    time_difference = (60 - self.previous_time.minute) + current_time.minute + \
-                                      ((60 - self.previous_time.second) + current_time.second) / 60
-                elif current_time.hour == self.previous_time.hour:
-                    time_difference = current_time.minute - self.previous_time.minute + \
-                                      (current_time.second - self.previous_time.second) / 60
-                if time_difference >= self.time_difference_factor and self.warn_late_update:
-                    self.root.after(2000,
-                                    (lambda title="Late Update", message=f"The data from the server was last updated "
-                                                                         f"about {int(time_difference)} minutes ago.":
-                                     messagebox.showinfo(title=title, message=message)))
-                self.previous_time = current_time
-            else:
-                self.root.after((self.seconds * 1000), self.main)
+        while not self.stop.is_set():
+            current_date = datetime.date.today()
+            for sym in AUTO_SYMBOLS:
+                # Reset PCR data (and last_pcr_data_reset_date) at the start of a new day
+                if sym != "INDIAVIX" and self.last_pcr_data_reset_date[sym] < current_date:
+                    print(f"Resetting PCR graph data for {sym} for new day: {current_date}")
+                    self.pcr_graph_data[sym] = []
+                    self.last_pcr_graph_update_time[sym] = 0 # Reset PCR graph update time for new day
+                    self.last_pcr_data_reset_date[sym] = current_date
+                # Also reset initial_underlying_values for a new day
+                if initial_underlying_values[sym] is not None and \
+                   datetime.datetime.now().date() != datetime.datetime.fromtimestamp(last_alert[sym]).date():
+                    initial_underlying_values[sym] = None
+
+
+                try:
+                    self.fetch_and_process_symbol(sym)
+                except Exception as e:
+                    print(f"{sym} error during fetch and process: {e}")
+            time.sleep(LIVE_DATA_INTERVAL)  # Update live data every 15 seconds
+
+    def fetch_and_process_symbol(self, sym: str):
+        if sym == "SENSEX":
+            self._process_sensex_data(sym)
+        elif sym == "INDIAVIX":
+            self._process_indiavix_data(sym)  # New VIX processing
+        else:
+            self._process_nse_data(sym)
+
+    def _process_nse_data(self, sym: str):
+        url = self.url_nse + sym
+        try:
+            resp = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
+            if resp.status_code == 401:
+                # Re-fetch cookies if session expired (401 Unauthorized)
+                self.session.get(self.url_oc, headers=self.nse_headers, timeout=5, verify=False)
+                # Retry the request without explicitly passing `cookies=self.cookies`
+                # as `requests.Session` handles cookies automatically.
+                resp = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
+            data = resp.json()
+            expiries = data.get('records', {}).get('expiryDates', [])
+            if not expiries:
+                print(f"{sym}: No expiry dates found.")
+                return
+            expiry = expiries[0]
+            ce_values = [x['CE'] for x in data.get('records', {}).get('data', []) if
+                         'CE' in x and x.get('expiryDate', '') == expiry]
+            pe_values = [x['PE'] for x in data.get('records', {}).get('data', []) if
+                         'PE' in x and x.get('expiryDate', '') == expiry]
+            if not ce_values or not pe_values:  # Renamed from ce/pe to ce_values/pe_values
+                print(f"{sym}: No CE or PE data found for expiry {expiry}.")
                 return
 
-        call_oi_list: List[int] = []
-        for i in range(len(entire_oc)):
-            int_call_oi: int = int(entire_oc.iloc[i, [0]][0])
-            call_oi_list.append(int_call_oi)
-        call_oi_index: int = call_oi_list.index(max(call_oi_list))
-        self.max_call_oi: float = round(max(call_oi_list) / self.round_factor, 1)
-        self.max_call_oi_sp: float = float(entire_oc.iloc[call_oi_index]['Strike Price'])
+            underlying = ce_values[0].get('underlyingValue', 0)
+            df_ce = pd.DataFrame(ce_values)[['strikePrice', 'openInterest', 'changeinOpenInterest']]
+            df_pe = pd.DataFrame(pe_values)[['strikePrice', 'openInterest', 'changeinOpenInterest']]
+            df = pd.merge(df_ce, df_pe, on='strikePrice', how='outer', suffixes=('_call', '_put')).fillna(0)
+            sp = self.get_atm_strike(df, underlying)
+            if not sp:
+                print(f"{sym}: Could not determine ATM strike.")
+                return
+            idx_list = df[df['strikePrice'] == sp].index.tolist()
+            if not idx_list:
+                print(f"{sym}: ATM strike {sp} not found in DataFrame.")
+                return
+            idx = idx_list[0]
 
-        put_oi_list: List[int] = []
-        for i in range(len(entire_oc)):
-            int_put_oi: int = int(entire_oc.iloc[i, [20]][0])
-            put_oi_list.append(int_put_oi)
-        put_oi_index: int = put_oi_list.index(max(put_oi_list))
-        self.max_put_oi: float = round(max(put_oi_list) / self.round_factor, 1)
-        self.max_put_oi_sp: float = float(entire_oc.iloc[put_oi_index]['Strike Price'])
+            strikes_data = []
+            ce_add_strikes = []
+            ce_exit_strikes = []
+            pe_add_strikes = []
+            pe_exit_strikes = []
+            for i_strike in range(-5, 6):  # Renamed loop variable to avoid conflict
+                if idx + i_strike < 0 or idx + i_strike >= len(df): continue
+                row = df.iloc[idx + i_strike]
+                strike = int(row['strikePrice'])
+                call_oi = int(row['openInterest_call'])
+                put_oi = int(row['openInterest_put'])
+                call_coi = int(row['changeinOpenInterest_call'])
+                put_coi = int(row['changeinOpenInterest_put'])
+                call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
+                put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
+                if call_action == "ADD":
+                    ce_add_strikes.append(str(strike))
+                elif call_action == "EXIT":
+                    ce_exit_strikes.append(str(strike))
+                if put_action == "ADD":
+                    pe_add_strikes.append(str(strike))
+                elif put_action == "EXIT":
+                    pe_exit_strikes.append(str(strike))
+                strikes_data.append({
+                    'strike': strike,
+                    'call_oi': call_oi,
+                    'call_coi': call_coi,
+                    'call_action': call_action,
+                    'put_oi': put_oi,
+                    'put_coi': put_coi,
+                    'put_action': put_action,
+                    'is_atm': i_strike == 0
+                })
+            total_call_oi = sum(df['openInterest_call'])
+            total_put_oi = sum(df['openInterest_put'])
+            pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
 
-        sp_range_list: List[float] = []
-        for i in range(put_oi_index, call_oi_index + 1):
-            sp_range_list.append(float(entire_oc.iloc[i]['Strike Price']))
+            # Ensure atm_index_in_strikes_data is correctly determined
+            atm_index_in_strikes_data = -1
+            for j_strike, s_data in enumerate(strikes_data):  # Renamed loop variable
+                if s_data['strike'] == sp:
+                    atm_index_in_strikes_data = j_strike
+                    break
 
-        self.max_call_oi_2: float
-        self.max_call_oi_sp_2: float
-        self.max_put_oi_2: float
-        self.max_put_oi_sp_2: float
-        if self.max_call_oi_sp == self.max_put_oi_sp:
-            self.max_call_oi_2 = self.max_call_oi
-            self.max_call_oi_sp_2 = self.max_call_oi_sp
-            self.max_put_oi_2 = self.max_put_oi
-            self.max_put_oi_sp_2 = self.max_put_oi_sp
-        elif len(sp_range_list) == 2:
-            self.max_call_oi_2 = round((entire_oc[entire_oc['Strike Price'] == self.max_put_oi_sp].iloc[0, 0]) /
-                                       self.round_factor, 1)
-            self.max_call_oi_sp_2 = self.max_put_oi_sp
-            self.max_put_oi_2 = round((entire_oc[entire_oc['Strike Price'] == self.max_call_oi_sp].iloc[0, 20]) /
-                                      self.round_factor, 1)
-            self.max_put_oi_sp_2 = self.max_call_oi_sp
-        else:
-            call_oi_list_2: List[int] = []
-            for i in range(put_oi_index, call_oi_index):
-                int_call_oi_2: int = int(entire_oc.iloc[i, [0]][0])
-                call_oi_list_2.append(int_call_oi_2)
-            call_oi_index_2: int = put_oi_index + call_oi_list_2.index(max(call_oi_list_2))
-            self.max_call_oi_2 = round(max(call_oi_list_2) / self.round_factor, 1)
-            self.max_call_oi_sp_2 = float(entire_oc.iloc[call_oi_index_2]['Strike Price'])
+            if atm_index_in_strikes_data == -1:
+                print(f"{sym}: ATM strike {sp} not found in filtered strikes_data, using default 5th element.")
+                atm_index_in_strikes_data = 5  # Fallback, assuming 5th element is ATM if -5 to +5 range is used
 
-            put_oi_list_2: List[int] = []
-            for i in range(put_oi_index + 1, call_oi_index + 1):
-                int_put_oi_2: int = int(entire_oc.iloc[i, [20]][0])
-                put_oi_list_2.append(int_put_oi_2)
-            put_oi_index_2: int = put_oi_index + 1 + put_oi_list_2.index(max(put_oi_list_2))
-            self.max_put_oi_2 = round(max(put_oi_list_2) / self.round_factor, 1)
-            self.max_put_oi_sp_2 = float(entire_oc.iloc[put_oi_index_2]['Strike Price'])
+            atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
+            atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
+            diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
+            sentiment = self.get_sentiment(diff, pcr)
+            concise_add_exit_parts = []
+            if ce_add_strikes:
+                concise_add_exit_parts.append(f"CE Add: {', '.join(sorted(ce_add_strikes))}")
+            if pe_add_strikes:
+                concise_add_exit_parts.append(f"PE Add: {', '.join(sorted(pe_add_strikes))}")
+            if ce_exit_strikes:
+                concise_add_exit_parts.append(f"CE Exit: {', '.join(sorted(ce_exit_strikes))}")
+            if pe_exit_strikes:
+                concise_add_exit_parts.append(f"PE Exit: {', '.join(sorted(pe_exit_strikes))}")
+            concise_add_exit_string = " | ".join(concise_add_exit_parts) if concise_add_exit_parts else "No Change"
+            summary = {
+                'time': datetime.datetime.now().strftime("%H:%M"),
+                'sp': int(sp),
+                'value': int(round(underlying)),
+                'call_oi': round(atm_call_coi / 1000, 1),
+                'put_oi': round(atm_put_coi / 1000, 1),
+                'pcr': pcr,
+                'sentiment': sentiment,
+                'expiry': expiry,
+                'add_exit': concise_add_exit_string
+            }
+            result = {'summary': summary, 'strikes': strikes_data}
 
-        total_call_oi: int = sum(call_oi_list)
-        total_put_oi: int = sum(put_oi_list)
-        self.put_call_ratio: float
-        try:
-            self.put_call_ratio = round(total_put_oi / total_call_oi, 2)
-        except ZeroDivisionError:
-            self.put_call_ratio = 0
-
-        try:
-            index: int = int(entire_oc[entire_oc['Strike Price'] == self.sp].index.tolist()[0])
-        except IndexError as err:
-            print(err, sys.exc_info()[0], "10")
-            messagebox.showerror(title="Error",
-                                 message="Incorrect Strike Price.\nPlease enter correct Strike Price.")
-            self.root.destroy()
-            return
-
-        a: pandas.DataFrame = entire_oc[['Change in Open Interest']][entire_oc['Strike Price'] == self.sp]
-        b1: pandas.Series = a.iloc[:, 0]
-        c1: int = int(b1.get(index))
-        b2: pandas.Series = entire_oc.iloc[:, 1]
-        c2: int = int(b2.get((index + 1), 'Change in Open Interest'))
-        b3: pandas.Series = entire_oc.iloc[:, 1]
-        c3: int = int(b3.get((index + 2), 'Change in Open Interest'))
-        if isinstance(c2, str):
-            c2 = 0
-        if isinstance(c3, str):
-            c3 = 0
-        self.call_sum: float = round((c1 + c2 + c3) / self.round_factor, 1)
-        if self.call_sum == -0:
-            self.call_sum = 0.0
-        self.call_boundary: float = round(c3 / self.round_factor, 1)
-
-        o1: pandas.Series = a.iloc[:, 1]
-        p1: int = int(o1.get(index))
-        o2: pandas.Series = entire_oc.iloc[:, 19]
-        p2: int = int(o2.get((index + 1), 'Change in Open Interest'))
-        p3: int = int(o2.get((index + 2), 'Change in Open Interest'))
-        self.p4: int = int(o2.get((index + 4), 'Change in Open Interest'))
-        o3: pandas.Series = entire_oc.iloc[:, 1]
-        self.p5: int = int(o3.get((index + 4), 'Change in Open Interest'))
-        self.p6: int = int(o3.get((index - 2), 'Change in Open Interest'))
-        self.p7: int = int(o2.get((index - 2), 'Change in Open Interest'))
-        if isinstance(p2, str):
-            p2 = 0
-        if isinstance(p3, str):
-            p3 = 0
-        if isinstance(self.p4, str):
-            self.p4 = 0
-        if isinstance(self.p5, str):
-            self.p5 = 0
-        self.put_sum: float = round((p1 + p2 + p3) / self.round_factor, 1)
-        self.put_boundary: float = round(p1 / self.round_factor, 1)
-        self.difference: float = round(self.call_sum - self.put_sum, 1)
-        self.call_itm: float
-        if self.p5 == 0:
-            self.call_itm = 0.0
-        else:
-            self.call_itm = round(self.p4 / self.p5, 1)
-            if self.call_itm == -0:
-                self.call_itm = 0.0
-        if isinstance(self.p6, str):
-            self.p6 = 0
-        if isinstance(self.p7, str):
-            self.p7 = 0
-        self.put_itm: float
-        if self.p7 == 0:
-            self.put_itm = 0.0
-        else:
-            self.put_itm = round(self.p6 / self.p7, 1)
-            if self.put_itm == -0:
-                self.put_itm = 0.0
-
-        if self.stop:
-            return
-
-        self.set_values()
-
-        if self.save_oc:
+            # --- Start: Integration of PCR and Max Pain logic ---
+            # Get LTP for Max Pain calculation using nsetools
             try:
-                entire_oc.to_csv(
-                    f"NSE-OCA-{self.index if self.option_mode == 'Index' else self.stock}-{self.expiry_date}-Full.csv",
-                    index=False)
-            except PermissionError as err:
-                print(err, sys.exc_info()[0], "11")
-                messagebox.showerror(title="Export Failed",
-                                     message=f"Failed to access NSE-OCA-"
-                                             f"{self.index if self.option_mode == 'Index' else self.stock}-"
-                                             f"{self.expiry_date}-Full.csv.\n"
-                                             f"Permission Denied. Try closing any apps using it.")
-            except Exception as err:
-                print(err, sys.exc_info()[0], "16")
+                # nsetools symbol names are slightly different
+                nse_sym = sym.replace("NIFTY", "NIFTY 50").replace("BANKNIFTY", "NIFTY BANK").replace("FINNIFTY",
+                                                                                                      "NIFTY FIN SERVICE")
+                ltp_data = self.nse_tool.get_index_quote(nse_sym)
+                ltp = ltp_data.get('lastPrice', underlying)  # Fallback to underlying if nsetools fails
+            except Exception as e:
+                print(f"Error fetching LTP for {sym} using nsetools: {e}. Using underlying value.")
+                ltp = underlying
 
-        if self.first_run:
-            if self.update:
-                self.check_for_updates()
-            self.first_run = False
-        if self.str_current_time == '15:30:00' and not self.stop and self.auto_stop \
-                and self.previous_date == datetime.datetime.strptime(time.strftime("%d-%b-%Y", time.localtime()),
-                                                                     "%d-%b-%Y").date():
-            self.stop = True
-            self.options.entryconfig(self.options.index(0), label="Start")
-            messagebox.showinfo(title="Market Closed", message="Retrieving new data has been stopped.")
+            # Prepare dataframes for Max Pain
+            ce_dt_MaxPain = pd.DataFrame(ce_values)
+            pe_dt_MaxPain = pd.DataFrame(pe_values)
+            max_pain_df = self._calculate_max_pain(sym, ce_dt_MaxPain, pe_dt_MaxPain, ltp)
+
+            # Prepare data for OI charts (top 10)
+            ce_dt_for_charts = pd.DataFrame(ce_values).sort_values(['openInterest'], ascending=False)
+            pe_dt_for_charts = pd.DataFrame(pe_values).sort_values(['openInterest'], ascending=False)
+            final_ce_data = ce_dt_for_charts[['strikePrice', 'openInterest']].iloc[:10].to_dict(orient='records')
+            final_pe_data = pe_dt_for_charts[['strikePrice', 'openInterest']].iloc[:10].to_dict(orient='records')
+
+            # --- End: Integration of PCR and Max Pain logic ---
+
+            with data_lock:
+                shared_data[sym] = result
+                # Update live feed summary
+                if initial_underlying_values[sym] is None:
+                    initial_underlying_values[sym] = float(underlying)  # Set baseline
+                change = underlying - initial_underlying_values[sym]
+                percentage_change = (change / initial_underlying_values[sym]) * 100 if initial_underlying_values[
+                    sym] else 0
+                shared_data[sym]['live_feed_summary'] = {
+                    'current_value': int(round(underlying)),
+                    'change': round(change, 2),
+                    'percentage_change': round(percentage_change, 2)
+                }
+                # Add chart data (Max Pain, CE OI, PE OI) to shared_data
+                shared_data[sym]['max_pain_chart_data'] = max_pain_df.to_dict(orient='records')
+                shared_data[sym]['ce_oi_chart_data'] = final_ce_data
+                shared_data[sym]['pe_oi_chart_data'] = final_pe_data
+                # Add PCR chart data to shared_data (even if not updated this cycle, it's the current state)
+                shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
+
+
+            print(f"{sym} LIVE DATA UPDATED | SP: {sp} | PCR: {pcr} | {summary['add_exit']}")
+            broadcast_live_update() # This sends the updated shared_data, including pcr_chart_data
+
+            now = time.time()
+            # History update logic (every UPDATE_INTERVAL)
+            if now - last_history_update[sym] >= UPDATE_INTERVAL:
+                with data_lock:
+                    todays_history[sym].append(summary)
+                    # Now update pcr_graph_data for charting ONLY when history is updated (2-min interval)
+                    if sym != "INDIAVIX":
+                        self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
+                        # Keep pcr_graph_data manageable (e.g., last X points for a reasonable graph window)
+                        if len(self.pcr_graph_data[sym]) > (60 / (UPDATE_INTERVAL / 60)) * 6: # e.g., 6 hours of 2-min data
+                            self.pcr_graph_data[sym].pop(0)
+                        self.last_pcr_graph_update_time[sym] = now # Update the last time PCR graph data was added
+                    # Update pcr_chart_data in shared_data to reflect the newly added point
+                    shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
+
+                broadcast_history_append(sym, summary)
+                last_history_update[sym] = now
+                self._save_db(sym, summary)  # Save to DB with history update frequency
+            # Telegram alert logic (every UPDATE_INTERVAL)
+            if now - last_alert[sym] >= UPDATE_INTERVAL:
+                self.send_alert(sym, summary)
+                last_alert[sym] = now
+        except requests.exceptions.RequestException as req_err:
+            print(f"{sym} network error: {req_err}")
+        except Exception as e:
+            print(f"{sym} error: {e}")
+
+    def _process_sensex_data(self, sym: str):
+        if not DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN == "YOUR_ACCESS_TOKEN":
+            print("SENSEX: Using mock data (DhanHQ keys not configured or default)")
+            self._mock_sensex(sym)  # Pass sym to mock function
             return
-        self.root.after((self.seconds * 1000), self.main)
-        return
+        try:
+            payload = {"symbol": "SENSEX", "instrument": "INDEX", "expiry": "ALL"}
+            resp = requests.post(self.url_dhan, headers=self.dhan_headers, json=payload, timeout=15)
+            resp.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            data = resp.json()
+            if data.get('status') != 'success': raise Exception(
+                f"DhanHQ API failed: {data.get('message', 'Unknown error')}")
+            chain = data.get('data', [])
+            if not chain: raise Exception("No data received from DhanHQ API")
+            underlying = chain[0].get('underlyingValue', 0)
+            df = pd.DataFrame(chain)
+            df = df[['strikePrice', 'callOI', 'callChangeInOI', 'putOI', 'putChangeInOI']].fillna(0)
+            sp = self.get_atm_strike(df, underlying)
+            if not sp:
+                print(f"{sym}: Could not determine ATM strike from DhanHQ data.")
+                return
+            idx_list = df[df['strikePrice'] == sp].index.tolist()
+            if not idx_list:
+                print(f"{sym}: ATM strike {sp} not found in DhanHQ DataFrame.")
+                return
+            idx = idx_list[0]
 
-    @staticmethod
-    def create_instance() -> None:
-        master_window: Tk = Tk()
-        Nse(master_window)
-        master_window.mainloop()
+            strikes_data = []
+            ce_add_strikes = []
+            ce_exit_strikes = []
+            pe_add_strikes = []
+            pe_exit_strikes = []
+            for i_strike in range(-5, 6):  # Renamed loop variable
+                if idx + i_strike < 0 or idx + i_strike >= len(df): continue
+                row = df.iloc[idx + i_strike]
+                strike = int(row['strikePrice'])
+                call_oi = int(row['callOI'])
+                put_oi = int(row['putOI'])
+                call_coi = int(row['callChangeInOI'])
+                put_coi = int(row['putChangeInOI'])
+                call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
+                put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
+                if call_action == "ADD":
+                    ce_add_strikes.append(str(strike))
+                elif call_action == "EXIT":
+                    ce_exit_strikes.append(str(strike))
+                if put_action == "ADD":
+                    pe_add_strikes.append(str(strike))
+                elif put_action == "EXIT":
+                    pe_exit_strikes.append(str(strike))
+                strikes_data.append({
+                    'strike': strike,
+                    'call_oi': call_oi,
+                    'call_coi': call_coi,
+                    'call_action': call_action,
+                    'put_oi': put_oi,
+                    'put_coi': put_coi,
+                    'put_action': put_action,
+                    'is_atm': i_strike == 0
+                })
+            total_call_oi = sum(df['callOI'])
+            total_put_oi = sum(df['putOI'])
+            pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
+
+            # Ensure atm_index_in_strikes_data is correctly determined
+            atm_index_in_strikes_data = -1
+            for j_strike, s_data in enumerate(strikes_data):  # Renamed loop variable
+                if s_data['strike'] == sp:
+                    atm_index_in_strikes_data = j_strike
+                    break
+
+            if atm_index_in_strikes_data == -1:
+                print(f"{sym}: ATM strike {sp} not found in filtered strikes_data, using default 5th element.")
+                atm_index_in_strikes_data = 5  # Fallback, assuming 5th element is ATM if -5 to +5 range is used
+
+            atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
+            atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
+
+            diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
+            sentiment = self.get_sentiment(diff, pcr)
+            concise_add_exit_parts = []
+            if ce_add_strikes:
+                concise_add_exit_parts.append(f"CE Add: {', '.join(sorted(ce_add_strikes))}")
+            if pe_add_strikes:
+                concise_add_exit_parts.append(f"PE Add: {', '.join(sorted(pe_add_strikes))}")
+            if ce_exit_strikes:
+                concise_add_exit_parts.append(f"CE Exit: {', '.join(sorted(ce_exit_strikes))}")
+            if pe_exit_strikes:
+                concise_add_exit_parts.append(f"PE Exit: {', '.join(sorted(pe_exit_strikes))}")
+            concise_add_exit_string = " | ".join(concise_add_exit_parts) if concise_add_exit_parts else "No Change"
+            summary = {
+                'time': datetime.datetime.now().strftime("%H:%M"),
+                'sp': int(sp),
+                'value': int(round(underlying)),
+                'call_oi': round(atm_call_coi / 1000, 1),
+                'put_oi': round(atm_put_coi / 1000, 1),
+                'pcr': pcr,
+                'sentiment': sentiment,
+                'expiry': chain[0].get('expiryDate', ''),  # Assuming first item has expiryDate
+                'add_exit': concise_add_exit_string
+            }
+            result = {'summary': summary, 'strikes': strikes_data}
+
+            # --- Start: Integration of PCR and Max Pain logic for SENSEX ---
+            ltp = underlying  # Use underlying from DhanHQ as LTP
+
+            # Prepare dataframes for Max Pain
+            ce_dt_MaxPain = pd.DataFrame(chain)  # Use original chain data
+            pe_dt_MaxPain = pd.DataFrame(chain)  # Use original chain data
+            max_pain_df = self._calculate_max_pain(sym, ce_dt_MaxPain, pe_dt_MaxPain, ltp, dhan_data=True)
+
+            # Prepare data for OI charts (top 10)
+            ce_dt_for_charts = pd.DataFrame(chain).sort_values(['callOI'], ascending=False)
+            pe_dt_for_charts = pd.DataFrame(chain).sort_values(['putOI'], ascending=False)
+            final_ce_data = ce_dt_for_charts[['strikePrice', 'callOI']].iloc[:10].rename(
+                columns={'callOI': 'openInterest'}).to_dict(orient='records')
+            final_pe_data = pe_dt_for_charts[['strikePrice', 'putOI']].iloc[:10].rename(
+                columns={'putOI': 'openInterest'}).to_dict(orient='records')
+
+            # --- End: Integration of PCR and Max Pain logic ---
+
+            with data_lock:
+                shared_data[sym] = result
+                # Update live feed summary
+                if initial_underlying_values[sym] is None:
+                    initial_underlying_values[sym] = float(underlying)  # Set baseline
+                change = underlying - initial_underlying_values[sym]
+                percentage_change = (change / initial_underlying_values[sym]) * 100 if initial_underlying_values[
+                    sym] else 0
+                shared_data[sym]['live_feed_summary'] = {
+                    'current_value': int(round(underlying)),
+                    'change': round(change, 2),
+                    'percentage_change': round(percentage_change, 2)
+                }
+                # Add chart data (Max Pain, CE OI, PE OI) to shared_data
+                shared_data[sym]['max_pain_chart_data'] = max_pain_df.to_dict(orient='records')
+                shared_data[sym]['ce_oi_chart_data'] = final_ce_data
+                shared_data[sym]['pe_oi_chart_data'] = final_pe_data
+                # Add PCR chart data to shared_data (even if not updated this cycle, it's the current state)
+                shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
+
+            print(f"SENSEX REAL DATA UPDATED | SP: {sp} | PCR: {pcr} | {summary['add_exit']}")
+            broadcast_live_update()
+            now = time.time()
+            if now - last_history_update[sym] >= UPDATE_INTERVAL:
+                with data_lock:
+                    todays_history[sym].append(summary)
+                    # Now update pcr_graph_data for charting ONLY when history is updated (2-min interval)
+                    if sym != "INDIAVIX":
+                        self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
+                        if len(self.pcr_graph_data[sym]) > (60 / (UPDATE_INTERVAL / 60)) * 6: # e.g., 6 hours of 2-min data
+                            self.pcr_graph_data[sym].pop(0)
+                        self.last_pcr_graph_update_time[sym] = now
+                    # Update pcr_chart_data in shared_data to reflect the newly added point
+                    shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
+
+                broadcast_history_append(sym, summary)
+                last_history_update[sym] = now
+                self._save_db(sym, summary)
+            if now - last_alert[sym] >= UPDATE_INTERVAL:
+                self.send_alert(sym, summary)
+                last_alert[sym] = now
+        except requests.exceptions.RequestException as req_err:
+            print(f"SENSEX DhanHQ network error: {req_err}. Falling back to mock.")
+            self._mock_sensex(sym)
+        except Exception as e:
+            print(f"SENSEX DhanHQ error: {e}. Falling back to mock.")
+            self._mock_sensex(sym)
+
+    def _process_indiavix_data(self, sym: str):
+        # --- WEB SCRAPING INDIAVIX DATA FROM GROWW.IN ---
+        current_vix: Optional[float] = None
+        scraped_change = 0.0
+        scraped_percentage_change = 0.0
+        sentiment = "Neutral"
+        try:
+            groww_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            resp = requests.get(self.url_indiavix_groww, headers=groww_headers, timeout=10)
+            resp.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            soup = BeautifulSoup(resp.text, 'lxml')
+            # --- Updated CSS Selectors for Groww.in ---
+            # Main VIX value
+            vix_value_element = soup.select_one('div.gsc84Text.gsi216Text.gsi216Flex:nth-child(1) div.gsc84Text')
+            if vix_value_element:
+                current_vix = float(vix_value_element.text.replace(',', '').strip())
+            else:
+                print("INDIAVIX scraping: Could not find VIX value element. Falling back to mock data.")
+                self._mock_indiavix(sym)
+                return
+            # Change and Percentage Change
+            # Look for the container holding these two values, then extract them
+            change_container = soup.select_one(
+                'div.gsi216Flex.gsi216Flex.gsi216Flex.gsi216Flex')  # This targets the flex container holding both
+
+            if change_container:
+                # Find all divs with class 'gsc84Text' within this container
+                change_elements = change_container.find_all('div', class_='gsc84Text')
+
+                if len(change_elements) >= 2:  # Expect at least 2: one for change, one for percentage
+                    scraped_change_text = change_elements[0].text.replace(',', '').strip()
+                    scraped_percentage_change_text = change_elements[1].text.replace('(', '').replace(')', '').replace(
+                        '%', '').strip()
+
+                    scraped_change = float(scraped_change_text)
+                    scraped_percentage_change = float(scraped_percentage_change_text)
+
+                    # Determine sentiment based on change
+                    if scraped_change > 0:
+                        sentiment = "Mild Bearish"  # VIX up means more fear
+                    elif scraped_change < 0:
+                        sentiment = "Mild Bullish"  # VIX down means less fear
+                    else:
+                        sentiment = "Neutral"
+                else:
+                    print(
+                        "INDIAVIX scraping: Could not find both change/pct change elements within container. Using default change/pct change for VIX.")
+            else:
+                print("INDIAVIX scraping: Could not find change container. Using default change/pct change for VIX.")
+            # --- End Updated CSS Selectors ---
+
+            if current_vix is None:  # If scraping failed completely, ensure mock is called
+                self._mock_indiavix(sym)
+                return
+
+            # Set initial underlying value if not set
+            with data_lock:
+                if initial_underlying_values[sym] is None:
+                    # If we successfully scraped current VIX and change, calculate baseline.
+                    # Otherwise, just set current_vix as the baseline.
+                    if current_vix is not None:
+                        # Attempt to calculate initial value if change is known
+                        if scraped_change is not None:
+                            initial_underlying_values[sym] = current_vix - scraped_change
+                        else:
+                            initial_underlying_values[sym] = current_vix  # Fallback if change not scraped
+
+            # VIX doesn't have OI, PCR, SP, etc. so we adapt the summary structure
+            # SP field will store 'change', PCR field will store 'percentage_change'
+            summary = {
+                'time': datetime.datetime.now().strftime("%H:%M"),
+                'sp': round(scraped_change, 2),  # Store change in 'sp' field for history table display
+                'value': round(current_vix, 2),  # VIX value in 'value' field
+                'call_oi': 0.0,  # Not applicable for VIX
+                'put_oi': 0.0,  # Not applicable for VIX
+                'pcr': round(scraped_percentage_change, 2),  # Store pct change in 'pcr' field
+                'sentiment': sentiment,
+                'expiry': "N/A",  # Not applicable for VIX
+                'add_exit': "N/A"  # No specific OI Changes for VIX
+            }
+            result = {'summary': summary, 'strikes': []}  # VIX has no option chain strikes
+            with data_lock:
+                shared_data[sym] = result
+                shared_data[sym]['live_feed_summary'] = {
+                    'current_value': round(current_vix, 2),
+                    'change': round(scraped_change, 2),
+                    'percentage_change': round(scraped_percentage_change, 2)
+                }
+            print(
+                f"{sym} SCRAPED DATA UPDATED | Value: {current_vix:.2f} | Change: {scraped_change:+.2f} | Pct: {scraped_percentage_change:+.2f}%")
+            broadcast_live_update()
+            now = time.time()
+            if now - last_history_update[sym] >= UPDATE_INTERVAL:
+                with data_lock:
+                    todays_history[sym].append(summary)
+                broadcast_history_append(sym, summary)
+                last_history_update[sym] = now
+                self._save_db(sym, summary)
+            if now - last_alert[sym] >= UPDATE_INTERVAL:
+                self.send_alert(sym, summary)
+                last_alert[sym] = now
+        except requests.exceptions.RequestException as req_err:
+            print(f"INDIAVIX scraping network error: {req_err}. Falling back to mock data.")
+            self._mock_indiavix(sym)
+            return
+        except (ValueError, AttributeError, IndexError) as parse_err:  # Added IndexError for list access
+            print(
+                f"INDIAVIX scraping parsing error: {parse_err}. HTML structure might have changed. Falling back to mock data.")
+            self._mock_indiavix(sym)
+            return
+        except Exception as e:
+            print(f"INDIAVIX unexpected scraping error: {e}. Falling back to mock data.")
+            self._mock_indiavix(sym)
+            return
+
+    def _mock_indiavix(self, sym: str):
+        """Fallback mock data for INDIAVIX if scraping fails."""
+        current_vix = random.uniform(10.0, 30.0)
+        with data_lock:
+            if initial_underlying_values[sym] is None:
+                # Set a plausible initial value for mock if not already set
+                initial_underlying_values[sym] = current_vix - random.uniform(-2.0, 2.0)
+                if initial_underlying_values[sym] < 0:
+                    initial_underlying_values[sym] = 10.0  # Ensure it's not negative
+
+            # Calculate change and percentage change based on the initial value
+            change = current_vix - (
+                initial_underlying_values[sym] if initial_underlying_values[sym] is not None else current_vix)
+            percentage_change = (change / initial_underlying_values[sym]) * 100 if initial_underlying_values[sym] else 0
+
+        sentiment = "Neutral"
+        if change > 0:
+            sentiment = "Mild Bearish"
+        elif change < 0:
+            sentiment = "Mild Bullish"
+
+        summary = {
+            'time': datetime.datetime.now().strftime("%H:%M"),
+            'sp': round(change, 2),  # Store change in 'sp' field for consistency with history table
+            'value': round(current_vix, 2),  # VIX value in 'value' field
+            'call_oi': 0.0,
+            'put_oi': 0.0,
+            'pcr': round(percentage_change, 2),  # Store pct change in 'pcr' field
+            'sentiment': sentiment,
+            'expiry': "N/A",
+            'add_exit': "Mock Data"
+        }
+        result = {'summary': summary, 'strikes': []}
+        with data_lock:
+            shared_data[sym] = result
+            shared_data[sym]['live_feed_summary'] = {
+                'current_value': round(current_vix, 2),
+                'change': round(change, 2),
+                'percentage_change': round(percentage_change, 2)
+            }
+        print(
+            f"{sym} MOCK DATA UPDATED | Value: {current_vix:.2f} | Change: {change:+.2f} | Pct: {percentage_change:+.2f}% (Fallback)")
+        broadcast_live_update()
+        now = time.time()
+        if now - last_history_update[sym] >= UPDATE_INTERVAL:
+            with data_lock:
+                todays_history[sym].append(summary)
+            broadcast_history_append(sym, summary)
+            last_history_update[sym] = now
+            self._save_db(sym, summary)
+        if now - last_alert[sym] >= UPDATE_INTERVAL:
+            self.send_alert(sym, summary)
+            last_alert[sym] = now
+
+    def _mock_sensex(self, sym: str):  # Added sym parameter
+        underlying = 75000 + random.randint(-500, 500)
+        sp = round(underlying / 100) * 100
+        strikes_data = []
+        ce_add_strikes = []
+        ce_exit_strikes = []
+        pe_add_strikes = []
+        pe_exit_strikes = []
+        for i_strike in range(-5, 6):  # Renamed loop variable
+            s = sp + i_strike * 100
+            call_coi = random.randint(100, 5000)
+            put_coi = random.randint(100, 5000)
+            call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
+            put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
+            if call_action == "ADD":
+                ce_add_strikes.append(str(s))
+            elif call_action == "EXIT":
+                ce_exit_strikes.append(str(s))
+            if put_action == "ADD":
+                pe_add_strikes.append(str(s))
+            elif put_action == "EXIT":
+                pe_exit_strikes.append(str(s))
+            strikes_data.append({
+                'strike': s,
+                'call_oi': random.randint(100, 5000),
+                'call_coi': call_coi,
+                'call_action': call_action,
+                'put_oi': random.randint(100, 5000),
+                'put_coi': put_coi,
+                'put_action': put_action,
+                'is_atm': i_strike == 0
+            })
+
+        # Corrected: Ensure atm_call_coi and atm_put_coi are derived from strikes_data
+        # assuming the 5th element (index 5) is the ATM strike in a -5 to +5 range.
+        if len(strikes_data) > 5:
+            atm_call_coi = strikes_data[5]['call_coi']
+            atm_put_coi = strikes_data[5]['put_coi']
+        else:
+            # Fallback if strikes_data is not as expected (e.g., less than 11 elements)
+            atm_call_coi = 0
+            atm_put_coi = 0
+
+        diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
+        pcr = round(random.uniform(0.6, 1.4), 2)
+        sentiment = self.get_sentiment(diff, pcr)
+        concise_add_exit_parts = []
+        if ce_add_strikes:
+            concise_add_exit_parts.append(f"CE Add: {', '.join(sorted(ce_add_strikes))}")
+        if pe_add_strikes:
+            concise_add_exit_parts.append(f"PE Add: {', '.join(sorted(pe_add_strikes))}")
+        if ce_exit_strikes:
+            concise_add_exit_parts.append(f"CE Exit: {', '.join(sorted(ce_exit_strikes))}")
+        if pe_exit_strikes:
+            concise_add_exit_parts.append(f"PE Exit: {', '.join(sorted(pe_exit_strikes))}")
+        concise_add_exit_string = " | ".join(concise_add_exit_parts) if concise_add_exit_parts else "No Change"
+        summary = {
+            'time': datetime.datetime.now().strftime("%H:%M"),
+            'sp': int(sp),
+            'value': int(round(underlying)),
+            'call_oi': round(atm_call_coi / 1000, 1),
+            'put_oi': round(atm_put_coi / 1000, 1),
+            'pcr': pcr,
+            'sentiment': sentiment,
+            'expiry': "28-Mar-2025",  # Mock expiry
+            'add_exit': concise_add_exit_string
+        }
+        result = {'summary': summary, 'strikes': strikes_data}
+
+        # --- Start: Integration of PCR and Max Pain logic for SENSEX Mock ---
+        ltp = underlying
+
+        # Generate mock data for Max Pain
+        mock_max_pain_data = []
+        # Ensure a reasonable range of strikes for mock data
+        strike_min = int(sp - 500)
+        strike_max = int(sp + 500)
+        # Ensure strikes are multiples of 100 (typical for SENSEX)
+        strike_min = (strike_min // 100) * 100
+        strike_max = (strike_max // 100) * 100
+
+        for s_val in range(strike_min, strike_max + 1, 100):
+            mock_max_pain_data.append({'StrikePrice': s_val, 'TotalMaxPain': random.randint(10000000000, 100000000000)})
+        mock_max_pain_df = pd.DataFrame(mock_max_pain_data)
+
+        # Simulate min pain around the current sp
+        if not mock_max_pain_df.empty:
+            min_pain_strike = sp + random.choice([-200, 0, 200])
+            # Find the actual strikePrice closest to min_pain_strike in the generated mock data
+            if not mock_max_pain_df.empty:
+                closest_mock_strike = mock_max_pain_df.iloc[
+                    (mock_max_pain_df['StrikePrice'] - min_pain_strike).abs().argsort()[:1]]
+                if not closest_mock_strike.empty:
+                    mock_max_pain_df.loc[closest_mock_strike.index[0], 'TotalMaxPain'] /= random.uniform(2, 5)
+
+        # Prepare mock OI charts (top 10)
+        mock_ce_oi_data = [{'strikePrice': s['strike'], 'openInterest': s['call_oi']} for s in strikes_data[:10]]
+        mock_pe_oi_data = [{'strikePrice': s['strike'], 'openInterest': s['put_oi']} for s in strikes_data[:10]]
+
+        # --- End: Integration of PCR and Max Pain logic for SENSEX Mock ---
+
+        with data_lock:
+            shared_data[sym] = result  # Use sym parameter
+            # Update live feed summary for mock data
+            if initial_underlying_values[sym] is None:
+                initial_underlying_values[sym] = float(underlying)  # Set baseline
+            change = underlying - initial_underlying_values[sym]
+            percentage_change = (change / initial_underlying_values[sym]) * 100 if initial_underlying_values[
+                sym] else 0
+            shared_data[sym]['live_feed_summary'] = {
+                'current_value': int(round(underlying)),
+                'change': round(change, 2),
+                'percentage_change': round(percentage_change, 2)
+            }
+            # Add chart data (Max Pain, CE OI, PE OI) to shared_data for mock
+            shared_data[sym]['max_pain_chart_data'] = mock_max_pain_df.to_dict(orient='records')
+            shared_data[sym]['ce_oi_chart_data'] = mock_ce_oi_data
+            shared_data[sym]['pe_oi_chart_data'] = mock_pe_oi_data
+            # Add PCR chart data to shared_data (even if not updated this cycle, it's the current state)
+            shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
+
+        print(f"{sym} MOCK DATA UPDATED | SP: {sp} | PCR: {pcr} | {summary['add_exit']}")  # Use sym parameter
+        broadcast_live_update()
+        now = time.time()
+        if now - last_history_update[sym] >= UPDATE_INTERVAL:  # Use sym parameter
+            with data_lock:
+                todays_history[sym].append(summary)  # Use sym parameter
+                # Now update pcr_graph_data for charting ONLY when history is updated (2-min interval)
+                if sym != "INDIAVIX":
+                    self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
+                    if len(self.pcr_graph_data[sym]) > (60 / (UPDATE_INTERVAL / 60)) * 6: # e.g., 6 hours of 2-min data
+                        self.pcr_graph_data[sym].pop(0)
+                    self.last_pcr_graph_update_time[sym] = now
+                # Update pcr_chart_data in shared_data to reflect the newly added point
+                shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
+
+            broadcast_history_append(sym, summary)  # Use sym parameter
+            last_history_update[sym] = now  # Use sym parameter
+            self._save_db(sym, summary)  # Use sym parameter
+        if now - last_alert[sym] >= UPDATE_INTERVAL:  # Use sym parameter
+            self.send_alert(sym, summary)  # Use sym parameter
+            last_alert[sym] = now  # Use sym parameter
+
+    def get_atm_strike(self, df: pd.DataFrame, underlying: float) -> Optional[int]:
+        try:
+            strikes = df['strikePrice'].astype(int).unique()
+            if len(strikes) == 0:
+                return None
+            return min(strikes, key=lambda x: abs(x - underlying))
+        except Exception as e:
+            print(f"Error getting ATM strike: {e}")
+            return None
+
+    def get_sentiment(self, diff: float, pcr: float) -> str:
+        if diff > 10 or pcr < 0.7: return "Strong Bearish"
+        if diff < -10 or pcr > 1.3: return "Strong Bullish"
+        if diff > 2 or (0.9 < pcr <= 1.3): return "Mild Bearish"  # Corrected parenthesis for clarity
+        if diff < -2 or (0.7 <= pcr < 0.9): return "Mild Bullish"  # Corrected parenthesis for clarity
+        return "Neutral"
+
+    def send_alert(self, sym: str, row: Dict[str, Any]):
+        # Adjusting message for VIX which doesn't have SP, Call COI, Put COI, PCR in the same way
+        if sym == "INDIAVIX":
+            # Pull directly from live_feed_summary for accuracy in alert
+            live_feed = shared_data.get(sym, {}).get('live_feed_summary', {})
+            msg = f"""
+<b>{sym} LIVE</b>
+<b>Value:</b> <code>{live_feed.get('current_value', row['value']):.2f}</code>
+<b>Change:</b> <code>{live_feed.get('change', 0.0):+.2f}</code> | <b>Pct:</b> <code>{live_feed.get('percentage_change', 0.0):+.2f}%</code>
+<b>Sentiment:</b> <b>{row['sentiment']}</b>
+<b>Notes:</b> <code>{row['add_exit']}</code>
+@aditya_nse_bot
+            """.strip()
+        else:
+            msg = f"""
+<b>{sym} LIVE</b> | <i>{row['expiry']}</i>
+<b>SP:</b> <code>{int(row['sp'])}</code> | <b>Value:</b> <code>{int(row['value'])}</code>
+<b>Call COI:</b> <code>{row['call_oi']:+}</code>K | <b>Put COI:</b> <code>{row['put_oi']:+}</code>K
+<b>PCR:</b> <b>{row['pcr']:.2f}</b>
+<b>OI Change:</b> <code>{row['add_exit']}</code>
+<b>Sentiment:</b> <b>{row['sentiment']}</b>
+@aditya_nse_bot
+            """.strip()
+        send_telegram_text(msg)
+
+    def _save_db(self, sym, row):
+        if not self.conn: return
+        try:
+            current_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.conn.execute(
+                "INSERT INTO history (timestamp, symbol, sp, value, call_oi, put_oi, pcr, sentiment, add_exit) VALUES (?,?,?,?,?,?,?,?,?)",
+                (current_timestamp, sym, row['sp'], row['value'],
+                 row['call_oi'], row['put_oi'], row['pcr'], row['sentiment'], row['add_exit'])
+            )
+            # Optional: Prune old entries for this symbol if MAX_HISTORY_ROWS_DB is exceeded
+            # This keeps the DB from growing infinitely large for a single symbol
+            self.conn.execute("""
+                DELETE FROM history
+                WHERE id NOT IN (
+                    SELECT id FROM history WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?
+                ) AND symbol = ?;
+            """, (sym, MAX_HISTORY_ROWS_DB, sym))
+            self.conn.commit()
+        except Exception as e:
+            print(f"DB save error for {sym}: {e}")
+
+    # --- Methods for Max Pain Calculation ---
+    def _calculate_max_pain(self, sym: str, ce_dt: pd.DataFrame, pe_dt: pd.DataFrame, ltp: float,
+                            dhan_data: bool = False) -> pd.DataFrame:
+        """Calculates Max Pain for a given symbol."""
+        if dhan_data:  # Adjust column names for DhanHQ data
+            MxPn_CE = ce_dt[['strikePrice', 'callOI']].rename(columns={'callOI': 'openInterest'})
+            MxPn_PE = pe_dt[['strikePrice', 'putOI']].rename(columns={'putOI': 'openInterest'})
+        else:  # Standard NSE data
+            MxPn_CE = ce_dt[['strikePrice', 'openInterest']]
+            MxPn_PE = pe_dt[['strikePrice', 'openInterest']]
+
+        MxPn_Df = pd.merge(MxPn_CE, MxPn_PE, on=['strikePrice'], how='outer', suffixes=('_call', '_Put')).fillna(0)
+        # Ensure column names are correct after merge, if not already
+        if 'openInterest_call' not in MxPn_Df.columns and 'openInterest_Put' not in MxPn_Df.columns:
+            MxPn_Df.columns = ['strikePrice', 'openInterest_call', 'openInterest_Put']
 
 
+        StrikePriceList = MxPn_Df['strikePrice'].values.tolist()
+        OiCallList = MxPn_Df['openInterest_call'].values.tolist()
+        OiPutList = MxPn_Df['openInterest_Put'].values.tolist()
+
+        TCVSP = []
+        for p in range(len(StrikePriceList)):
+            mxpn_strike = StrikePriceList[p]
+            tc = self._total_option_pain_for_strike(StrikePriceList, OiCallList, OiPutList, mxpn_strike)
+            TCVSP.insert(p, int(tc))
+
+        max_pain_df = pd.DataFrame(list(zip(StrikePriceList, TCVSP)), columns=["StrikePrice", "TotalMaxPain"])
+        max_pain_df['StrikePrice'] = pd.to_numeric(max_pain_df['StrikePrice'])
+        max_pain_df['TotalMaxPain'] = pd.to_numeric(max_pain_df['TotalMaxPain'])
+
+        # Filter to a reasonable range around the minimum pain strike
+        if not max_pain_df.empty:
+            min_idx = max_pain_df['TotalMaxPain'].idxmin()
+            min_pain_strike = max_pain_df.loc[min_idx, 'StrikePrice']
+
+            # Find closest index to min_pain_strike in the sorted list of strikes
+            strikes_sorted = sorted(StrikePriceList)
+            try:
+                closest_strike_index_in_sorted_list = strikes_sorted.index(min_pain_strike)
+            except ValueError:
+                # If min_pain_strike isn't exactly in strikes_sorted (due to float comparison or missing strike),
+                # find the nearest one.
+                closest_strike_index_in_sorted_list = \
+                    (pd.Series(strikes_sorted) - min_pain_strike).abs().argsort()[:1].iloc[0]
+
+            # Define a window around the min pain strike
+            # Get the actual index in the *original* StrikePriceList for slicing the dataframe
+            # This is safer than relying on implicit index after sorting.
+            start_index_for_window = max(0, closest_strike_index_in_sorted_list - 8)
+            end_index_for_window = min(len(strikes_sorted), closest_strike_index_in_sorted_list + 8)
+
+            strikes_in_window = strikes_sorted[start_index_for_window:end_index_for_window]
+
+            # Filter the DataFrame to only include strikes within this window
+            max_pain_chart_df = max_pain_df[max_pain_df['StrikePrice'].isin(strikes_in_window)].reset_index(drop=True)
+            return max_pain_chart_df
+        return pd.DataFrame(columns=["StrikePrice", "TotalMaxPain"])
+
+    def _total_option_pain_for_strike(self, strike_price_list: List[float], oi_call_list: List[int],
+                                      oi_put_list: List[int], mxpn_strike: float) -> float:
+        """Calculates total option pain for a given strike price."""
+        total_cash_value = 0
+
+        for k in range(len(strike_price_list)):
+            strike = strike_price_list[k]
+            call_oi = oi_call_list[k]
+            put_oi = oi_put_list[k]
+
+            # Intrinsic value for Call (max(0, assumed_spot - strike))
+            # If the current spot (mxpn_strike) is below the strike, the call is OTM, intrinsic value is 0.
+            # Otherwise, intrinsic value is mxpn_strike - strike.
+            intrinsic_call = max(0, mxpn_strike - strike)
+
+            # Intrinsic value for Put (max(0, strike - assumed_spot))
+            # If the current spot (mxpn_strike) is above the strike, the put is OTM, intrinsic value is 0.
+            # Otherwise, intrinsic value is strike - mxpn_strike.
+            intrinsic_put = max(0, strike - mxpn_strike)
+
+            total_cash_value += (intrinsic_call * call_oi)
+            total_cash_value += (intrinsic_put * put_oi)
+
+        return total_cash_value
+
+
+# --------------------------------------------------------------------------- #
+# CREATE HTML & CSS
+# --------------------------------------------------------------------------- #
+def create_html():
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSE OCA PRO WEB</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Chart.js -->
+</head>
+<body>
+    <div class="container">
+        <h1>NSE OCA PRO LIVE DASHBOARD</h1>
+        <div class="live-feed-container"> <!-- NEW LIVE FEED CONTAINER -->
+            <div class="live-feed-item">
+                <span class="feed-symbol">NIFTY:</span>
+                <span id="feed-nifty-value" class="feed-value">-</span>
+                <span id="feed-nifty-change" class="feed-change">-</span>
+                <span id="feed-nifty-pct" class="feed-pct">-</span>
+            </div>
+            <div class="live-feed-item">
+                <span class="feed-symbol">FINNIFTY:</span>
+                <span id="feed-finnifty-value" class="feed-value">-</span>
+                <span id="feed-finnifty-change" class="feed-change">-</span>
+                <span id="feed-finnifty-pct" class="feed-pct">-</span>
+            </div>
+            <div class="live-feed-item">
+                <span class="feed-symbol">BANKNIFTY:</span>
+                <span id="feed-banknifty-value" class="feed-value">-</span>
+                <span id="feed-banknifty-change" class="feed-change">-</span>
+                <span id="feed-banknifty-pct" class="feed-pct">-</span>
+            </div>
+            <div class="live-feed-item">
+                <span class="feed-symbol">SENSEX:</span>
+                <span id="feed-sensex-value" class="feed-value">-</span>
+                <span id="feed-sensex-change" class="feed-change">-</span>
+                <span id="feed-sensex-pct" class="feed-pct">-</span>
+            </div>
+            <div class="live-feed-item"> <!-- NEW INDIAVIX LIVE FEED ITEM -->
+                <span class="feed-symbol">INDIAVIX:</span>
+                <span id="feed-indiavix-value" class="feed-value">-</span>
+                <span id="feed-indiavix-change" class="feed-change">-</span>
+                <span id="feed-indiavix-pct" class="feed-pct">-</span>
+            </div>
+        </div> <!-- END NEW LIVE FEED CONTAINER -->
+        <div class="grid">
+            <div class="card" id="NIFTY_summary">
+                <h2>NIFTY</h2>
+                <p>SP: <span id="nifty-sp">-</span></p>
+                <p>Value: <span id="nifty-value">-</span></p>
+                <p>Call COI: <span id="nifty-call">-</span>K</p>
+                <p>Put COI: <span id="nifty-put">-</span>K</p>
+                <p>PCR: <span id="nifty-pcr">-</span></p>
+                <p>Sentiment: <span id="nifty-sentiment">-</span></p>
+                <p>OI Changes: <span id="nifty-add-exit">-</span></p>
+            </div>
+            <div class="card" id="FINNIFTY_summary">
+                <h2>FINNIFTY</h2>
+                <p>SP: <span id="finnifty-sp">-</span></p>
+                <p>Value: <span id="finnifty-value">-</span></p>
+                <p>Call COI: <span id="finnifty-call">-</span>K</p>
+                <p>Put COI: <span id="finnifty-put">-</span>K</p>
+                <p>PCR: <span id="finnifty-pcr">-</span></p>
+                <p>Sentiment: <span id="finnifty-sentiment">-</span></p>
+                <p>OI Changes: <span id="finnifty-add-exit">-</span></p>
+            </div>
+            <div class="card" id="BANKNIFTY_summary">
+                <h2>BANKNIFTY</h2>
+                <p>SP: <span id="banknifty-sp">-</span></p>
+                <p>Value: <span id="banknifty-value">-</span></p>
+                <p>Call COI: <span id="banknifty-call">-</span>K</p>
+                <p>Put COI: <span id="banknifty-put">-</span>K</p>
+                <p>PCR: <span id="banknifty-pcr">-</span></p>
+                <p>Sentiment: <span id="banknifty-sentiment">-</span></p>
+                <p>OI Changes: <span id="banknifty-add-exit">-</span></p>
+            </div>
+            <div class="card" id="SENSEX_summary">
+                <h2>SENSEX</h2>
+                <p>SP: <span id="sensex-sp">-</span></p>
+                <p>Value: <span id="sensex-value">-</span></p>
+                <p>Call COI: <span id="sensex-call">-</span>K</p>
+                <p>Put COI: <span id="sensex-put">-</span>K</p>
+                <p>PCR: <span id="sensex-pcr">-</span></p>
+                <p>Sentiment: <span id="sensex-sentiment">-</span></p>
+                <p>OI Changes: <span id="sensex-add-exit">-</span></p>
+            </div>
+            <div class="card" id="INDIAVIX_summary"> <!-- NEW INDIAVIX SUMMARY CARD -->
+                <h2>INDIAVIX</h2>
+                <p>Value: <span id="indiavix-value">-</span></p>
+                <p>Change: <span id="indiavix-change">-</span></p>
+                <p>Pct Change: <span id="indiavix-pct">-</span>%</p>
+                <p>Sentiment: <span id="indiavix-sentiment">-</span></p>
+                <p>Notes: <span id="indiavix-add-exit">N/A</span></p> <!-- VIX has no OI changes -->
+            </div>
+        </div>
+        <div class="tabs">
+            <button class="tablink active" onclick="openTab(event, 'NIFTY')" id="NIFTYOpen" data-symbol="NIFTY">NIFTY</button>
+            <button class="tablink" onclick="openTab(event, 'FINNIFTY')" data-symbol="FINNIFTY">FINNIFTY</button>
+            <button class="tablink" onclick="openTab(event, 'BANKNIFTY')" data-symbol="BANKNIFTY">BANKNIFTY</button>
+            <button class="tablink" onclick="openTab(event, 'SENSEX')" data-symbol="SENSEX">SENSEX</button>
+            <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button> <!-- NEW INDIAVIX TAB BUTTON -->
+        </div>
+        <div id="NIFTY_tab" class="tabcontent" style="display: block;">
+            <h3 style="margin-top: 20px;">NIFTY Today's Updates (appends every 2 min)</h3>
+            <div class="table-container">
+                <table id="nifty-todays-history-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Today's history rows will be dynamically added here -->
+                    </tbody>
+                </table>
+            </div>
+            <h3>NIFTY Charts</h3>
+            <div class="chart-grid">
+                <div class="chart-container"><canvas id="nifty-pcr-chart"></canvas></div>
+                <div class="chart-container"><canvas id="nifty-max-pain-chart"></canvas></div>
+                <div class="chart-container"><canvas id="nifty-ce-oi-chart"></canvas></div>
+                <div class="chart-container"><canvas id="nifty-pe-oi-chart"></canvas></div>
+            </div>
+            <h3>NIFTY Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <div class="table-container">
+                <table id="nifty-table">
+                    <thead><tr>
+                        <th>Strike</th>
+                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
+                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3 style="margin-top: 20px;">NIFTY Historical Data</h3>
+            <div class="history-controls">
+                <label for="nifty-history-date">Date:</label>
+                <input type="date" id="nifty-history-date" class="history-date-picker">
+                <button onclick="loadHistoricalData('NIFTY')">Load History</button>
+            </div>
+            <div class="table-container">
+                <table id="nifty-historical-data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Historical data rows will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div id="FINNIFTY_tab" class="tabcontent">
+            <h3 style="margin-top: 20px;">FINNIFTY Today's Updates (appends every 2 min)</h3>
+            <div class="table-container">
+                <table id="finnifty-todays-history-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3>FINNIFTY Charts</h3>
+            <div class="chart-grid">
+                <div class="chart-container"><canvas id="finnifty-pcr-chart"></canvas></div>
+                <div class="chart-container"><canvas id="finnifty-max-pain-chart"></canvas></div>
+                <div class="chart-container"><canvas id="finnifty-ce-oi-chart"></canvas></div>
+                <div class="chart-container"><canvas id="finnifty-pe-oi-chart"></canvas></div>
+            </div>
+            <h3>FINNIFTY Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <div class="table-container">
+                <table id="finnifty-table">
+                    <thead><tr>
+                        <th>Strike</th>
+                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
+                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3 style="margin-top: 20px;">FINNIFTY Historical Data</h3>
+            <div class="history-controls">
+                <label for="finnifty-history-date">Date:</label>
+                <input type="date" id="finnifty-history-date" class="history-date-picker">
+                <button onclick="loadHistoricalData('FINNIFTY')">Load History</button>
+            </div>
+            <div class="table-container">
+                <table id="finnifty-historical-data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+        <div id="BANKNIFTY_tab" class="tabcontent">
+            <h3 style="margin-top: 20px;">BANKNIFTY Today's Updates (appends every 2 min)</h3>
+            <div class="table-container">
+                <table id="banknifty-todays-history-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3>BANKNIFTY Charts</h3>
+            <div class="chart-grid">
+                <div class="chart-container"><canvas id="banknifty-pcr-chart"></canvas></div>
+                <div class="chart-container"><canvas id="banknifty-max-pain-chart"></canvas></div>
+                <div class="chart-container"><canvas id="banknifty-ce-oi-chart"></canvas></div>
+                <div class="chart-container"><canvas id="banknifty-pe-oi-chart"></canvas></div>
+            </div>
+            <h3>BANKNIFTY Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <div class="table-container">
+                <table id="banknifty-table">
+                    <thead><tr>
+                        <th>Strike</th>
+                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
+                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3 style="margin-top: 20px;">BANKNIFTY Historical Data</h3>
+            <div class="history-controls">
+                <label for="banknifty-history-date">Date:</label>
+                <input type="date" id="banknifty-history-date" class="history-date-picker">
+                <button onclick="loadHistoricalData('BANKNIFTY')">Load History</button>
+            </div>
+            <div class="table-container">
+                <table id="banknifty-historical-data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+        <div id="SENSEX_tab" class="tabcontent">
+            <h3 style="margin-top: 20px;">SENSEX Today's Updates (appends every 2 min)</h3>
+            <div class="table-container">
+                <table id="sensex-todays-history-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3>SENSEX Charts</h3>
+            <div class="chart-grid">
+                <div class="chart-container"><canvas id="sensex-pcr-chart"></canvas></div>
+                <div class="chart-container"><canvas id="sensex-max-pain-chart"></canvas></div>
+                <div class="chart-container"><canvas id="sensex-ce-oi-chart"></canvas></div>
+                <div class="chart-container"><canvas id="sensex-pe-oi-chart"></canvas></div>
+            </div>
+            <h3>SENSEX Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <div class="table-container">
+                <table id="sensex-table">
+                    <thead><tr>
+                        <th>Strike</th>
+                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
+                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3 style="margin-top: 20px;">SENSEX Historical Data</h3>
+            <div class="history-controls">
+                <label for="sensex-history-date">Date:</label>
+                <input type="date" id="sensex-history-date" class="history-date-picker">
+                <button onclick="loadHistoricalData('SENSEX')">Load History</button>
+            </div>
+            <div class="table-container">
+                <table id="sensex-historical-data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>SP</th>
+                            <th>Value</th>
+                            <th>Call COI</th>
+                            <th>Put COI</th>
+                            <th>PCR</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">OI Changes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Historical data rows will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div id="INDIAVIX_tab" class="tabcontent"> <!-- NEW INDIAVIX TAB CONTENT -->
+            <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (appends every 2 min)</h3>
+            <div class="table-container">
+                <table id="indiavix-todays-history-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Value</th>
+                            <th>Change</th>
+                            <th>Pct Change</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">Notes</th> <!-- VIX doesn't have OI changes, use Notes -->
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3 style="margin-top: 20px;">INDIAVIX Historical Data</h3>
+            <div class="history-controls">
+                <label for="indiavix-history-date">Date:</label>
+                <input type="date" id="indiavix-history-date" class="history-date-picker">
+                <button onclick="loadHistoricalData('INDIAVIX')">Load History</button>
+            </div>
+            <div class="table-container">
+                <table id="indiavix-historical-data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Value</th>
+                            <th>Change</th>
+                            <th>Pct Change</th>
+                            <th>Sentiment</th>
+                            <th style="width: 30%;">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div> <!-- END NEW INDIAVIX TAB CONTENT -->
+        <footer>@aditya_nse_bot | Updated: <span id="time">-</span></footer>
+    </div>
+    <script>
+        const socket = io();
+        // Store chart instances globally to easily update them
+        const charts = {};
+
+        socket.on('connect', () => {
+            console.log('Socket.IO: Connected to server!');
+        });
+        socket.on('disconnect', () => {
+            console.warn('Socket.IO: Disconnected from server!');
+        });
+        socket.on('connect_error', (error) => {
+            console.error('Socket.IO: Connection error:', error);
+        });
+        socket.on('error', (error) => {
+            console.error('Socket.IO: Generic error:', error);
+        });
+
+        // Function to render or update a Chart.js chart
+        function renderChart(chartId, chartType, labels, data, label, backgroundColor, borderColor, yAxisLabel, options = {}) {
+            const ctx = document.getElementById(chartId);
+            if (!ctx) {
+                console.error(`Canvas element for chartId '${chartId}' not found.`);
+                return;
+            }
+
+            // Destroy existing chart instance to prevent memory leaks and ensure proper re-render
+            if (charts[chartId]) {
+                charts[chartId].destroy();
+            }
+
+            // Create new chart
+            charts[chartId] = new Chart(ctx, {
+                type: chartType,
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: label,
+                        data: data,
+                        backgroundColor: backgroundColor,
+                        borderColor: borderColor,
+                        borderWidth: 1,
+                        fill: chartType === 'line' ? false : true,
+                        tension: chartType === 'line' ? 0.4 : 0,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            labels: {
+                                color: '#bbb'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#bbb' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#bbb' },
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            title: {
+                                display: true,
+                                text: yAxisLabel,
+                                color: '#fff'
+                            }
+                        }
+                    },
+                    ...options // Merge additional options
+                }
+            });
+        }
+
+        function updateCharts(symbol, chartData) {
+            const lower = symbol.toLowerCase();
+            // Destroy existing charts for this symbol before re-rendering
+            // This is crucial when switching tabs to ensure charts are properly drawn
+            ['pcr-chart', 'max-pain-chart', 'ce-oi-chart', 'pe-oi-chart'].forEach(chartSuffix => {
+                const chartId = `${lower}-${chartSuffix}`;
+                if (charts[chartId]) {
+                    charts[chartId].destroy();
+                    delete charts[chartId]; // Remove from cache
+                }
+            });
+
+
+            if (chartData.pcr_chart_data && chartData.pcr_chart_data.length > 0) {
+                const labels = chartData.pcr_chart_data.map(item => item.TIME);
+                const values = chartData.pcr_chart_data.map(item => item.PCR);
+                renderChart(`${lower}-pcr-chart`, 'line', labels, values, 'PCR', 'rgba(75, 192, 192, 0.6)', 'rgba(75, 192, 192, 1)', 'PCR Value', {
+                    scales: { y: { min: 0, max: 2.0 } } // PCR typically between 0 and 2
+                });
+            } else {
+                // Clear PCR chart if no data
+                 const chartId = `${lower}-pcr-chart`;
+                 if (charts[chartId]) {
+                     charts[chartId].destroy();
+                     delete charts[chartId];
+                 }
+            }
+
+            if (chartData.max_pain_chart_data && chartData.max_pain_chart_data.length > 0) {
+                const labels = chartData.max_pain_chart_data.map(item => item.StrikePrice);
+                const values = chartData.max_pain_chart_data.map(item => item.TotalMaxPain);
+                renderChart(`${lower}-max-pain-chart`, 'bar', labels, values, 'Max Pain', 'rgba(255, 159, 64, 0.6)', 'rgba(255, 159, 64, 1)', 'Total Max Pain');
+            } else {
+                // Clear Max Pain chart if no data
+                const chartId = `${lower}-max-pain-chart`;
+                if (charts[chartId]) {
+                    charts[chartId].destroy();
+                    delete charts[chartId];
+                }
+            }
+
+            if (chartData.ce_oi_chart_data && chartData.ce_oi_chart_data.length > 0) {
+                const labels = chartData.ce_oi_chart_data.map(item => item.strikePrice);
+                const values = chartData.ce_oi_chart_data.map(item => item.openInterest);
+                renderChart(`${lower}-ce-oi-chart`, 'bar', labels, values, 'CE OI', 'rgba(255, 99, 132, 0.6)', 'rgba(255, 99, 132, 1)', 'Open Interest (CE)');
+            } else {
+                // Clear CE OI chart if no data
+                const chartId = `${lower}-ce-oi-chart`;
+                if (charts[chartId]) {
+                    charts[chartId].destroy();
+                    delete charts[chartId];
+                }
+            }
+
+            if (chartData.pe_oi_chart_data && chartData.pe_oi_chart_data.length > 0) {
+                const labels = chartData.pe_oi_chart_data.map(item => item.strikePrice);
+                const values = chartData.pe_oi_chart_data.map(item => item.openInterest);
+                renderChart(`${lower}-pe-oi-chart`, 'bar', labels, values, 'PE OI', 'rgba(54, 162, 235, 0.6)', 'rgba(54, 162, 235, 1)', 'Open Interest (PE)');
+            } else {
+                // Clear PE OI chart if no data
+                const chartId = `${lower}-pe-oi-chart`;
+                if (charts[chartId]) {
+                    charts[chartId].destroy();
+                    delete charts[chartId];
+                }
+            }
+        }
+
+
+        // Function to append a single history item to the correct "Today's Updates" table
+        function appendTodaysHistoryItem(symbol, item, prepend = true, isVix = false) { // Added isVix flag
+            const lower = symbol.toLowerCase();
+            const historyTbodySelector = `#${lower}-todays-history-table tbody`;
+            const historyTbody = document.querySelector(historyTbodySelector);
+            if (!historyTbody) {
+                console.error(`appendTodaysHistoryItem ERROR: History tbody NOT FOUND for selector: '${historyTbodySelector}'.`);
+                return;
+            }
+            const tr = document.createElement('tr');
+            if (isVix) {
+                 tr.innerHTML = `
+                    <td>${item.time}</td>
+                    <td>${item.value}</td>
+                    <td style="color: ${item.sp >= 0 ? '#4CAF50' : '#F44336'}">${item.sp >= 0 ? '+' : ''}${item.sp}</td> <!-- item.sp is Change for VIX -->
+                    <td style="color: ${item.pcr >= 0 ? '#4CAF50' : '#F44336'}">${item.pcr >= 0 ? '+' : ''}${item.pcr}%</td> <!-- item.pcr is Pct Change for VIX -->
+                    <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
+                        ${item.sentiment}
+                    </td>
+                    <td>${item.add_exit || 'N/A'}</td> <!-- Use add_exit for general notes/N/A -->
+                `;
+            } else {
+                tr.innerHTML = `
+                    <td>${item.time}</td>
+                    <td>${item.sp}</td>
+                    <td>${item.value}</td>
+                    <td>${item.call_oi}${item.call_oi !== 0 ? 'K' : ''}</td>
+                    <td>${item.put_oi}${item.put_oi !== 0 ? 'K' : ''}</td>
+                    <td>${item.pcr}</td>
+                    <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
+                        ${item.sentiment}
+                    </td>
+                    <td>${item.add_exit}</td>
+                `;
+            }
+            if (prepend) { // Add to top
+                historyTbody.prepend(tr);
+            } else { // Add to bottom
+                historyTbody.appendChild(tr);
+            }
+            const historyTableContainer = historyTbody.closest('.table-container');
+            if (historyTableContainer) {
+                if (prepend) {
+                    historyTableContainer.scrollTop = 0;
+                } else {
+                    historyTableContainer.scrollTop = historyTableContainer.scrollHeight;
+                }
+            }
+            // console.log(`Today's history appended for ${symbol}:`, item); // Too verbose for frequent updates
+        }
+        // Function to load and display historical data for a specific date
+        async function loadHistoricalData(symbol) {
+            const lower = symbol.toLowerCase();
+            const dateInput = document.getElementById(`${lower}-history-date`);
+            const selectedDate = dateInput.value; // Format: YYYY-MM-DD
+            if (!selectedDate) {
+                alert("Please select a date to load historical data.");
+                return;
+            }
+            const historicalTbodySelector = `#${lower}-historical-data-table tbody`;
+            const historicalTbody = document.querySelector(historicalTbodySelector);
+            if (!historicalTbody) {
+                console.error(`loadHistoricalData ERROR: Historical tbody NOT FOUND for selector: '${historicalTbodySelector}'.`);
+                return;
+            }
+            historicalTbody.innerHTML = '<tr><td colspan="8">Loading...</td></tr>'; // Default colspan for 8 columns
+            try {
+                const response = await fetch(`/history/${symbol}/${selectedDate}`);
+                const data = await response.json();
+                historicalTbody.innerHTML = '';
+                if (data.error) {
+                    // Adjust colspan for VIX if an error occurs
+                    const colspan = (symbol === 'INDIAVIX') ? 6 : 8;
+                    historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">Error: ${data.error}</td></tr>`;
+                    console.error("Error loading historical data:", data.error);
+                    return;
+                }
+                if (data.history.length === 0) {
+                    // Adjust colspan for VIX if no data
+                    const colspan = (symbol === 'INDIAVIX') ? 6 : 8;
+                    historicalTbody.innerHTML = `<tr><td colspan="${colspan}">No data found for this date.</td></tr>`;
+                    return;
+                }
+                const isVix = (symbol === 'INDIAVIX');
+                // Backend sends data ORDER BY timestamp DESC, so iterate forwards and append to DOM
+                data.history.forEach(item => {
+                    const tr = document.createElement('tr');
+                    if (isVix) {
+                        tr.innerHTML = `
+                            <td>${item.time}</td>
+                            <td>${item.value}</td>
+                            <td style="color: ${item.sp >= 0 ? '#4CAF50' : '#F44336'}">${item.sp >= 0 ? '+' : ''}${item.sp}</td>
+                            <td style="color: ${item.pcr >= 0 ? '#4CAF50' : '#F44336'}">${item.pcr >= 0 ? '+' : ''}${item.pcr}%</td>
+                            <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
+                                ${item.sentiment}
+                            </td>
+                            <td>${item.add_exit || 'N/A'}</td>
+                        `;
+                    } else {
+                        tr.innerHTML = `
+                            <td>${item.time}</td>
+                            <td>${item.sp}</td>
+                            <td>${item.value}</td>
+                            <td>${item.call_oi}${item.call_oi !== 0 ? 'K' : ''}</td>
+                            <td>${item.put_oi}${item.put_oi !== 0 ? 'K' : ''}</td>
+                            <td>${item.pcr}</td>
+                            <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
+                                ${item.sentiment}
+                            </td>
+                            <td>${item.add_exit}</td>
+                        `;
+                    }
+                    historicalTbody.appendChild(tr); // Append to show latest first
+                });
+                console.log(`Historical data loaded for ${symbol} on ${selectedDate}.`);
+            } catch (error) {
+                // Adjust colspan for VIX if a fetch error
+                const colspan = (symbol === 'INDIAVIX') ? 6 : 8;
+                historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">Failed to load history.</td></tr>`;
+                console.error("Fetch error loading historical data:", error);
+            }
+        }
+
+        // Modified openTab function
+        function openTab(evt, symbol) { // Now expects symbol directly
+            console.log("--- openTab called ---");
+            console.log("openTab: Target symbol:", symbol);
+
+            document.querySelectorAll(".tabcontent").forEach(el => {
+                el.style.display = "none";
+                el.style.border = "";
+                el.style.boxShadow = "";
+            });
+            document.querySelectorAll(".tablink").forEach(el => el.classList.remove("active"));
+
+            const targetTabElement = document.getElementById(`${symbol}_tab`); // Construct ID using symbol
+            if (targetTabElement) {
+                console.log(`openTab: Found target tab element '${symbol}_tab'. Setting display to 'block'.`);
+                targetTabElement.style.display = "block";
+
+                // Update charts for the newly active tab if data is in cache and it's not INDIAVIX
+                if (symbol !== 'INDIAVIX' && shared_data_cache[symbol] && shared_data_cache[symbol].chart_data) {
+                    console.log(`openTab: Rendering charts for ${symbol} from cache.`);
+                    updateCharts(symbol, shared_data_cache[symbol].chart_data);
+                } else if (symbol !== 'INDIAVIX') { // Not VIX, but no chart data yet
+                    console.log(`openTab: No chart data in cache for ${symbol} yet. Clearing chart canvases.`);
+                    // Clear chart canvases if no data is found for the symbol, for non-VIX symbols
+                    const lower = symbol.toLowerCase();
+                    ['pcr-chart', 'max-pain-chart', 'ce-oi-chart', 'pe-oi-chart'].forEach(chartSuffix => {
+                        const chartId = `${lower}-${chartSuffix}`;
+                        if (charts[chartId]) {
+                            charts[chartId].destroy();
+                            delete charts[chartId];
+                        }
+                    });
+                }
+            } else {
+                console.error(`openTab ERROR: Target tab element '${symbol}_tab' not found.`);
+            }
+            evt.currentTarget.classList.add("active");
+            console.log("--- openTab finished ---");
+        }
+
+        // Cache for shared data to ensure charts can be rendered when tabs are switched
+        const shared_data_cache = {};
+
+        // Handler for initial "today's" history load (on connect)
+        socket.on('initial_todays_history', (data) => {
+            console.log("INITIAL TODAY'S HISTORY RECEIVED:", data.history);
+            if (!data.history) return;
+            Object.keys(data.history).forEach(sym => {
+                const lower = sym.toLowerCase();
+                const historyTbodySelector = `#${lower}-todays-history-table tbody`;
+                const historyTbody = document.querySelector(historyTbodySelector);
+                if (historyTbody) {
+                    historyTbody.innerHTML = ''; // Clear before populating
+                    const isVix = (sym === 'INDIAVIX');
+                    // Backend sends todays_history in ASC order (oldest first).
+                    // Iterate forwards, but prepend to DOM to show latest first.
+                    data.history[sym].slice().reverse().forEach(item => { // Reverse to prepend correctly
+                        appendTodaysHistoryItem(sym, item, true, isVix); // Prepend each item
+                    });
+                } else {
+                    console.error(`INITIAL HISTORY ERROR: Today's History tbody NOT FOUND for selector: '${historyTbodySelector}'.`);
+                }
+            });
+        });
+        // Handler for live updates (summary cards, option chain tables, AND live feed) - every 15 seconds
+        socket.on('update', (data) => {
+            // console.log("--- LIVE UPDATE RECEIVED (15s) ---"); // Too verbose
+            // console.log("LIVE UPDATE: Raw data:", data); // Uncomment for verbose logging
+            if (!data.live || Object.keys(data.live).length === 0) {
+                console.warn("LIVE UPDATE: Received empty or invalid data.live object, skipping update.");
+                return;
+            }
+            // UPDATE LIVE INDEX FEED
+            if (data.live_feed_summary) {
+                Object.keys(data.live_feed_summary).forEach(sym => {
+                    const feed = data.live_feed_summary[sym];
+                    const lower = sym.toLowerCase();
+                    const valueElement = document.getElementById(`feed-${lower}-value`);
+                    const changeElement = document.getElementById(`feed-${lower}-change`);
+                    const pctElement = document.getElementById(`feed-${lower}-pct`);
+                    if (valueElement) valueElement.textContent = feed.current_value;
+                    if (changeElement) {
+                        changeElement.textContent = `${feed.change >= 0 ? '+' : ''}${feed.change}`;
+                        changeElement.style.color = feed.change >= 0 ? '#4CAF50' : '#F44336'; // Green for positive, Red for negative
+                    }
+                    if (pctElement) {
+                        pctElement.textContent = `(${feed.percentage_change >= 0 ? '+' : ''}${feed.percentage_change}%)`;
+                        pctElement.style.color = feed.percentage_change >= 0 ? '#4CAF50' : '#F44336'; // Green for positive, Red for negative
+                    }
+                });
+            }
+            // UPDATE SUMMARY CARDS
+            Object.keys(data.live).forEach(sym => {
+                const s = data.live[sym].summary;
+                const lower = sym.toLowerCase();
+                if (!s) {
+                    console.warn(`LIVE UPDATE: Summary data is missing for symbol: ${sym}, skipping card update.`);
+                    return;
+                }
+                // Special handling for INDIAVIX summary card
+                if (sym === 'INDIAVIX') {
+                    const vixValueElement = document.getElementById(`${lower}-value`);
+                    const vixChangeElement = document.getElementById(`${lower}-change`);
+                    const vixPctElement = document.getElementById(`${lower}-pct`);
+                    const vixSentimentElement = document.getElementById(`${lower}-sentiment`);
+                    const vixNotesElement = document.getElementById(`${lower}-add-exit`); // Renamed from add-exit to notes for VIX
+                    if (vixValueElement) vixValueElement.textContent = s.value; // Use s.value for VIX value
+                    // For VIX, use the live_feed_summary for change/pct change in the card
+                    if (data.live_feed_summary && data.live_feed_summary[sym]) {
+                         const feed = data.live_feed_summary[sym];
+                         if (vixChangeElement) {
+                            vixChangeElement.textContent = `${feed.change >= 0 ? '+' : ''}${feed.change}`;
+                            vixChangeElement.style.color = feed.change >= 0 ? '#4CAF50' : '#F44336';
+                         }
+                         if (vixPctElement) {
+                            vixPctElement.textContent = `${feed.percentage_change >= 0 ? '+' : ''}${feed.percentage_change}`;
+                            vixPctElement.style.color = feed.percentage_change >= 0 ? '#4CAF50' : '#F44336';
+                         }
+                    }
+                    if (vixSentimentElement) {
+                        vixSentimentElement.textContent = s.sentiment;
+                        vixSentimentElement.style.color = s.sentiment.includes('Bullish') ? '#4CAF50' :
+                                                          s.sentiment.includes('Bearish') ? '#F44336' : '#FFC107';
+                    }
+                    if (vixNotesElement) vixNotesElement.textContent = s.add_exit; // Should be N/A for VIX
+                } else {
+                    // Existing logic for other symbols
+                    const summaryUpdates = {
+                        'sp': 'sp',
+                        'value': 'value',
+                        'call': 'call_oi',
+                        'put': 'put_oi',
+                        'pcr': 'pcr',
+                        'sentiment': 'sentiment',
+                        'add-exit': 'add_exit'
+                    };
+                    for (const idSuffix in summaryUpdates) {
+                        const dataKey = summaryUpdates[idSuffix];
+                        const elementId = `${lower}-${idSuffix}`;
+                        const element = document.getElementById(elementId);
+                        if (element) {
+                            if (idSuffix === 'sentiment') {
+                                element.textContent = s.sentiment;
+                                element.style.color = s.sentiment.includes('Bullish') ? '#4CAF50' :
+                                                      s.sentiment.includes('Bearish') ? '#F44336' : '#FFC107';
+                            } else {
+                                element.textContent = s[dataKey];
+                            }
+                        } else {
+                            console.error(`LIVE UPDATE ERROR: Summary element NOT FOUND: '${elementId}'.`);
+                        }
+                    }
+                }
+            });
+            // UPDATE OPTION CHAIN TABLES (only for non-VIX symbols)
+            Object.keys(data.live).forEach(sym => {
+                if (sym === 'INDIAVIX') return; // Skip VIX, it has no option chain table
+                const s = data.live[sym].summary;
+                const lower = sym.toLowerCase();
+                const tbodySelector = `#${lower}-table tbody`;
+                const tbody = document.querySelector(tbodySelector);
+                if (!tbody) {
+                    console.error(`LIVE UPDATE ERROR: Table tbody NOT FOUND for selector: '${tbodySelector}'.`);
+                    return;
+                }
+                if (!data.live[sym].strikes) {
+                    console.warn(`LIVE UPDATE: Table: Strikes data missing for ${sym}, skipping table update.`);
+                    return;
+                }
+                tbody.innerHTML = '';
+                data.live[sym].strikes.forEach(row => {
+                    const isAtm = row.is_atm;
+                    const tr = document.createElement('tr');
+                    if (isAtm) tr.style.backgroundColor = '#2a2a2a';
+                    tr.innerHTML = `
+                        <td style="font-weight: ${isAtm ? 'bold' : 'normal'}; color: ${isAtm ? '#4CAF50' : '#fff'}">
+                            ${row.strike}
+                        </td>
+                        <td>${row.call_oi.toLocaleString()}</td>
+                        <td style="color: ${row.call_coi > 0 ? '#4CAF50' : row.call_coi < 0 ? '#F44336' : '#fff'}; font-weight: bold">
+                            ${row.call_coi >= 0 ? '+' : ''}${row.call_coi}
+                        </td>
+                        <td class="action-cell" style="color: ${row.call_action === 'ADD' ? '#4CAF50' : '#F44336'}; font-weight: bold">
+                            ${row.call_action}
+                        </td>
+                        <td>${row.put_oi.toLocaleString()}</td>
+                        <td style="color: ${row.put_coi > 0 ? '#4CAF50' : row.put_coi < 0 ? '#F44336' : '#fff'}; font-weight: bold">
+                            ${row.put_coi >= 0 ? '+' : ''}${row.put_coi}
+                        </td>
+                        <td class="action-cell" style="color: ${row.put_action === 'ADD' ? '#4CAF50' : '#F44336'}; font-weight: bold">
+                            ${row.put_action}
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            });
+
+            // Update Charts if the tab is currently active
+            Object.keys(data.live).forEach(sym => {
+                if (sym === 'INDIAVIX') return; // VIX has no charts
+
+                // Store chart data in cache
+                // Ensure chart_data is always defined, even if empty
+                const chartDataForSym = {
+                    pcr_chart_data: data.live[sym].pcr_chart_data || [],
+                    max_pain_chart_data: data.live[sym].max_pain_chart_data || [],
+                    ce_oi_chart_data: data.live[sym].ce_oi_chart_data || [],
+                    pe_oi_chart_data: data.live[sym].pe_oi_chart_data || []
+                };
+                shared_data_cache[sym] = shared_data_cache[sym] || {};
+                shared_data_cache[sym].chart_data = chartDataForSym;
+
+                const currentActiveTabButton = document.querySelector('.tablink.active');
+                if (currentActiveTabButton && currentActiveTabButton.dataset.symbol === sym) {
+                    console.log(`LIVE UPDATE: Rendering charts for active tab ${sym}.`);
+                    updateCharts(sym, chartDataForSym);
+                }
+            });
+
+            const timeElement = document.getElementById('time');
+            if (timeElement) {
+                timeElement.textContent = new Date().toLocaleTimeString();
+            } else {
+                console.error("LIVE UPDATE ERROR: Footer time element NOT FOUND: 'time'.");
+            }
+            // console.log("--- LIVE UPDATE FINISHED ---"); // Too verbose
+        });
+        // NEW: Handler for "Today's Updates" history append - every 2 minutes
+        socket.on('todays_history_append', (data) => {
+            // console.log("--- TODAY'S HISTORY APPEND RECEIVED (2min) ---"); // Too verbose
+            // console.log(`TODAY'S HISTORY APPEND: New item for ${data.symbol}:`, data.item); // Too verbose
+            if (data.symbol && data.item) {
+                const isVix = (data.symbol === 'INDIAVIX');
+                appendTodaysHistoryItem(data.symbol, data.item, true, isVix); // Prepend new item, pass isVix
+            } else {
+                console.warn("TODAY'S HISTORY APPEND: Received invalid data.");
+            }
+            // console.log("--- TODAY'S HISTORY APPEND FINISHED ---"); // Too verbose
+        });
+        // Set today's date as default for date pickers
+        document.addEventListener('DOMContentLoaded', () => {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+            const dd = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${yyyy}-${mm}-${dd}`;
+            document.querySelectorAll('.history-date-picker').forEach(input => {
+                input.value = todayStr;
+            });
+            // Trigger the click on the default open tab button to render its charts
+            const defaultOpenButton = document.getElementById("NIFTYOpen"); // Assuming NIFTY is default
+            if (defaultOpenButton) {
+                defaultOpenButton.click();
+            } else {
+                console.error("Default open tab button not found.");
+            }
+        });
+    </script>
+</body>
+</html>"""
+    with open('dashboard.html', 'w') as f:
+        f.write(html)
+
+
+def create_css():
+    os.makedirs('static', exist_ok=True)
+    css = """* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', sans-serif; background: #121212; color: #fff; }
+.container { max-width: 1400px; margin: 20px auto; padding: 20px; }
+h1 { text-align: center; margin-bottom: 20px; color: #4CAF50; }
+/* NEW LIVE FEED STYLES */
+.live-feed-container {
+    display: flex;
+    justify-content: center; /* Center items */
+    flex-wrap: wrap;
+    background: #1e1e1e;
+    padding: 15px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.live-feed-item {
+    display: flex;
+    align-items: baseline;
+    font-size: 1.1em;
+    font-weight: bold;
+    margin: 5px 15px;
+}
+.feed-symbol {
+    color: #2196F3; /* Blue */
+    margin-right: 5px;
+}
+.feed-value {
+    color: #fff;
+    margin-right: 8px;
+}
+.feed-change {
+    margin-right: 5px;
+}
+.feed-pct {
+    font-size: 0.9em;
+}
+/* END NEW LIVE FEED STYLES */
+.grid {
+    display: grid;
+    /* Adjusted for 5 columns */
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); /* Min width adjusted for 5 cards */
+    gap: 20px;
+}
+.card { background: #1e1e1e; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.card h2 { margin-bottom: 15px; color: #2196F3; }
+.card p { margin: 8px 0; font-size: 14px; }
+.tabs { margin: 30px 0; text-align: center; }
+.tablink { background: #1e1e1e; color: #fff; padding: 12px 24px; margin: 0 8px; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; transition: 0.3s; }
+.tablink:hover { background: #333; }
+.tablink.active { background: #4CAF50; }
+.tabcontent { display: none; padding: 25px; background: #1e1e1e; border-radius: 12px; margin-bottom: 20px; }
+.tabcontent h3 { margin-bottom: 15px; color: #2196F3; }
+.table-container { max-height: 500px; overflow-y: auto; border: 1px solid #333; border-radius: 8px; margin-bottom: 20px; } /* Added margin-bottom */
+.history-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    background: #1e1e1e;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+.history-controls label {
+    font-weight: bold;
+    color: #fff;
+}
+.history-controls input[type="date"] {
+    padding: 8px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background: #2d2d2d;
+    color: #fff;
+    font-family: 'Segoe UI', sans-serif;
+    outline: none;
+}
+.history-controls button {
+    padding: 8px 15px;
+    background-color: #007bff; /* Blue load button */
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+.history-controls button:hover {
+    background-color: #0056b3;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    table-layout: fixed; /* Ensures columns respect widths */
+}
+th, td {
+    padding: 10px;
+    text-align: center;
+    border-bottom: 1px solid #333;
+    /* Adjusted width for fewer columns */
+    width: auto;
+    vertical-align: top;
+}
+/* Default Option Chain Table Column Widths */
+#nifty-table th:nth-child(1), #finnifty-table th:nth-child(1), #banknifty-table th:nth-child(1), #sensex-table th:nth-child(1) { width: 12%; } /* Strike */
+#nifty-table th:nth-child(2), #finnifty-table th:nth-child(2), #banknifty-table th:nth-child(2), #sensex-table th:nth-child(2) { width: 14%; } /* Call OI */
+#nifty-table th:nth-child(3), #finnifty-table th:nth-child(3), #banknifty-table th:nth-child(3), #sensex-table th:nth-child(3) { width: 14%; } /* Call COI */
+#nifty-table th:nth-child(4), #finnifty-table th:nth-child(4), #banknifty-table th:nth-child(4), #sensex-table th:nth-child(4) { width: 12%; } /* Call Action */
+#nifty-table th:nth-child(5), #finnifty-table th:nth-child(5), #banknifty-table th:nth-child(5), #sensex-table th:nth-child(5) { width: 14%; } /* Put OI */
+#nifty-table th:nth-child(6), #finnifty-table th:nth-child(6), #banknifty-table th:nth-child(6), #sensex-table th:nth-child(6) { width: 14%; } /* Put COI */
+#nifty-table th:nth-child(7), #finnifty-table th:nth-child(7), #banknifty-table th:nth-child(7), #sensex-table th:nth-child(7) { width: 12%; } /* Put Action */
+
+
+/* General styles for history table headers (Non-VIX) - 8 columns */
+#nifty-todays-history-table th:nth-child(1), #nifty-historical-data-table th:nth-child(1),
+#finnifty-todays-history-table th:nth-child(1), #finnifty-historical-data-table th:nth-child(1),
+#banknifty-todays-history-table th:nth-child(1), #banknifty-historical-data-table th:nth-child(1),
+#sensex-todays-history-table th:nth-child(1), #sensex-historical-data-table th:nth-child(1) { width: 8%; } /* Time */
+
+#nifty-todays-history-table th:nth-child(2), #nifty-historical-data-table th:nth-child(2),
+#finnifty-todays-history-table th:nth-child(2), #finnifty-historical-data-table th:nth-child(2),
+#banknifty-todays-history-table th:nth-child(2), #banknifty-historical-data-table th:nth-child(2),
+#sensex-todays-history-table th:nth-child(2), #sensex-historical-data-table th:nth-child(2) { width: 8%; } /* SP */
+
+#nifty-todays-history-table th:nth-child(3), #nifty-historical-data-table th:nth-child(3),
+#finnifty-todays-history-table th:nth-child(3), #finnifty-historical-data-table th:nth-child(3),
+#banknifty-todays-history-table th:nth-child(3), #banknifty-historical-data-table th:nth-child(3),
+#sensex-todays-history-table th:nth-child(3), #sensex-historical-data-table th:nth-child(3) { width: 8%; } /* Value */
+
+#nifty-todays-history-table th:nth-child(4), #nifty-historical-data-table th:nth-child(4),
+#finnifty-todays-history-table th:nth-child(4), #finnifty-historical-data-table th:nth-child(4),
+#banknifty-todays-history-table th:nth-child(4), #banknifty-historical-data-table th:nth-child(4),
+#sensex-todays-history-table th:nth-child(4), #sensex-historical-data-table th:nth-child(4) { width: 10%; } /* Call COI */
+
+#nifty-todays-history-table th:nth-child(5), #nifty-historical-data-table th:nth-child(5),
+#finnifty-todays-history-table th:nth-child(5), #finnifty-historical-data-table th:nth-child(5),
+#banknifty-todays-history-table th:nth-child(5), #banknifty-historical-data-table th:nth-child(5),
+#sensex-todays-history-table th:nth-child(5), #sensex-historical-data-table th:nth-child(5) { width: 10%; } /* Put COI */
+
+#nifty-todays-history-table th:nth-child(6), #nifty-historical-data-table th:nth-child(6),
+#finnifty-todays-history-table th:nth-child(6), #finnifty-historical-data-table th:nth-child(6),
+#banknifty-todays-history-table th:nth-child(6), #banknifty-historical-data-table th:nth-child(6),
+#sensex-todays-history-table th:nth-child(6), #sensex-historical-data-table th:nth-child(6) { width: 7%; } /* PCR */
+
+#nifty-todays-history-table th:nth-child(7), #nifty-historical-data-table th:nth-child(7),
+#finnifty-todays-history-table th:nth-child(7), #finnifty-historical-data-table th:nth-child(7),
+#banknifty-todays-history-table th:nth-child(7), #banknifty-historical-data-table th:nth-child(7),
+#sensex-todays-history-table th:nth-child(7), #sensex-historical-data-table th:nth-child(7) { width: 15%; } /* Sentiment */
+
+#nifty-todays-history-table th:nth-child(8), #nifty-historical-data-table th:nth-child(8),
+#finnifty-todays-history-table th:nth-child(8), #finnifty-historical-data-table th:nth-child(8),
+#banknifty-todays-history-table th:nth-child(8), #banknifty-historical-data-table th:nth-child(8),
+#sensex-todays-history-table th:nth-child(8), #sensex-historical-data-table th:nth-child(8) { width: 34%; } /* OI Changes */
+
+
+/* Specific overrides for VIX history tables as they have fewer columns (6 columns) */
+#indiavix-todays-history-table th:nth-child(1), #indiavix-historical-data-table th:nth-child(1) { width: 10%; } /* Time */
+#indiavix-todays-history-table th:nth-child(2), #indiavix-historical-data-table th:nth-child(2) { width: 12%; } /* Value */
+#indiavix-todays-history-table th:nth-child(3), #indiavix-historical-data-table th:nth-child(3) { width: 12%; } /* Change */
+#indiavix-todays-history-table th:nth-child(4), #indiavix-historical-data-table th:nth-child(4) { width: 12%; } /* Pct Change */
+#indiavix-todays-history-table th:nth-child(5), #indiavix-historical-data-table th:nth-child(5) { width: 15%; } /* Sentiment */
+#indiavix-todays-history-table th:nth-child(6), #indiavix-historical-data-table th:nth-child(6) { width: 39%; } /* Notes */
+/* Styles for action cells to prevent wrapping and ensure visibility */
+.action-cell {
+    white-space: nowrap;
+    overflow: hidden; /* Hide overflow if text is still too long */
+    text-overflow: ellipsis; /* Show ellipsis if text is cut off */
+}
+/* The action-header class can still be used for specific styling if needed,
+   but individual nth-child selectors are more precise for fixed layout */
+.action-header {
+    /* width: 8%; */ /* Already handled by nth-child, keep if you want to override */
+}
+
+/* NEW Chart Grid Layout */
+.chart-grid {
+    display: grid;
+    /* Adjusted for larger charts */
+    grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); /* Allow wider charts */
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.chart-container {
+    background: #1e1e1e;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    height: 450px; /* Increased height for charts */
+}
+
+
+footer { text-align: center; margin-top: 30px; font-size: 12px; color: #888; }"""
+    with open('static/style.css', 'w') as f:
+        f.write(css)
+
+
+# --------------------------------------------------------------------------- #
+# MAIN
+# --------------------------------------------------------------------------- #
 if __name__ == '__main__':
-    Nse.create_instance()
+    create_html()
+    create_css()
+    analyzer = NseBseAnalyzer()
+    print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
+    print("SENSEX: Add DhanHQ keys for real data")
+    socketio.run(app, host='0.0.0.0', port=5000)
