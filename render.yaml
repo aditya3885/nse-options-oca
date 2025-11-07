@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: nse-options-oca
+    name: nse-options-oca-test
     env: python
     pythonVersion: "3.12.4"
     buildCommand: "pip install --upgrade pip setuptools wheel && pip install -r requirements.txt"
