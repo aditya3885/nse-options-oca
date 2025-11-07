@@ -6,12 +6,12 @@
     <title>NSE OCA PRO WEB</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="container">
         <h1>NSE OCA PRO LIVE DASHBOARD</h1>
-        <div class="live-feed-container"> <!-- NEW LIVE FEED CONTAINER -->
+        <div class="live-feed-container">
             <div class="live-feed-item">
                 <span class="feed-symbol">NIFTY:</span>
                 <span id="feed-nifty-value" class="feed-value">-</span>
@@ -36,13 +36,13 @@
                 <span id="feed-sensex-change" class="feed-change">-</span>
                 <span id="feed-sensex-pct" class="feed-pct">-</span>
             </div>
-            <div class="live-feed-item"> <!-- NEW INDIAVIX LIVE FEED ITEM -->
+            <div class="live-feed-item">
                 <span class="feed-symbol">INDIAVIX:</span>
                 <span id="feed-indiavix-value" class="feed-value">-</span>
                 <span id="feed-indiavix-change" class="feed-change">-</span>
                 <span id="feed-indiavix-pct" class="feed-pct">-</span>
             </div>
-        </div> <!-- END NEW LIVE FEED CONTAINER -->
+        </div>
         <div class="grid">
             <div class="card" id="NIFTY_summary">
                 <h2>NIFTY</h2>
@@ -84,13 +84,13 @@
                 <p>Sentiment: <span id="sensex-sentiment">-</span></p>
                 <p>OI Changes: <span id="sensex-add-exit">-</span></p>
             </div>
-            <div class="card" id="INDIAVIX_summary"> <!-- NEW INDIAVIX SUMMARY CARD -->
+            <div class="card" id="INDIAVIX_summary">
                 <h2>INDIAVIX</h2>
                 <p>Value: <span id="indiavix-value">-</span></p>
                 <p>Change: <span id="indiavix-change">-</span></p>
                 <p>Pct Change: <span id="indiavix-pct">-</span>%</p>
                 <p>Sentiment: <span id="indiavix-sentiment">-</span></p>
-                <p>Notes: <span id="indiavix-add-exit">N/A</span></p> <!-- VIX has no OI changes -->
+                <p>Notes: <span id="indiavix-add-exit">N/A</span></p>
             </div>
         </div>
         <div class="tabs">
@@ -98,27 +98,19 @@
             <button class="tablink" onclick="openTab(event, 'FINNIFTY')" data-symbol="FINNIFTY">FINNIFTY</button>
             <button class="tablink" onclick="openTab(event, 'BANKNIFTY')" data-symbol="BANKNIFTY">BANKNIFTY</button>
             <button class="tablink" onclick="openTab(event, 'SENSEX')" data-symbol="SENSEX">SENSEX</button>
-            <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button> <!-- NEW INDIAVIX TAB BUTTON -->
+            <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button>
         </div>
+
+        <div class="global-controls">
+            <button class="clear-history-button" onclick="clearTodaysHistory(null)">Clear All Today's History</button>
+        </div>
+
         <div id="NIFTY_tab" class="tabcontent" style="display: block;">
-            <h3 style="margin-top: 20px;">NIFTY Today's Updates (appends every 2 min)</h3>
+            <h3 style="margin-top: 20px;">NIFTY Today's Updates (Newest First)</h3>
             <div class="table-container">
                 <table id="nifty-todays-history-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- Today's history rows will be dynamically added here -->
-                    </tbody>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
+                    <tbody></tbody>
                 </table>
             </div>
             <h3>NIFTY Charts</h3>
@@ -128,14 +120,10 @@
                 <div class="chart-container"><canvas id="nifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-oi-chart"></canvas></div>
             </div>
-            <h3>NIFTY Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <h3>NIFTY Option Chain (ATM ±10)</h3>
             <div class="table-container">
                 <table id="nifty-table">
-                    <thead><tr>
-                        <th>Strike</th>
-                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
-                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
-                    </tr></thead>
+                    <thead><tr><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -144,43 +132,21 @@
                 <label for="nifty-history-date">Date:</label>
                 <input type="date" id="nifty-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('NIFTY')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('NIFTY')">Clear Today's NIFTY History</button>
             </div>
             <div class="table-container">
                 <table id="nifty-historical-data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- Historical data rows will be loaded here -->
-                    </tbody>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
+                    <tbody></tbody>
                 </table>
             </div>
         </div>
+
         <div id="FINNIFTY_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">FINNIFTY Today's Updates (appends every 2 min)</h3>
+            <h3 style="margin-top: 20px;">FINNIFTY Today's Updates (Newest First)</h3>
             <div class="table-container">
                 <table id="finnifty-todays-history-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -191,14 +157,10 @@
                 <div class="chart-container"><canvas id="finnifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-oi-chart"></canvas></div>
             </div>
-            <h3>FINNIFTY Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <h3>FINNIFTY Option Chain (ATM ±10)</h3>
             <div class="table-container">
                 <table id="finnifty-table">
-                    <thead><tr>
-                        <th>Strike</th>
-                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
-                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
-                    </tr></thead>
+                    <thead><tr><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -207,41 +169,21 @@
                 <label for="finnifty-history-date">Date:</label>
                 <input type="date" id="finnifty-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('FINNIFTY')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('FINNIFTY')">Clear Today's FINNIFTY History</button>
             </div>
             <div class="table-container">
                 <table id="finnifty-historical-data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
         </div>
+
         <div id="BANKNIFTY_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">BANKNIFTY Today's Updates (appends every 2 min)</h3>
+            <h3 style="margin-top: 20px;">BANKNIFTY Today's Updates (Newest First)</h3>
             <div class="table-container">
                 <table id="banknifty-todays-history-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -252,14 +194,10 @@
                 <div class="chart-container"><canvas id="banknifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-oi-chart"></canvas></div>
             </div>
-            <h3>BANKNIFTY Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <h3>BANKNIFTY Option Chain (ATM ±10)</h3>
             <div class="table-container">
                 <table id="banknifty-table">
-                    <thead><tr>
-                        <th>Strike</th>
-                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
-                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
-                    </tr></thead>
+                    <thead><tr><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -268,41 +206,21 @@
                 <label for="banknifty-history-date">Date:</label>
                 <input type="date" id="banknifty-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('BANKNIFTY')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('BANKNIFTY')">Clear Today's BANKNIFTY History</button>
             </div>
             <div class="table-container">
                 <table id="banknifty-historical-data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
         </div>
+
         <div id="SENSEX_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">SENSEX Today's Updates (appends every 2 min)</h3>
+            <h3 style="margin-top: 20px;">SENSEX Today's Updates (Newest First)</h3>
             <div class="table-container">
                 <table id="sensex-todays-history-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -313,14 +231,10 @@
                 <div class="chart-container"><canvas id="sensex-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="sensex-pe-oi-chart"></canvas></div>
             </div>
-            <h3>SENSEX Option Chain (ATM ±5)</h3> <!-- Moved below Today's Updates -->
+            <h3>SENSEX Option Chain (ATM ±10)</h3>
             <div class="table-container">
                 <table id="sensex-table">
-                    <thead><tr>
-                        <th>Strike</th>
-                        <th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th>
-                        <th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th>
-                    </tr></thead>
+                    <thead><tr><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -329,41 +243,21 @@
                 <label for="sensex-history-date">Date:</label>
                 <input type="date" id="sensex-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('SENSEX')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('SENSEX')">Clear Today's SENSEX History</button>
             </div>
             <div class="table-container">
                 <table id="sensex-historical-data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>SP</th>
-                            <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
-                            <th>PCR</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">OI Changes</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- Historical data rows will be loaded here -->
-                    </tbody>
+                    <thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead>
+                    <tbody></tbody>
                 </table>
             </div>
         </div>
-        <div id="INDIAVIX_tab" class="tabcontent"> <!-- NEW INDIAVIX TAB CONTENT -->
-            <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (appends every 2 min)</h3>
+
+        <div id="INDIAVIX_tab" class="tabcontent">
+            <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (Newest First)</h3>
             <div class="table-container">
                 <table id="indiavix-todays-history-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Value</th>
-                            <th>Change</th>
-                            <th>Pct Change</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">Notes</th> <!-- VIX doesn't have OI changes, use Notes -->
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th><th style="width: 30%;">Notes</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -372,551 +266,304 @@
                 <label for="indiavix-history-date">Date:</label>
                 <input type="date" id="indiavix-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('INDIAVIX')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('INDIAVIX')">Clear Today's INDIAVIX History</button>
             </div>
             <div class="table-container">
                 <table id="indiavix-historical-data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Value</th>
-                            <th>Change</th>
-                            <th>Pct Change</th>
-                            <th>Sentiment</th>
-                            <th style="width: 30%;">Notes</th>
-                        </tr>
-                    </thead>
+                     <thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th><th style="width: 30%;">Notes</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
-        </div> <!-- END NEW INDIAVIX TAB CONTENT -->
-        <footer>@aditya_nse_bot | Updated: <span id="time">-</span></footer>
+        </div>
+
+        <footer>
+            @aditya_nse_bot | Updated: <span id="time">-</span> | Site Visits: <span id="visit-counter">-</span>
+        </footer>
     </div>
+
     <script>
         const socket = io();
-        // Store chart instances globally to easily update them
         const charts = {};
 
-        socket.on('connect', () => {
-            console.log('Socket.IO: Connected to server!');
-        });
-        socket.on('disconnect', () => {
-            console.warn('Socket.IO: Disconnected from server!');
-        });
-        socket.on('connect_error', (error) => {
-            console.error('Socket.IO: Connection error:', error);
-        });
-        socket.on('error', (error) => {
-            console.error('Socket.IO: Generic error:', error);
+        socket.on('connect', () => console.log('Socket.IO: Connected to server!'));
+        socket.on('disconnect', () => console.warn('Socket.IO: Disconnected from server!'));
+        socket.on('connect_error', (error) => console.error('Socket.IO: Connection error:', error));
+
+        socket.on('update_visits', (data) => {
+            const visitCounterElement = document.getElementById('visit-counter');
+            if (visitCounterElement) {
+                visitCounterElement.textContent = data.count.toLocaleString();
+            }
         });
 
-        // Function to render or update a Chart.js chart
         function renderChart(chartId, chartType, labels, data, label, backgroundColor, borderColor, yAxisLabel, options = {}) {
             const ctx = document.getElementById(chartId);
-            if (!ctx) {
-                console.error(`Canvas element for chartId '${chartId}' not found.`);
-                return;
-            }
-
-            // Destroy existing chart instance to prevent memory leaks and ensure proper re-render
-            if (charts[chartId]) {
-                charts[chartId].destroy();
-            }
-
-            // Create new chart
+            if (!ctx) return;
+            if (charts[chartId]) charts[chartId].destroy();
             charts[chartId] = new Chart(ctx, {
                 type: chartType,
                 data: {
                     labels: labels,
                     datasets: [{
-                        label: label,
-                        data: data,
-                        backgroundColor: backgroundColor,
-                        borderColor: borderColor,
-                        borderWidth: 1,
+                        label: label, data: data, backgroundColor: backgroundColor,
+                        borderColor: borderColor, borderWidth: 1,
                         fill: chartType === 'line' ? false : true,
                         tension: chartType === 'line' ? 0.4 : 0,
                     }]
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: true,
-                            labels: {
-                                color: '#bbb'
-                            }
-                        }
-                    },
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: true, labels: { color: '#bbb' } } },
                     scales: {
-                        x: {
-                            ticks: { color: '#bbb' },
-                            grid: { color: 'rgba(255,255,255,0.1)' }
-                        },
+                        x: { ticks: { color: '#bbb' }, grid: { color: 'rgba(255,255,255,0.1)' } },
                         y: {
-                            beginAtZero: true,
-                            ticks: { color: '#bbb' },
-                            grid: { color: 'rgba(255,255,255,0.1)' },
-                            title: {
-                                display: true,
-                                text: yAxisLabel,
-                                color: '#fff'
-                            }
+                            beginAtZero: false, ticks: { color: '#bbb' }, grid: { color: 'rgba(255,255,255,0.1)' },
+                            title: { display: true, text: yAxisLabel, color: '#fff' }
                         }
-                    },
-                    ...options // Merge additional options
+                    }, ...options
                 }
             });
         }
 
         function updateCharts(symbol, chartData) {
             const lower = symbol.toLowerCase();
-            // Destroy existing charts for this symbol before re-rendering
-            // This is crucial when switching tabs to ensure charts are properly drawn
-            ['pcr-chart', 'max-pain-chart', 'ce-oi-chart', 'pe-oi-chart'].forEach(chartSuffix => {
-                const chartId = `${lower}-${chartSuffix}`;
-                if (charts[chartId]) {
-                    charts[chartId].destroy();
-                    delete charts[chartId]; // Remove from cache
-                }
-            });
-
-
             if (chartData.pcr_chart_data && chartData.pcr_chart_data.length > 0) {
-                const labels = chartData.pcr_chart_data.map(item => item.TIME);
-                const values = chartData.pcr_chart_data.map(item => item.PCR);
-                renderChart(`${lower}-pcr-chart`, 'line', labels, values, 'PCR', 'rgba(75, 192, 192, 0.6)', 'rgba(75, 192, 192, 1)', 'PCR Value', {
-                    scales: { y: { min: 0, max: 2.0 } } // PCR typically between 0 and 2
-                });
-            } else {
-                // Clear PCR chart if no data
-                 const chartId = `${lower}-pcr-chart`;
-                 if (charts[chartId]) {
-                     charts[chartId].destroy();
-                     delete charts[chartId];
-                 }
+                renderChart(`${lower}-pcr-chart`, 'line', chartData.pcr_chart_data.map(item => item.TIME), chartData.pcr_chart_data.map(item => item.PCR), 'PCR', 'rgba(75, 192, 192, 0.6)', 'rgba(75, 192, 192, 1)', 'PCR Value');
             }
-
             if (chartData.max_pain_chart_data && chartData.max_pain_chart_data.length > 0) {
-                const labels = chartData.max_pain_chart_data.map(item => item.StrikePrice);
-                const values = chartData.max_pain_chart_data.map(item => item.TotalMaxPain);
-                renderChart(`${lower}-max-pain-chart`, 'bar', labels, values, 'Max Pain', 'rgba(255, 159, 64, 0.6)', 'rgba(255, 159, 64, 1)', 'Total Max Pain');
-            } else {
-                // Clear Max Pain chart if no data
-                const chartId = `${lower}-max-pain-chart`;
-                if (charts[chartId]) {
-                    charts[chartId].destroy();
-                    delete charts[chartId];
-                }
+                renderChart(`${lower}-max-pain-chart`, 'bar', chartData.max_pain_chart_data.map(item => item.StrikePrice), chartData.max_pain_chart_data.map(item => item.TotalMaxPain), 'Max Pain', 'rgba(255, 159, 64, 0.6)', 'rgba(255, 159, 64, 1)', 'Total Max Pain');
             }
-
             if (chartData.ce_oi_chart_data && chartData.ce_oi_chart_data.length > 0) {
-                const labels = chartData.ce_oi_chart_data.map(item => item.strikePrice);
-                const values = chartData.ce_oi_chart_data.map(item => item.openInterest);
-                renderChart(`${lower}-ce-oi-chart`, 'bar', labels, values, 'CE OI', 'rgba(255, 99, 132, 0.6)', 'rgba(255, 99, 132, 1)', 'Open Interest (CE)');
-            } else {
-                // Clear CE OI chart if no data
-                const chartId = `${lower}-ce-oi-chart`;
-                if (charts[chartId]) {
-                    charts[chartId].destroy();
-                    delete charts[chartId];
-                }
+                renderChart(`${lower}-ce-oi-chart`, 'bar', chartData.ce_oi_chart_data.map(item => item.strikePrice), chartData.ce_oi_chart_data.map(item => item.openInterest), 'Top 10 CE OI', 'rgba(255, 99, 132, 0.6)', 'rgba(255, 99, 132, 1)', 'Open Interest (CE)');
             }
-
             if (chartData.pe_oi_chart_data && chartData.pe_oi_chart_data.length > 0) {
-                const labels = chartData.pe_oi_chart_data.map(item => item.strikePrice);
-                const values = chartData.pe_oi_chart_data.map(item => item.openInterest);
-                renderChart(`${lower}-pe-oi-chart`, 'bar', labels, values, 'PE OI', 'rgba(54, 162, 235, 0.6)', 'rgba(54, 162, 235, 1)', 'Open Interest (PE)');
-            } else {
-                // Clear PE OI chart if no data
-                const chartId = `${lower}-pe-oi-chart`;
-                if (charts[chartId]) {
-                    charts[chartId].destroy();
-                    delete charts[chartId];
-                }
+                renderChart(`${lower}-pe-oi-chart`, 'bar', chartData.pe_oi_chart_data.map(item => item.strikePrice), chartData.pe_oi_chart_data.map(item => item.openInterest), 'Top 10 PE OI', 'rgba(54, 162, 235, 0.6)', 'rgba(54, 162, 235, 1)', 'Open Interest (PE)');
             }
         }
 
-
-        // Function to append a single history item to the correct "Today's Updates" table
-        function appendTodaysHistoryItem(symbol, item, prepend = true, isVix = false) { // Added isVix flag
-            const lower = symbol.toLowerCase();
-            const historyTbodySelector = `#${lower}-todays-history-table tbody`;
-            const historyTbody = document.querySelector(historyTbodySelector);
-            if (!historyTbody) {
-                console.error(`appendTodaysHistoryItem ERROR: History tbody NOT FOUND for selector: '${historyTbodySelector}'.`);
+        async function clearTodaysHistory(symbol = null) {
+            if (!confirm(`Are you sure you want to clear today's history ${symbol ? 'for ' + symbol : 'for ALL symbols'}? This cannot be undone.`)) {
                 return;
             }
+            try {
+                const response = await fetch('/clear_todays_history', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol: symbol })
+                });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    console.log(result.message);
+                } else {
+                    alert("Error clearing history: " + result.message);
+                }
+            } catch (error) {
+                alert("Network error clearing history. See console for details.");
+            }
+        }
+
+        function addHistoryItemToTable(tbody, item, isVix, prepend = false) {
             const tr = document.createElement('tr');
             if (isVix) {
                  tr.innerHTML = `
                     <td>${item.time}</td>
                     <td>${item.value}</td>
-                    <td style="color: ${item.sp >= 0 ? '#4CAF50' : '#F44336'}">${item.sp >= 0 ? '+' : ''}${item.sp}</td> <!-- item.sp is Change for VIX -->
-                    <td style="color: ${item.pcr >= 0 ? '#4CAF50' : '#F44336'}">${item.pcr >= 0 ? '+' : ''}${item.pcr}%</td> <!-- item.pcr is Pct Change for VIX -->
-                    <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
-                        ${item.sentiment}
-                    </td>
-                    <td>${item.add_exit || 'N/A'}</td> <!-- Use add_exit for general notes/N/A -->
-                `;
+                    <td style="color: ${item.sp >= 0 ? '#4CAF50' : '#F44336'}">${item.sp >= 0 ? '+' : ''}${item.sp}</td>
+                    <td style="color: ${item.pcr >= 0 ? '#4CAF50' : '#F44336'}">${item.pcr >= 0 ? '+' : ''}${item.pcr}%</td>
+                    <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">${item.sentiment}</td>
+                    <td>${item.add_exit || 'N/A'}</td>`;
             } else {
+                const pcrChange = item.pcr_change || 0.0;
+                const pcrChangeColor = pcrChange > 0 ? '#4CAF50' : (pcrChange < 0 ? '#F44336' : '#fff');
+                const pcrChangeSign = pcrChange > 0 ? '+' : '';
+
+                const intradayPcr = item.intraday_pcr || 0.0;
+                let intradayPcrColor = '#fff'; // Neutral
+                if (intradayPcr > 1.2) intradayPcrColor = '#4CAF50'; // Bullish Green
+                if (intradayPcr < 0.8 && intradayPcr != 0) intradayPcrColor = '#F44336'; // Bearish Red
+
                 tr.innerHTML = `
                     <td>${item.time}</td>
                     <td>${item.sp}</td>
                     <td>${item.value}</td>
-                    <td>${item.call_oi}${item.call_oi !== 0 ? 'K' : ''}</td>
-                    <td>${item.put_oi}${item.put_oi !== 0 ? 'K' : ''}</td>
-                    <td>${item.pcr}</td>
-                    <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
-                        ${item.sentiment}
-                    </td>
-                    <td>${item.add_exit}</td>
-                `;
+                    <td>${item.call_oi}K</td>
+                    <td>${item.put_oi}K</td>
+                    <td>${item.pcr.toFixed(2)}</td>
+                    <td style="color: ${pcrChangeColor}; font-weight: bold;">${pcrChangeSign}${pcrChange.toFixed(2)}</td>
+                    <td style="color: ${intradayPcrColor}; font-weight: bold;">${intradayPcr.toFixed(2)}</td>
+                    <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">${item.sentiment}</td>
+                    <td>${item.add_exit}</td>`;
             }
-            if (prepend) { // Add to top
-                historyTbody.prepend(tr);
-            } else { // Add to bottom
-                historyTbody.appendChild(tr);
+            if (prepend) {
+                tbody.prepend(tr);
+            } else {
+                tbody.appendChild(tr);
             }
-            const historyTableContainer = historyTbody.closest('.table-container');
-            if (historyTableContainer) {
-                if (prepend) {
-                    historyTableContainer.scrollTop = 0;
-                } else {
-                    historyTableContainer.scrollTop = historyTableContainer.scrollHeight;
-                }
-            }
-            // console.log(`Today's history appended for ${symbol}:`, item); // Too verbose for frequent updates
         }
-        // Function to load and display historical data for a specific date
+
         async function loadHistoricalData(symbol) {
             const lower = symbol.toLowerCase();
             const dateInput = document.getElementById(`${lower}-history-date`);
-            const selectedDate = dateInput.value; // Format: YYYY-MM-DD
+            const historicalTbody = document.querySelector(`#${lower}-historical-data-table tbody`);
+            if (!dateInput || !historicalTbody) return;
+
+            const selectedDate = dateInput.value;
             if (!selectedDate) {
-                alert("Please select a date to load historical data.");
+                alert("Please select a date.");
                 return;
             }
-            const historicalTbodySelector = `#${lower}-historical-data-table tbody`;
-            const historicalTbody = document.querySelector(historicalTbodySelector);
-            if (!historicalTbody) {
-                console.error(`loadHistoricalData ERROR: Historical tbody NOT FOUND for selector: '${historicalTbodySelector}'.`);
-                return;
-            }
-            historicalTbody.innerHTML = '<tr><td colspan="8">Loading...</td></tr>'; // Default colspan for 8 columns
+
+            const colspan = (symbol === 'INDIAVIX') ? 6 : 10;
+            historicalTbody.innerHTML = `<tr><td colspan="${colspan}">Loading...</td></tr>`;
             try {
                 const response = await fetch(`/history/${symbol}/${selectedDate}`);
                 const data = await response.json();
                 historicalTbody.innerHTML = '';
-                if (data.error) {
-                    // Adjust colspan for VIX if an error occurs
-                    const colspan = (symbol === 'INDIAVIX') ? 6 : 8;
-                    historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">Error: ${data.error}</td></tr>`;
-                    console.error("Error loading historical data:", data.error);
+
+                if (data.error || data.history.length === 0) {
+                    const message = data.error ? `Error: ${data.error}` : 'No data found for this date.';
+                    historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">${message}</td></tr>`;
                     return;
                 }
-                if (data.history.length === 0) {
-                    // Adjust colspan for VIX if no data
-                    const colspan = (symbol === 'INDIAVIX') ? 6 : 8;
-                    historicalTbody.innerHTML = `<tr><td colspan="${colspan}">No data found for this date.</td></tr>`;
-                    return;
-                }
+
                 const isVix = (symbol === 'INDIAVIX');
-                // Backend sends data ORDER BY timestamp DESC, so iterate forwards and append to DOM
                 data.history.forEach(item => {
-                    const tr = document.createElement('tr');
-                    if (isVix) {
-                        tr.innerHTML = `
-                            <td>${item.time}</td>
-                            <td>${item.value}</td>
-                            <td style="color: ${item.sp >= 0 ? '#4CAF50' : '#F44336'}">${item.sp >= 0 ? '+' : ''}${item.sp}</td>
-                            <td style="color: ${item.pcr >= 0 ? '#4CAF50' : '#F44336'}">${item.pcr >= 0 ? '+' : ''}${item.pcr}%</td>
-                            <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
-                                ${item.sentiment}
-                            </td>
-                            <td>${item.add_exit || 'N/A'}</td>
-                        `;
-                    } else {
-                        tr.innerHTML = `
-                            <td>${item.time}</td>
-                            <td>${item.sp}</td>
-                            <td>${item.value}</td>
-                            <td>${item.call_oi}${item.call_oi !== 0 ? 'K' : ''}</td>
-                            <td>${item.put_oi}${item.put_oi !== 0 ? 'K' : ''}</td>
-                            <td>${item.pcr}</td>
-                            <td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : item.sentiment.includes('Bearish') ? '#F44336' : '#FFC107'}">
-                                ${item.sentiment}
-                            </td>
-                            <td>${item.add_exit}</td>
-                        `;
-                    }
-                    historicalTbody.appendChild(tr); // Append to show latest first
+                    addHistoryItemToTable(historicalTbody, item, isVix, false);
                 });
-                console.log(`Historical data loaded for ${symbol} on ${selectedDate}.`);
             } catch (error) {
-                // Adjust colspan for VIX if a fetch error
-                const colspan = (symbol === 'INDIAVIX') ? 6 : 8;
                 historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">Failed to load history.</td></tr>`;
-                console.error("Fetch error loading historical data:", error);
             }
         }
 
-        // Modified openTab function
-        function openTab(evt, symbol) { // Now expects symbol directly
-            console.log("--- openTab called ---");
-            console.log("openTab: Target symbol:", symbol);
-
-            document.querySelectorAll(".tabcontent").forEach(el => {
-                el.style.display = "none";
-                el.style.border = "";
-                el.style.boxShadow = "";
-            });
+        function openTab(evt, symbol) {
+            document.querySelectorAll(".tabcontent").forEach(el => el.style.display = "none");
             document.querySelectorAll(".tablink").forEach(el => el.classList.remove("active"));
-
-            const targetTabElement = document.getElementById(`${symbol}_tab`); // Construct ID using symbol
-            if (targetTabElement) {
-                console.log(`openTab: Found target tab element '${symbol}_tab'. Setting display to 'block'.`);
-                targetTabElement.style.display = "block";
-
-                // Update charts for the newly active tab if data is in cache and it's not INDIAVIX
-                if (symbol !== 'INDIAVIX' && shared_data_cache[symbol] && shared_data_cache[symbol].chart_data) {
-                    console.log(`openTab: Rendering charts for ${symbol} from cache.`);
-                    updateCharts(symbol, shared_data_cache[symbol].chart_data);
-                } else if (symbol !== 'INDIAVIX') { // Not VIX, but no chart data yet
-                    console.log(`openTab: No chart data in cache for ${symbol} yet. Clearing chart canvases.`);
-                    // Clear chart canvases if no data is found for the symbol, for non-VIX symbols
-                    const lower = symbol.toLowerCase();
-                    ['pcr-chart', 'max-pain-chart', 'ce-oi-chart', 'pe-oi-chart'].forEach(chartSuffix => {
-                        const chartId = `${lower}-${chartSuffix}`;
-                        if (charts[chartId]) {
-                            charts[chartId].destroy();
-                            delete charts[chartId];
-                        }
-                    });
-                }
-            } else {
-                console.error(`openTab ERROR: Target tab element '${symbol}_tab' not found.`);
-            }
+            const tab = document.getElementById(`${symbol}_tab`);
+            if (tab) tab.style.display = "block";
             evt.currentTarget.classList.add("active");
-            console.log("--- openTab finished ---");
+
+            if (symbol !== 'INDIAVIX' && shared_data_cache[symbol]) {
+                updateCharts(symbol, shared_data_cache[symbol]);
+            }
         }
 
-        // Cache for shared data to ensure charts can be rendered when tabs are switched
         const shared_data_cache = {};
 
-        // Handler for initial "today's" history load (on connect)
         socket.on('initial_todays_history', (data) => {
-            console.log("INITIAL TODAY'S HISTORY RECEIVED:", data.history);
             if (!data.history) return;
             Object.keys(data.history).forEach(sym => {
-                const lower = sym.toLowerCase();
-                const historyTbodySelector = `#${lower}-todays-history-table tbody`;
-                const historyTbody = document.querySelector(historyTbodySelector);
+                const historyTbody = document.querySelector(`#${sym.toLowerCase()}-todays-history-table tbody`);
                 if (historyTbody) {
-                    historyTbody.innerHTML = ''; // Clear before populating
+                    historyTbody.innerHTML = '';
                     const isVix = (sym === 'INDIAVIX');
-                    // Backend sends todays_history in ASC order (oldest first).
-                    // Iterate forwards, but prepend to DOM to show latest first.
-                    data.history[sym].slice().reverse().forEach(item => { // Reverse to prepend correctly
-                        appendTodaysHistoryItem(sym, item, true, isVix); // Prepend each item
+                    data.history[sym].forEach(item => {
+                        addHistoryItemToTable(historyTbody, item, isVix, false);
                     });
-                } else {
-                    console.error(`INITIAL HISTORY ERROR: Today's History tbody NOT FOUND for selector: '${historyTbodySelector}'.`);
                 }
             });
         });
-        // Handler for live updates (summary cards, option chain tables, AND live feed) - every 15 seconds
+
         socket.on('update', (data) => {
-            // console.log("--- LIVE UPDATE RECEIVED (15s) ---"); // Too verbose
-            // console.log("LIVE UPDATE: Raw data:", data); // Uncomment for verbose logging
-            if (!data.live || Object.keys(data.live).length === 0) {
-                console.warn("LIVE UPDATE: Received empty or invalid data.live object, skipping update.");
-                return;
-            }
-            // UPDATE LIVE INDEX FEED
+            if (!data.live) return;
+
             if (data.live_feed_summary) {
                 Object.keys(data.live_feed_summary).forEach(sym => {
                     const feed = data.live_feed_summary[sym];
                     const lower = sym.toLowerCase();
-                    const valueElement = document.getElementById(`feed-${lower}-value`);
-                    const changeElement = document.getElementById(`feed-${lower}-change`);
-                    const pctElement = document.getElementById(`feed-${lower}-pct`);
-                    if (valueElement) valueElement.textContent = feed.current_value;
-                    if (changeElement) {
-                        changeElement.textContent = `${feed.change >= 0 ? '+' : ''}${feed.change}`;
-                        changeElement.style.color = feed.change >= 0 ? '#4CAF50' : '#F44336'; // Green for positive, Red for negative
-                    }
-                    if (pctElement) {
-                        pctElement.textContent = `(${feed.percentage_change >= 0 ? '+' : ''}${feed.percentage_change}%)`;
-                        pctElement.style.color = feed.percentage_change >= 0 ? '#4CAF50' : '#F44336'; // Green for positive, Red for negative
-                    }
+                    document.getElementById(`feed-${lower}-value`).textContent = feed.current_value;
+                    const changeEl = document.getElementById(`feed-${lower}-change`);
+                    const pctEl = document.getElementById(`feed-${lower}-pct`);
+                    changeEl.textContent = `${feed.change >= 0 ? '+' : ''}${feed.change}`;
+                    changeEl.style.color = feed.change >= 0 ? '#4CAF50' : '#F44336';
+                    pctEl.textContent = `(${feed.percentage_change >= 0 ? '+' : ''}${feed.percentage_change.toFixed(2)}%)`;
+                    pctEl.style.color = feed.percentage_change >= 0 ? '#4CAF50' : '#F44336';
                 });
             }
-            // UPDATE SUMMARY CARDS
+
             Object.keys(data.live).forEach(sym => {
                 const s = data.live[sym].summary;
+                if (!s) return;
                 const lower = sym.toLowerCase();
-                if (!s) {
-                    console.warn(`LIVE UPDATE: Summary data is missing for symbol: ${sym}, skipping card update.`);
-                    return;
-                }
-                // Special handling for INDIAVIX summary card
+
+                const sentimentEl = document.getElementById(`${lower}-sentiment`);
+                sentimentEl.textContent = s.sentiment;
+                sentimentEl.style.color = s.sentiment.includes('Bullish') ? '#4CAF50' : s.sentiment.includes('Bearish') ? '#F44336' : '#FFC107';
+
                 if (sym === 'INDIAVIX') {
-                    const vixValueElement = document.getElementById(`${lower}-value`);
-                    const vixChangeElement = document.getElementById(`${lower}-change`);
-                    const vixPctElement = document.getElementById(`${lower}-pct`);
-                    const vixSentimentElement = document.getElementById(`${lower}-sentiment`);
-                    const vixNotesElement = document.getElementById(`${lower}-add-exit`); // Renamed from add-exit to notes for VIX
-                    if (vixValueElement) vixValueElement.textContent = s.value; // Use s.value for VIX value
-                    // For VIX, use the live_feed_summary for change/pct change in the card
-                    if (data.live_feed_summary && data.live_feed_summary[sym]) {
-                         const feed = data.live_feed_summary[sym];
-                         if (vixChangeElement) {
-                            vixChangeElement.textContent = `${feed.change >= 0 ? '+' : ''}${feed.change}`;
-                            vixChangeElement.style.color = feed.change >= 0 ? '#4CAF50' : '#F44336';
-                         }
-                         if (vixPctElement) {
-                            vixPctElement.textContent = `${feed.percentage_change >= 0 ? '+' : ''}${feed.percentage_change}`;
-                            vixPctElement.style.color = feed.percentage_change >= 0 ? '#4CAF50' : '#F44336';
-                         }
-                    }
-                    if (vixSentimentElement) {
-                        vixSentimentElement.textContent = s.sentiment;
-                        vixSentimentElement.style.color = s.sentiment.includes('Bullish') ? '#4CAF50' :
-                                                          s.sentiment.includes('Bearish') ? '#F44336' : '#FFC107';
-                    }
-                    if (vixNotesElement) vixNotesElement.textContent = s.add_exit; // Should be N/A for VIX
+                    document.getElementById(`${lower}-value`).textContent = s.value;
+                    document.getElementById(`${lower}-change`).textContent = s.sp >= 0 ? `+${s.sp}` : s.sp;
+                    document.getElementById(`${lower}-pct`).textContent = s.pcr >= 0 ? `+${s.pcr}` : s.pcr;
+                    document.getElementById(`${lower}-add-exit`).textContent = s.add_exit;
                 } else {
-                    // Existing logic for other symbols
-                    const summaryUpdates = {
-                        'sp': 'sp',
-                        'value': 'value',
-                        'call': 'call_oi',
-                        'put': 'put_oi',
-                        'pcr': 'pcr',
-                        'sentiment': 'sentiment',
-                        'add-exit': 'add_exit'
+                    document.getElementById(`${lower}-sp`).textContent = s.sp;
+                    document.getElementById(`${lower}-value`).textContent = s.value;
+                    document.getElementById(`${lower}-call`).textContent = s.call_oi;
+                    document.getElementById(`${lower}-put`).textContent = s.put_oi;
+                    document.getElementById(`${lower}-pcr`).textContent = s.pcr.toFixed(2);
+                    document.getElementById(`${lower}-add-exit`).textContent = s.add_exit;
+                }
+
+                if (sym !== 'INDIAVIX' && data.live[sym].strikes) {
+                    const tbody = document.querySelector(`#${lower}-table tbody`);
+                    tbody.innerHTML = '';
+                    data.live[sym].strikes.forEach(row => {
+                        const tr = document.createElement('tr');
+                        if (row.is_atm) tr.style.backgroundColor = '#2a2a2a';
+                        tr.innerHTML = `
+                            <td style="font-weight: ${row.is_atm ? 'bold' : 'normal'}; color: ${row.is_atm ? '#4CAF50' : '#fff'}">${row.strike}</td>
+                            <td>${row.call_oi.toLocaleString()}</td>
+                            <td style="color: ${row.call_coi > 0 ? '#4CAF50' : (row.call_coi < 0 ? '#F44336' : '#fff')}; font-weight: bold">${row.call_coi >= 0 ? '+' : ''}${row.call_coi}</td>
+                            <td class="action-cell" style="color: ${row.call_action === 'ADD' ? '#4CAF50' : '#F44336'}; font-weight: bold">${row.call_action}</td>
+                            <td>${row.put_oi.toLocaleString()}</td>
+                            <td style="color: ${row.put_coi > 0 ? '#4CAF50' : (row.put_coi < 0 ? '#F44336' : '#fff')}; font-weight: bold">${row.put_coi >= 0 ? '+' : ''}${row.put_coi}</td>
+                            <td class="action-cell" style="color: ${row.put_action === 'ADD' ? '#4CAF50' : '#F44336'}; font-weight: bold">${row.put_action}</td>`;
+                        tbody.appendChild(tr);
+                    });
+                }
+
+                if (sym !== 'INDIAVIX') {
+                    shared_data_cache[sym] = {
+                        pcr_chart_data: data.live[sym].pcr_chart_data,
+                        max_pain_chart_data: data.live[sym].max_pain_chart_data,
+                        ce_oi_chart_data: data.live[sym].ce_oi_chart_data,
+                        pe_oi_chart_data: data.live[sym].pe_oi_chart_data
                     };
-                    for (const idSuffix in summaryUpdates) {
-                        const dataKey = summaryUpdates[idSuffix];
-                        const elementId = `${lower}-${idSuffix}`;
-                        const element = document.getElementById(elementId);
-                        if (element) {
-                            if (idSuffix === 'sentiment') {
-                                element.textContent = s.sentiment;
-                                element.style.color = s.sentiment.includes('Bullish') ? '#4CAF50' :
-                                                      s.sentiment.includes('Bearish') ? '#F44336' : '#FFC107';
-                            } else {
-                                element.textContent = s[dataKey];
-                            }
-                        } else {
-                            console.error(`LIVE UPDATE ERROR: Summary element NOT FOUND: '${elementId}'.`);
-                        }
+                    if (document.querySelector('.tablink.active').dataset.symbol === sym) {
+                        updateCharts(sym, shared_data_cache[sym]);
                     }
-                }
-            });
-            // UPDATE OPTION CHAIN TABLES (only for non-VIX symbols)
-            Object.keys(data.live).forEach(sym => {
-                if (sym === 'INDIAVIX') return; // Skip VIX, it has no option chain table
-                const s = data.live[sym].summary;
-                const lower = sym.toLowerCase();
-                const tbodySelector = `#${lower}-table tbody`;
-                const tbody = document.querySelector(tbodySelector);
-                if (!tbody) {
-                    console.error(`LIVE UPDATE ERROR: Table tbody NOT FOUND for selector: '${tbodySelector}'.`);
-                    return;
-                }
-                if (!data.live[sym].strikes) {
-                    console.warn(`LIVE UPDATE: Table: Strikes data missing for ${sym}, skipping table update.`);
-                    return;
-                }
-                tbody.innerHTML = '';
-                data.live[sym].strikes.forEach(row => {
-                    const isAtm = row.is_atm;
-                    const tr = document.createElement('tr');
-                    if (isAtm) tr.style.backgroundColor = '#2a2a2a';
-                    tr.innerHTML = `
-                        <td style="font-weight: ${isAtm ? 'bold' : 'normal'}; color: ${isAtm ? '#4CAF50' : '#fff'}">
-                            ${row.strike}
-                        </td>
-                        <td>${row.call_oi.toLocaleString()}</td>
-                        <td style="color: ${row.call_coi > 0 ? '#4CAF50' : row.call_coi < 0 ? '#F44336' : '#fff'}; font-weight: bold">
-                            ${row.call_coi >= 0 ? '+' : ''}${row.call_coi}
-                        </td>
-                        <td class="action-cell" style="color: ${row.call_action === 'ADD' ? '#4CAF50' : '#F44336'}; font-weight: bold">
-                            ${row.call_action}
-                        </td>
-                        <td>${row.put_oi.toLocaleString()}</td>
-                        <td style="color: ${row.put_coi > 0 ? '#4CAF50' : row.put_coi < 0 ? '#F44336' : '#fff'}; font-weight: bold">
-                            ${row.put_coi >= 0 ? '+' : ''}${row.put_coi}
-                        </td>
-                        <td class="action-cell" style="color: ${row.put_action === 'ADD' ? '#4CAF50' : '#F44336'}; font-weight: bold">
-                            ${row.put_action}
-                        </td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-            });
-
-            // Update Charts if the tab is currently active
-            Object.keys(data.live).forEach(sym => {
-                if (sym === 'INDIAVIX') return; // VIX has no charts
-
-                // Store chart data in cache
-                // Ensure chart_data is always defined, even if empty
-                const chartDataForSym = {
-                    pcr_chart_data: data.live[sym].pcr_chart_data || [],
-                    max_pain_chart_data: data.live[sym].max_pain_chart_data || [],
-                    ce_oi_chart_data: data.live[sym].ce_oi_chart_data || [],
-                    pe_oi_chart_data: data.live[sym].pe_oi_chart_data || []
-                };
-                shared_data_cache[sym] = shared_data_cache[sym] || {};
-                shared_data_cache[sym].chart_data = chartDataForSym;
-
-                const currentActiveTabButton = document.querySelector('.tablink.active');
-                if (currentActiveTabButton && currentActiveTabButton.dataset.symbol === sym) {
-                    console.log(`LIVE UPDATE: Rendering charts for active tab ${sym}.`);
-                    updateCharts(sym, chartDataForSym);
                 }
             });
 
             const timeElement = document.getElementById('time');
             if (timeElement) {
-                timeElement.textContent = new Date().toLocaleTimeString();
-            } else {
-                console.error("LIVE UPDATE ERROR: Footer time element NOT FOUND: 'time'.");
+                const now = new Date();
+                const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+                const istOffset = 5.5 * 3600000;
+                const istTime = new Date(utc + istOffset);
+                timeElement.textContent = istTime.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
             }
-            // console.log("--- LIVE UPDATE FINISHED ---"); // Too verbose
         });
-        // NEW: Handler for "Today's Updates" history append - every 2 minutes
+
         socket.on('todays_history_append', (data) => {
-            // console.log("--- TODAY'S HISTORY APPEND RECEIVED (2min) ---"); // Too verbose
-            // console.log(`TODAY'S HISTORY APPEND: New item for ${data.symbol}:`, data.item); // Too verbose
             if (data.symbol && data.item) {
-                const isVix = (data.symbol === 'INDIAVIX');
-                appendTodaysHistoryItem(data.symbol, data.item, true, isVix); // Prepend new item, pass isVix
-            } else {
-                console.warn("TODAY'S HISTORY APPEND: Received invalid data.");
+                const historyTbody = document.querySelector(`#${data.symbol.toLowerCase()}-todays-history-table tbody`);
+                if (historyTbody) {
+                    const isVix = (data.symbol === 'INDIAVIX');
+                    addHistoryItemToTable(historyTbody, data.item, isVix, true);
+                }
             }
-            // console.log("--- TODAY'S HISTORY APPEND FINISHED ---"); // Too verbose
         });
-        // Set today's date as default for date pickers
+
         document.addEventListener('DOMContentLoaded', () => {
             const today = new Date();
             const yyyy = today.getFullYear();
-            const mm = String(today.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
             const dd = String(today.getDate()).padStart(2, '0');
             const todayStr = `${yyyy}-${mm}-${dd}`;
-            document.querySelectorAll('.history-date-picker').forEach(input => {
-                input.value = todayStr;
-            });
-            // Trigger the click on the default open tab button to render its charts
-            const defaultOpenButton = document.getElementById("NIFTYOpen"); // Assuming NIFTY is default
-            if (defaultOpenButton) {
-                defaultOpenButton.click();
-            } else {
-                console.error("Default open tab button not found.");
-            }
+            document.querySelectorAll('.history-date-picker').forEach(input => input.value = todayStr);
+
+            const defaultOpenButton = document.getElementById("NIFTYOpen");
+            if (defaultOpenButton) defaultOpenButton.click();
         });
     </script>
 </body>
