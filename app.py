@@ -25,6 +25,7 @@ from bs4 import BeautifulSoup
 from nsetools import Nse
 # Import lxml explicitly (ensure you have it installed: pip install lxml)
 import lxml
+import re  # For regex in VIX scraping
 
 requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning)
@@ -176,7 +177,7 @@ def get_historical_data(symbol: str, date_str: str):
             rows = cur.fetchall()
             for r in rows:
                 history_for_date.append({
-                    'time': r[0].split()[1][:5],  # Just HH:MM
+                    'time': analyzer._convert_utc_to_ist_display(r[0]),  # Convert to IST display format
                     'sp': r[1],
                     'value': r[2],
                     'call_oi': r[3],
@@ -188,6 +189,16 @@ def get_historical_data(symbol: str, date_str: str):
         else:
             return jsonify({"error": "Database not connected."}), 500
     return jsonify({"history": history_for_date})
+
+
+@app.route('/clear_todays_history', methods=['POST'])
+def clear_history_endpoint():
+    symbol_to_clear = request.json.get('symbol')
+    if symbol_to_clear not in AUTO_SYMBOLS and symbol_to_clear is not None:
+        return jsonify({"status": "error", "message": f"Invalid symbol: {symbol_to_clear}"}), 400
+
+    analyzer.clear_todays_history_db(symbol_to_clear)
+    return jsonify({"status": "success", "message": "Today's history cleared."})
 
 
 # --------------------------------------------------------------------------- #
@@ -229,7 +240,7 @@ class NseBseAnalyzer:
         self.nse_tool_symbol_map = {
             "NIFTY": "NIFTY 50",
             "BANKNIFTY": "NIFTY BANK",  # This is the most common for nsetools
-            "FINNIFTY": "NIFNIFTY"  # This is a common alternative for FINNIFTY in nsetools, verify if needed
+            "FINNIFTY": "NIFNIFTY"  # This is a common alternative for FINNITFY in nsetools, verify if needed
             # If "NIFNIFTY" doesn't work, try "NIFTY FIN SERVICE" or use nse.get_index_list()
         }
 
@@ -255,7 +266,6 @@ class NseBseAnalyzer:
             cols = [column[1] for column in cur.fetchall()]
             if 'add_exit' not in cols:
                 cur.execute("ALTER TABLE history ADD COLUMN add_exit TEXT")
-            # SQLite is flexible, so REAL type should handle both ints and floats.
             self.conn.commit()
         except Exception as e:
             print(f"DB error: {e}")
@@ -266,21 +276,21 @@ class NseBseAnalyzer:
         if not self.conn: return
         try:
             cur = self.conn.cursor()
-            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            today_str = self._get_ist_time().strftime("%Y-%m-%d")  # Use IST for today's date
             for sym in AUTO_SYMBOLS:
                 cur.execute("""
                     SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit
                     FROM history
                     WHERE symbol = ? AND SUBSTR(timestamp, 1, 10) = ?
-                    ORDER BY timestamp DESC -- Changed to DESC so latest items are first in the list
+                    ORDER BY timestamp ASC -- Changed to ASC so oldest items are first in the list for frontend prepend
                 """, (sym, today_str))
                 rows = cur.fetchall()
                 todays_history[sym] = []  # Clear existing if any
 
-                # Store history items in the order they are fetched (DESC)
+                # Store history items in the order they are fetched (ASC)
                 for r in rows:
                     history_item = {
-                        'time': r[0].split()[1][:5],  # HH:MM
+                        'time': self._convert_utc_to_ist_display(r[0]),  # Convert to IST display format
                         'sp': r[1],
                         'value': r[2],
                         'call_oi': r[3],
@@ -289,23 +299,23 @@ class NseBseAnalyzer:
                         'sentiment': r[6],
                         'add_exit': r[7]
                     }
-                    todays_history[sym].append(history_item)  # This list is now DESCENDING (newest first)
+                    todays_history[sym].append(history_item)  # This list is now ASCENDING (oldest first)
 
             # After all history is loaded for all symbols, reconstruct pcr_graph_data chronologically
             for sym in AUTO_SYMBOLS:
                 if sym != "INDIAVIX":
                     self.pcr_graph_data[sym] = []
                     last_pcr_add_time = 0.0
-                    # For PCR graph, we need chronological order (oldest first).
-                    # Since todays_history[sym] is currently DESCENDING, reverse it for sorting.
-                    chronological_history = sorted(todays_history[sym].copy(),
-                                                   key=lambda x: datetime.datetime.strptime(today_str + " " + x['time'],
-                                                                                            "%Y-%m-%d %H:%M"))
-
-                    for history_item in chronological_history:
+                    # todays_history[sym] is already chronological (ASC) for the graph
+                    for history_item in todays_history[sym]:
+                        # For accurate interval, we should ideally use the original UTC timestamp from DB,
+                        # not the converted display time.
+                        # For simplicity, we'll parse the IST time from history_item for interval calculation.
+                        # This assumes the difference between two IST times will correctly reflect UPDATE_INTERVAL.
+                        # For very precise intervals across daylight savings, full UTC is better, but this is usually fine.
                         item_datetime = datetime.datetime.strptime(today_str + " " + history_item['time'],
-                                                                   "%Y-%m-%d %H:%M")
-                        item_timestamp_float = item_datetime.timestamp()
+                                                                   "%Y-%m-%d %H:%M")  # This is IST now
+                        item_timestamp_float = item_datetime.timestamp()  # This timestamp is based on IST
 
                         if item_timestamp_float - last_pcr_add_time >= UPDATE_INTERVAL:
                             self.pcr_graph_data[sym].append({"TIME": history_item['time'], "PCR": history_item['pcr']})
@@ -321,7 +331,7 @@ class NseBseAnalyzer:
         if not self.conn: return
         with data_lock:
             cur = self.conn.cursor()
-            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            today_str = self._get_ist_time().strftime("%Y-%m-%d")  # Use IST for today's date
             for sym in AUTO_SYMBOLS:
                 cur.execute("""
                     SELECT value
@@ -336,6 +346,47 @@ class NseBseAnalyzer:
                 else:
                     initial_underlying_values[sym] = None  # No historical data for today yet
 
+    def _get_ist_time(self) -> datetime.datetime:
+        utc_now = datetime.datetime.now(datetime.timezone.utc)
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_now = utc_now + ist_offset
+        return ist_now
+
+    def _convert_utc_to_ist_display(self, utc_timestamp_str: str) -> str:
+        # Assuming timestamp in DB is UTC string "YYYY-MM-DD HH:MM:SS"
+        utc_dt = datetime.datetime.strptime(utc_timestamp_str, "%Y-%m-%d %H:%M:%S")
+        utc_dt = utc_dt.replace(tzinfo=datetime.timezone.utc)
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_dt = utc_dt + ist_offset
+        return ist_dt.strftime("%H:%M")
+
+    def clear_todays_history_db(self, sym: Optional[str] = None):
+        if not self.conn: return
+        try:
+            cur = self.conn.cursor()
+            today_str = self._get_ist_time().strftime("%Y-%m-%d")  # Use IST for today's date
+            if sym:
+                cur.execute("DELETE FROM history WHERE symbol = ? AND SUBSTR(timestamp, 1, 10) = ?", (sym, today_str))
+                print(f"Cleared today's history for {sym} from DB.")
+            else:
+                cur.execute("DELETE FROM history WHERE SUBSTR(timestamp, 1, 10) = ?", (today_str,))
+                print(f"Cleared today's history for ALL symbols from DB.")
+            self.conn.commit()
+            # After clearing the DB, also clear the in-memory todays_history and PCR graph data
+            with data_lock:
+                for s in AUTO_SYMBOLS:
+                    if sym is None or s == sym:
+                        todays_history[s] = []
+                        if s != "INDIAVIX":
+                            self.pcr_graph_data[s] = []
+                            self.last_pcr_graph_update_time[s] = 0
+            # Trigger a full update to clear the frontend tables
+            broadcast_live_update()  # This will update summary cards, option chains
+            socketio.emit('initial_todays_history', {'history': todays_history})  # This will clear history tables
+
+        except Exception as e:
+            print(f"DB cleanup error: {e}")
+
     def run_loop(self):
         # Initial call to get cookies and session data
         try:
@@ -344,20 +395,21 @@ class NseBseAnalyzer:
             print(f"Initial NSE session setup failed: {e}")
 
         while not self.stop.is_set():
-            current_date = datetime.date.today()
+            current_date_ist = self._get_ist_time().date()  # Use IST date for daily resets
             for sym in AUTO_SYMBOLS:
                 # Reset PCR data (and last_pcr_data_reset_date) at the start of a new day
-                if sym != "INDIAVIX" and self.last_pcr_data_reset_date[sym] < current_date:
-                    print(f"Resetting PCR graph data for {sym} for new day: {current_date}")
+                if sym != "INDIAVIX" and self.last_pcr_data_reset_date[sym] < current_date_ist:
+                    print(f"Resetting PCR graph data for {sym} for new day: {current_date_ist}")
                     self.pcr_graph_data[sym] = []
                     self.last_pcr_graph_update_time[sym] = 0  # Reset PCR graph update time for new day
-                    self.last_pcr_data_reset_date[sym] = current_date
+                    self.last_pcr_data_reset_date[sym] = current_date_ist
                 # Also reset initial_underlying_values for a new day
-                # This check assumes last_alert[sym] is updated at least once a day.
-                # A more robust check might involve comparing current_date with a stored "last_reset_date" for initial_underlying_values.
-                # For simplicity and to avoid over-complicating, we'll keep the existing logic, but be aware of its assumption.
+                # Compare current IST date with the date of the last alert (which uses IST)
+                # Need to convert last_alert timestamp (epoch) to IST date for accurate comparison
+                last_alert_dt_utc = datetime.datetime.fromtimestamp(last_alert[sym], tz=datetime.timezone.utc)
+                last_alert_dt_ist = last_alert_dt_utc + datetime.timedelta(hours=5, minutes=30)
                 if initial_underlying_values[sym] is not None and \
-                        datetime.datetime.now().date() != datetime.datetime.fromtimestamp(last_alert[sym]).date():
+                        current_date_ist != last_alert_dt_ist.date():
                     initial_underlying_values[sym] = None
 
                 try:
@@ -475,7 +527,7 @@ class NseBseAnalyzer:
                 concise_add_exit_parts.append(f"PE Exit: {', '.join(sorted(pe_exit_strikes))}")
             concise_add_exit_string = " | ".join(concise_add_exit_parts) if concise_add_exit_parts else "No Change"
             summary = {
-                'time': datetime.datetime.now().strftime("%H:%M"),
+                'time': self._get_ist_time().strftime("%H:%M"),  # Use IST time
                 'sp': int(sp),
                 'value': int(round(underlying)),
                 'call_oi': round(atm_call_coi / 1000, 1),
@@ -653,7 +705,7 @@ class NseBseAnalyzer:
                 concise_add_exit_parts.append(f"PE Exit: {', '.join(sorted(pe_exit_strikes))}")
             concise_add_exit_string = " | ".join(concise_add_exit_parts) if concise_add_exit_parts else "No Change"
             summary = {
-                'time': datetime.datetime.now().strftime("%H:%M"),
+                'time': self._get_ist_time().strftime("%H:%M"),  # Use IST time
                 'sp': int(sp),
                 'value': int(round(underlying)),
                 'call_oi': round(atm_call_coi / 1000, 1),
@@ -784,7 +836,6 @@ class NseBseAnalyzer:
                 elif len(
                         change_elements) == 1:  # Sometimes change and percentage are in one element like "+0.50 (+3.20%)"
                     full_change_text = change_elements[0].text
-                    import re
                     match = re.search(r'([+-]?\d+\.?\d*)\s*\(([+-]?\d+\.?\d*)%\)', full_change_text)
                     if match:
                         scraped_change_text = match.group(1)
@@ -845,7 +896,7 @@ class NseBseAnalyzer:
             # VIX doesn't have OI, PCR, SP, etc. so we adapt the summary structure
             # SP field will store 'change', PCR field will store 'percentage_change'
             summary = {
-                'time': datetime.datetime.now().strftime("%H:%M"),
+                'time': self._get_ist_time().strftime("%H:%M"),  # Use IST time
                 'sp': round(scraped_change, 2),  # Store change in 'sp' field for history table display
                 'value': round(current_vix, 2),  # VIX value in 'value' field
                 'call_oi': 0.0,  # Not applicable for VIX
@@ -912,7 +963,7 @@ class NseBseAnalyzer:
             sentiment = "Mild Bullish"
 
         summary = {
-            'time': datetime.datetime.now().strftime("%H:%M"),
+            'time': self._get_ist_time().strftime("%H:%M"),  # Use IST time
             'sp': round(change, 2),  # Store change in 'sp' field for consistency with history table
             'value': round(current_vix, 2),  # VIX value in 'value' field
             'call_oi': 0.0,
@@ -924,15 +975,14 @@ class NseBseAnalyzer:
         }
         result = {'summary': summary, 'strikes': []}
         with data_lock:
-            shared_data[sym]['live_feed_summary'] = {
+            shared_data[sym] = result  # Assign result first
+            shared_data[sym]['live_feed_summary'] = {  # Then add live_feed_summary
                 'current_value': round(current_vix, 2),
                 'change': round(change, 2),
                 'percentage_change': round(percentage_change, 2)
             }
-            shared_data[sym] = result  # This line needs to be after shared_data[sym]['live_feed_summary'] = { ... }
-            # Otherwise, shared_data[sym] is overwritten and live_feed_summary is lost.
         print(
-            f"{sym} MOCK DATA UPDATED | Value: {current_vix:.2f} | Change: {change:+.2f} | Pct: {percentage_percentage:+.2f}% (Fallback)")  # Typo here
+            f"{sym} MOCK DATA UPDATED | Value: {current_vix:.2f} | Change: {change:+.2f} | Pct: {percentage_change:+.2f}% (Fallback)")  # Corrected typo
         broadcast_live_update()
         now = time.time()
         if now - last_history_update[sym] >= UPDATE_INTERVAL:
@@ -1002,7 +1052,7 @@ class NseBseAnalyzer:
             concise_add_exit_parts.append(f"PE Exit: {', '.join(sorted(pe_exit_strikes))}")
         concise_add_exit_string = " | ".join(concise_add_exit_parts) if concise_add_exit_parts else "No Change"
         summary = {
-            'time': datetime.datetime.now().strftime("%H:%M"),
+            'time': self._get_ist_time().strftime("%H:%M"),  # Use IST time
             'sp': int(sp),
             'value': int(round(underlying)),
             'call_oi': round(atm_call_coi / 1000, 1),
@@ -1138,7 +1188,7 @@ class NseBseAnalyzer:
     def _save_db(self, sym, row):
         if not self.conn: return
         try:
-            current_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            current_timestamp = self._get_ist_time().strftime("%Y-%m-%d %H:%M:%S")  # Save IST time
             self.conn.execute(
                 "INSERT INTO history (timestamp, symbol, sp, value, call_oi, put_oi, pcr, sentiment, add_exit) VALUES (?,?,?,?,?,?,?,?,?)",
                 (current_timestamp, sym, row['sp'], row['value'],
@@ -1346,6 +1396,12 @@ def create_html():
             <button class="tablink" onclick="openTab(event, 'SENSEX')" data-symbol="SENSEX">SENSEX</button>
             <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button> <!-- NEW INDIAVIX TAB BUTTON -->
         </div>
+
+        <!-- New Global Controls section -->
+        <div class="global-controls">
+            <button class="clear-history-button" onclick="clearTodaysHistory(null)">Clear All Today's History</button>
+        </div>
+
         <div id="NIFTY_tab" class="tabcontent" style="display: block;">
             <h3 style="margin-top: 20px;">NIFTY Today's Updates (appends every 2 min)</h3>
             <div class="table-container">
@@ -1390,6 +1446,7 @@ def create_html():
                 <label for="nifty-history-date">Date:</label>
                 <input type="date" id="nifty-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('NIFTY')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('NIFTY')">Clear Today's NIFTY History</button>
             </div>
             <div class="table-container">
                 <table id="nifty-historical-data-table">
@@ -1453,6 +1510,7 @@ def create_html():
                 <label for="finnifty-history-date">Date:</label>
                 <input type="date" id="finnifty-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('FINNIFTY')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('FINNIFTY')">Clear Today's FINNIFTY History</button>
             </div>
             <div class="table-container">
                 <table id="finnifty-historical-data-table">
@@ -1514,6 +1572,7 @@ def create_html():
                 <label for="banknifty-history-date">Date:</label>
                 <input type="date" id="banknifty-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('BANKNIFTY')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('BANKNIFTY')">Clear Today's BANKNIFTY History</button>
             </div>
             <div class="table-container">
                 <table id="banknifty-historical-data-table">
@@ -1575,6 +1634,7 @@ def create_html():
                 <label for="sensex-history-date">Date:</label>
                 <input type="date" id="sensex-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('SENSEX')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('SENSEX')">Clear Today's SENSEX History</button>
             </div>
             <div class="table-container">
                 <table id="sensex-historical-data-table">
@@ -1618,6 +1678,7 @@ def create_html():
                 <label for="indiavix-history-date">Date:</label>
                 <input type="date" id="indiavix-history-date" class="history-date-picker">
                 <button onclick="loadHistoricalData('INDIAVIX')">Load History</button>
+                <button class="clear-history-button-small" onclick="clearTodaysHistory('INDIAVIX')">Clear Today's INDIAVIX History</button>
             </div>
             <div class="table-container">
                 <table id="indiavix-historical-data-table">
@@ -1783,10 +1844,38 @@ def create_html():
             }
         }
 
+        async function clearTodaysHistory(symbol = null) {
+            if (!confirm(`Are you sure you want to clear today's history ${symbol ? 'for ' + symbol : 'for ALL symbols'}? This cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/clear_todays_history', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ symbol: symbol })
+                });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    console.log(result.message);
+                    // The backend will emit 'initial_todays_history' which will clear/re-render the tables
+                    // so no need to manually clear the frontend tables here.
+                } else {
+                    console.error("Error clearing history:", result.message);
+                    alert("Error clearing history: " + result.message);
+                }
+            } catch (error) {
+                console.error("Network error clearing history:", error);
+                alert("Network error clearing history. See console for details.");
+            }
+        }
+
 
         // Function to append a single history item to the correct "Today's Updates" table
         // The 'prepend' parameter should be true for new live updates (newest item at top)
-        // and false for initial load (where data is already sorted DESC from backend, so append to maintain order)
+        // and true for initial load (when backend sends ASC order, prepending each creates DESC order)
         function appendTodaysHistoryItem(symbol, item, prepend = true, isVix = false) {
             const lower = symbol.toLowerCase();
             const historyTbodySelector = `#${lower}-todays-history-table tbody`;
@@ -1821,15 +1910,16 @@ def create_html():
                     <td>${item.add_exit}</td>
                 `;
             }
-            if (prepend) { // For live updates, prepend to keep newest at top
-                historyTbody.prepend(tr);
-                const historyTableContainer = historyTbody.closest('.table-container');
-                if (historyTableContainer) {
-                    historyTableContainer.scrollTop = 0; // Scroll to top for new live updates
-                }
-            } else { // For initial load, append to keep newest at top (since backend sends DESC)
-                historyTbody.appendChild(tr);
-                // No auto-scroll to bottom for initial load, user can scroll.
+            // Always prepend to ensure the newest item is always at the top
+            historyTbody.prepend(tr);
+
+            // Only scroll to top for live updates, not for initial bulk load
+            // The 'prepend' parameter is true for both initial load (to build table) and live updates (to add new item)
+            // So we need another way to distinguish. A simple way is to check if the table is empty before adding.
+            // If the table was empty, it's likely an initial load.
+            const historyTableContainer = historyTbody.closest('.table-container');
+            if (historyTableContainer && historyTbody.children.length === 1) { // If this is the very first row added
+                historyTableContainer.scrollTop = 0; // Scroll to top
             }
         }
         // Function to load and display historical data for a specific date
@@ -1924,7 +2014,7 @@ def create_html():
 
                 // Update charts for the newly active tab if data is in cache and it's not INDIAVIX
                 if (symbol !== 'INDIAVIX' && shared_data_cache[symbol] && shared_data_cache[symbol].chart_data) {
-                    console.log(`openTab: Rendering charts for ${symbol} from cache.`);
+                    console.log(`openTab: Rendering charts for active tab ${symbol}.`);
                     updateCharts(symbol, shared_data_cache[symbol].chart_data);
                 } else if (symbol !== 'INDIAVIX') { // Not VIX, but no chart data yet
                     console.log(`openTab: No chart data in cache for ${symbol} yet. Clearing chart canvases.`);
@@ -1959,12 +2049,10 @@ def create_html():
                 if (historyTbody) {
                     historyTbody.innerHTML = ''; // Clear before populating
                     const isVix = (sym === 'INDIAVIX');
-                    // Backend sends todays_history in DESC order (latest first).
-                    // To display latest-first in the table, we iterate through the DESC list
-                    // and append each item. This means the first item (newest) is appended first,
-                    // then the next newest, and so on, resulting in the newest at the top.
+                    // Backend sends todays_history in ASC order (oldest first).
+                    // Iterate through this ASC list and PREPEND each item to get newest at top.
                     data.history[sym].forEach(item => {
-                        appendTodaysHistoryItem(sym, item, false, isVix); // Use append (false)
+                        appendTodaysHistoryItem(sym, item, true, isVix); // PREPEND each item
                     });
                 } else {
                     console.error(`INITIAL HISTORY ERROR: Today's History tbody NOT FOUND for selector: '${historyTbodySelector}'.`);
@@ -2128,7 +2216,12 @@ def create_html():
 
             const timeElement = document.getElementById('time');
             if (timeElement) {
-                timeElement.textContent = new Date().toLocaleTimeString();
+                // Display current IST time in the footer
+                const now = new Date();
+                const utc = now.getTime() + (now.getTimezoneOffset() * 60000); // Convert to UTC milliseconds
+                const istOffset = 5.5 * 3600000; // 5 hours 30 minutes in milliseconds
+                const istTime = new Date(utc + istOffset);
+                timeElement.textContent = istTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
             } else {
                 console.error("LIVE UPDATE ERROR: Footer time element NOT FOUND: 'time'.");
             }
@@ -2364,6 +2457,47 @@ th, td {
     height: 450px; /* Increased height for charts */
 }
 
+.global-controls {
+    text-align: center;
+    margin: 20px 0;
+    padding: 15px;
+    background: #282828;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.clear-history-button {
+    padding: 12px 25px;
+    background-color: #dc3545; /* Red for danger */
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    transition: background-color 0.2s;
+}
+
+.clear-history-button:hover {
+    background-color: #c82333;
+}
+
+.clear-history-button-small {
+    padding: 8px 15px;
+    background-color: #ffc107; /* Orange for warning/action */
+    color: #333;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+    margin-left: 10px; /* Space it from the Load History button */
+}
+
+.clear-history-button-small:hover {
+    background-color: #e0a800;
+}
+
 
 footer { text-align: center; margin-top: 30px; font-size: 12px; color: #888; }"""
     with open('static/style.css', 'w') as f:
@@ -2377,7 +2511,9 @@ if __name__ == '__main__':
     create_html()
     create_css()
     analyzer = NseBseAnalyzer()
+    # Uncomment the line below if you want to clear today's history from the DB
+    # every time the application starts. Use with caution!
+    # analyzer.clear_todays_history_db()
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     print("SENSEX: Add DhanHQ keys for real data")
     socketio.run(app, host='0.0.0.0', port=5000)
-
