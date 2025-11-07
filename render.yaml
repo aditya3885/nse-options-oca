@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: nse-oca-pro
+    name: nse-options-oca
     env: python
     pythonVersion: "3.11.9"
     buildCommand: "pip install -r requirements.txt"
