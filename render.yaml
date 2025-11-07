@@ -3,7 +3,7 @@ services:
     name: nse-options-oca
     env: python
     pythonVersion: "3.13.4"
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
     startCommand: "gunicorn -k eventlet -w 1 app:app"
     envVars:
       TELEGRAM_BOT_TOKEN:
