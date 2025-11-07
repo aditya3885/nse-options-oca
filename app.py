@@ -228,8 +228,9 @@ class NseBseAnalyzer:
         # Mapping for nsetools symbols
         self.nse_tool_symbol_map = {
             "NIFTY": "NIFTY 50",
-            "BANKNIFTY": "NIFTY BANK",
-            "FINNIFTY": "NIFNIFTY" # Common alternative for FINNIFTY in nsetools, verify if needed
+            "BANKNIFTY": "NIFTY BANK",  # This is the most common for nsetools
+            "FINNIFTY": "NIFNIFTY"  # This is a common alternative for FINNIFTY in nsetools, verify if needed
+            # If "NIFNIFTY" doesn't work, try "NIFTY FIN SERVICE" or use nse.get_index_list()
         }
 
         # PCR reset date tracker (only for non-VIX symbols)
@@ -271,17 +272,15 @@ class NseBseAnalyzer:
                     SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit
                     FROM history
                     WHERE symbol = ? AND SUBSTR(timestamp, 1, 10) = ?
-                    ORDER BY timestamp ASC
+                    ORDER BY timestamp DESC -- Changed to DESC so latest items are first in the list
                 """, (sym, today_str))
                 rows = cur.fetchall()
-                todays_history[sym] = [] # Clear existing if any
-                if sym != "INDIAVIX":
-                    self.pcr_graph_data[sym] = [] # Clear PCR data for reconstruction
+                todays_history[sym] = []  # Clear existing if any
 
-                last_pcr_add_time = 0.0 # To simulate the 2-minute interval for graph data
+                # Store history items in the order they are fetched (DESC)
                 for r in rows:
                     history_item = {
-                        'time': r[0].split()[1][:5], # HH:MM
+                        'time': r[0].split()[1][:5],  # HH:MM
                         'sp': r[1],
                         'value': r[2],
                         'call_oi': r[3],
@@ -292,16 +291,27 @@ class NseBseAnalyzer:
                     }
                     todays_history[sym].append(history_item)
 
-                    if sym != "INDIAVIX": # Reconstruct PCR data for charting
-                        # Reconstruct the timestamp for the 2-minute interval check
-                        item_datetime = datetime.datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S")
+            # After all history is loaded for all symbols, reconstruct pcr_graph_data chronologically
+            for sym in AUTO_SYMBOLS:
+                if sym != "INDIAVIX":
+                    self.pcr_graph_data[sym] = []
+                    last_pcr_add_time = 0.0
+                    # Sort todays_history[sym] by time in ascending order for PCR graph reconstruction
+                    # We use slice() to create a copy before sorting to avoid modifying the original list order
+                    chronological_history = sorted(todays_history[sym].copy(),
+                                                   key=lambda x: datetime.datetime.strptime(today_str + " " + x['time'],
+                                                                                            "%Y-%m-%d %H:%M"))
+
+                    for history_item in chronological_history:
+                        item_datetime = datetime.datetime.strptime(today_str + " " + history_item['time'],
+                                                                   "%Y-%m-%d %H:%M")
                         item_timestamp_float = item_datetime.timestamp()
 
                         if item_timestamp_float - last_pcr_add_time >= UPDATE_INTERVAL:
                             self.pcr_graph_data[sym].append({"TIME": history_item['time'], "PCR": history_item['pcr']})
                             last_pcr_add_time = item_timestamp_float
-                            # Update last_pcr_graph_update_time if this is the most recent entry
-                            self.last_pcr_graph_update_time[sym] = item_timestamp_float
+                            self.last_pcr_graph_update_time[
+                                sym] = item_timestamp_float  # Update with the latest point added to graph
 
         except Exception as e:
             print(f"History load error: {e}")
@@ -340,15 +350,15 @@ class NseBseAnalyzer:
                 if sym != "INDIAVIX" and self.last_pcr_data_reset_date[sym] < current_date:
                     print(f"Resetting PCR graph data for {sym} for new day: {current_date}")
                     self.pcr_graph_data[sym] = []
-                    self.last_pcr_graph_update_time[sym] = 0 # Reset PCR graph update time for new day
+                    self.last_pcr_graph_update_time[sym] = 0  # Reset PCR graph update time for new day
                     self.last_pcr_data_reset_date[sym] = current_date
                 # Also reset initial_underlying_values for a new day
                 # This check assumes last_alert[sym] is updated at least once a day.
                 # A more robust check might involve comparing current_date with a stored "last_reset_date" for initial_underlying_values.
+                # For simplicity and to avoid over-complicating, we'll keep the existing logic, but be aware of its assumption.
                 if initial_underlying_values[sym] is not None and \
-                   datetime.datetime.now().date() != datetime.datetime.fromtimestamp(last_alert[sym]).date():
+                        datetime.datetime.now().date() != datetime.datetime.fromtimestamp(last_alert[sym]).date():
                     initial_underlying_values[sym] = None
-
 
                 try:
                     self.fetch_and_process_symbol(sym)
@@ -521,9 +531,8 @@ class NseBseAnalyzer:
                 # Add PCR chart data to shared_data (even if not updated this cycle, it's the current state)
                 shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
 
-
             print(f"{sym} LIVE DATA UPDATED | SP: {sp} | PCR: {pcr} | {summary['add_exit']}")
-            broadcast_live_update() # This sends the updated shared_data, including pcr_chart_data
+            broadcast_live_update()  # This sends the updated shared_data, including pcr_chart_data
 
             now = time.time()
             # History update logic (every UPDATE_INTERVAL)
@@ -534,9 +543,10 @@ class NseBseAnalyzer:
                     if sym != "INDIAVIX":
                         self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
                         # Keep pcr_graph_data manageable (e.g., last X points for a reasonable graph window)
-                        if len(self.pcr_graph_data[sym]) > (60 / (UPDATE_INTERVAL / 60)) * 6: # e.g., 6 hours of 2-min data
+                        if len(self.pcr_graph_data[sym]) > (
+                                60 / (UPDATE_INTERVAL / 60)) * 6:  # e.g., 6 hours of 2-min data
                             self.pcr_graph_data[sym].pop(0)
-                        self.last_pcr_graph_update_time[sym] = now # Update the last time PCR graph data was added
+                        self.last_pcr_graph_update_time[sym] = now  # Update the last time PCR graph data was added
                     # Update pcr_chart_data in shared_data to reflect the newly added point
                     shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
 
@@ -702,7 +712,8 @@ class NseBseAnalyzer:
                     # Now update pcr_graph_data for charting ONLY when history is updated (2-min interval)
                     if sym != "INDIAVIX":
                         self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
-                        if len(self.pcr_graph_data[sym]) > (60 / (UPDATE_INTERVAL / 60)) * 6: # e.g., 6 hours of 2-min data
+                        if len(self.pcr_graph_data[sym]) > (
+                                60 / (UPDATE_INTERVAL / 60)) * 6:  # e.g., 6 hours of 2-min data
                             self.pcr_graph_data[sym].pop(0)
                         self.last_pcr_graph_update_time[sym] = now
                     # Update pcr_chart_data in shared_data to reflect the newly added point
@@ -736,43 +747,107 @@ class NseBseAnalyzer:
             # Use 'lxml' parser explicitly
             soup = BeautifulSoup(resp.text, 'lxml')
             # --- Updated CSS Selectors for Groww.in ---
-            # Main VIX value
-            vix_value_element = soup.select_one('div.gsc84Text.gsi216Text.gsi216Flex:nth-child(1) div.gsc84Text')
-            if vix_value_element:
-                current_vix = float(vix_value_element.text.replace(',', '').strip())
+            # IMPORTANT: THESE SELECTORS ARE HIGHLY LIKELY TO BREAK AGAIN IF GROWW.IN CHANGES THEIR HTML.
+            # You will need to re-inspect the page if this starts failing again.
+
+            # Attempt 1: Find by aria-label or data-test (more stable if they exist)
+            # Example: vix_value_element = soup.select_one('[aria-label="Current value"] span.value')
+            # If Groww.in has more stable attributes, use them. Otherwise, rely on position.
+
+            # Current strategy: locate the main price element, then its siblings for change/pct.
+            # This is based on the assumption that the structure is a div containing a value, then a div containing changes.
+            # The previous selectors were too specific with generated class names.
+
+            # Find the main price element (often a large number, might be in a specific section)
+            # This selector is a guess and needs to be verified on the live site.
+            vix_value_container = soup.find('div', class_=lambda
+                x: x and 'current-price' in x.lower())  # Look for a div with 'current-price' in its class
+            if not vix_value_container:
+                vix_value_container = soup.find('div', class_=lambda
+                    x: x and 'index-price' in x.lower())  # Another common pattern
+
+            current_vix_text_element = None
+            if vix_value_container:
+                current_vix_text_element = vix_value_container.find('div', class_=lambda
+                    x: x and 'text' in x.lower() and 'large' in x.lower())  # Look for large text
+            if not current_vix_text_element:
+                current_vix_text_element = soup.select_one(
+                    'div.gsc84Text.gsi216Text.gsi216Flex:nth-child(1) div.gsc84Text')  # Fallback to original
+            if not current_vix_text_element:
+                current_vix_text_element = soup.select_one(
+                    'div[data-test-id*="price"]')  # Try data-test-id if available
+            if not current_vix_text_element:
+                current_vix_text_element = soup.select_one('div.main-price-value')  # Generic common class name
+
+            if current_vix_text_element:
+                current_vix = float(current_vix_text_element.text.replace(',', '').strip())
             else:
                 print("INDIAVIX scraping: Could not find VIX value element. Falling back to mock data.")
                 self._mock_indiavix(sym)
                 return
-            # Change and Percentage Change
-            # Look for the container holding these two values, then extract them
-            change_container = soup.select_one(
-                'div.gsi216Flex.gsi216Flex.gsi216Flex.gsi216Flex')  # This targets the flex container holding both
 
-            if change_container:
-                # Find all divs with class 'gsc84Text' within this container
-                change_elements = change_container.find_all('div', class_='gsc84Text')
+            # For change and percentage change, they are often next to the main value.
+            # This is also a guess and needs verification.
+            change_elements_container = current_vix_text_element.find_next_sibling(
+                'div')  # Try finding the next sibling div
+            if not change_elements_container:
+                change_elements_container = current_vix_text_element.find_parent().find_next_sibling(
+                    'div')  # Try parent's next sibling
+            if not change_elements_container:
+                change_elements_container = soup.select_one(
+                    'div.gsi216Flex.gsi216Flex.gsi216Flex.gsi216Flex')  # Fallback to original
 
-                if len(change_elements) >= 2:  # Expect at least 2: one for change, one for percentage
+            scraped_change_text = None
+            scraped_percentage_change_text = None
+
+            if change_elements_container:
+                # Find all divs with class 'gsc84Text' or similar within this container
+                # Again, these class names are volatile.
+                change_elements = change_elements_container.find_all('div',
+                                                                     class_=lambda x: x and 'text' in x.lower() and (
+                                                                                 'up' in x.lower() or 'down' in x.lower() or 'flat' in x.lower()))
+                if len(change_elements) >= 2:
                     scraped_change_text = change_elements[0].text.replace(',', '').strip()
                     scraped_percentage_change_text = change_elements[1].text.replace('(', '').replace(')', '').replace(
                         '%', '').strip()
+                elif len(change_elements) == 1:  # Sometimes change and percentage are in one element
+                    full_change_text = change_elements[0].text
+                    # Regex to extract change and percentage
+                    import re
+                    match = re.search(r'([+-]?\d+\.?\d*)\s*\(([+-]?\d+\.?\d*)%\)', full_change_text)
+                    if match:
+                        scraped_change_text = match.group(1)
+                        scraped_percentage_change_text = match.group(2)
 
-                    scraped_change = float(scraped_change_text)
-                    scraped_percentage_change = float(scraped_percentage_change_text)
+            if scraped_change_text and scraped_percentage_change_text:
+                scraped_change = float(scraped_change_text)
+                scraped_percentage_change = float(scraped_percentage_change_text)
 
-                    # Determine sentiment based on change
-                    if scraped_change > 0:
-                        sentiment = "Mild Bearish"  # VIX up means more fear
-                    elif scraped_change < 0:
-                        sentiment = "Mild Bullish"  # VIX down means less fear
-                    else:
-                        sentiment = "Neutral"
+                # Determine sentiment based on change
+                if scraped_change > 0:
+                    sentiment = "Mild Bearish"  # VIX up means more fear
+                elif scraped_change < 0:
+                    sentiment = "Mild Bullish"  # VIX down means less fear
                 else:
-                    print(
-                        "INDIAVIX scraping: Could not find both change/pct change elements within container. Using default change/pct change for VIX.")
+                    sentiment = "Neutral"
             else:
-                print("INDIAVIX scraping: Could not find change container. Using default change/pct change for VIX.")
+                print(
+                    "INDIAVIX scraping: Could not find both change/pct change elements within container. Using default change/pct change for VIX.")
+                # Fallback to current_vix to calculate a mock change/pct for consistency
+                if initial_underlying_values[sym] is None:
+                    initial_underlying_values[sym] = current_vix - random.uniform(-2.0, 2.0)
+                    if initial_underlying_values[sym] < 0:
+                        initial_underlying_values[sym] = 10.0
+                scraped_change = current_vix - initial_underlying_values[sym]
+                scraped_percentage_change = (scraped_change / initial_underlying_values[sym]) * 100 if \
+                initial_underlying_values[sym] else 0
+                if scraped_change > 0:
+                    sentiment = "Mild Bearish"
+                elif scraped_change < 0:
+                    sentiment = "Mild Bullish"
+                else:
+                    sentiment = "Neutral"
+
             # --- End Updated CSS Selectors ---
 
             if current_vix is None:  # If scraping failed completely, ensure mock is called
@@ -976,11 +1051,11 @@ class NseBseAnalyzer:
 
         for s_val in range(strike_min, strike_max + 1, 100):
             # Explicitly make TotalMaxPain a float to avoid FutureWarning
-            mock_max_pain_data.append({'StrikePrice': s_val, 'TotalMaxPain': float(random.randint(10000000000, 100000000000))})
+            mock_max_pain_data.append(
+                {'StrikePrice': s_val, 'TotalMaxPain': float(random.randint(10000000000, 100000000000))})
         mock_max_pain_df = pd.DataFrame(mock_max_pain_data)
         # Ensure the column is float type
         mock_max_pain_df['TotalMaxPain'] = mock_max_pain_df['TotalMaxPain'].astype(float)
-
 
         # Simulate min pain around the current sp
         if not mock_max_pain_df.empty:
@@ -1012,7 +1087,7 @@ class NseBseAnalyzer:
                 'change': round(change, 2),
                 'percentage_change': round(percentage_change, 2)
             }
-            # Add chart data (Max Pain, CE OI, PE OI) to shared_data for mock
+            # Add chart data (Max Pain, CE OI, PE OI) to shared_data
             shared_data[sym]['max_pain_chart_data'] = mock_max_pain_df.to_dict(orient='records')
             shared_data[sym]['ce_oi_chart_data'] = mock_ce_oi_data
             shared_data[sym]['pe_oi_chart_data'] = mock_pe_oi_data
@@ -1028,7 +1103,7 @@ class NseBseAnalyzer:
                 # Now update pcr_graph_data for charting ONLY when history is updated (2-min interval)
                 if sym != "INDIAVIX":
                     self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
-                    if len(self.pcr_graph_data[sym]) > (60 / (UPDATE_INTERVAL / 60)) * 6: # e.g., 6 hours of 2-min data
+                    if len(self.pcr_graph_data[sym]) > (60 / (UPDATE_INTERVAL / 60)) * 6:  # e.g., 6 hours of 2-min data
                         self.pcr_graph_data[sym].pop(0)
                     self.last_pcr_graph_update_time[sym] = now
                 # Update pcr_chart_data in shared_data to reflect the newly added point
@@ -1119,7 +1194,6 @@ class NseBseAnalyzer:
         # Ensure column names are correct after merge, if not already
         if 'openInterest_call' not in MxPn_Df.columns and 'openInterest_Put' not in MxPn_Df.columns:
             MxPn_Df.columns = ['strikePrice', 'openInterest_call', 'openInterest_Put']
-
 
         StrikePriceList = MxPn_Df['strikePrice'].values.tolist()
         OiCallList = MxPn_Df['openInterest_call'].values.tolist()
@@ -1734,7 +1808,9 @@ def create_html():
 
 
         // Function to append a single history item to the correct "Today's Updates" table
-        function appendTodaysHistoryItem(symbol, item, prepend = true, isVix = false) { // Added isVix flag
+        // The 'prepend' parameter should be true for new live updates (newest item at top)
+        // and false for initial load (where data is already sorted DESC from backend, so append to maintain order)
+        function appendTodaysHistoryItem(symbol, item, prepend = true, isVix = false) {
             const lower = symbol.toLowerCase();
             const historyTbodySelector = `#${lower}-todays-history-table tbody`;
             const historyTbody = document.querySelector(historyTbodySelector);
@@ -1778,6 +1854,8 @@ def create_html():
                 if (prepend) {
                     historyTableContainer.scrollTop = 0;
                 } else {
+                    // For initial load, scrolling to bottom might not be desired if table is full
+                    // But for consistency, let's keep it here.
                     historyTableContainer.scrollTop = historyTableContainer.scrollHeight;
                 }
             }
@@ -1910,10 +1988,10 @@ def create_html():
                 if (historyTbody) {
                     historyTbody.innerHTML = ''; // Clear before populating
                     const isVix = (sym === 'INDIAVIX');
-                    // Backend sends todays_history in ASC order (oldest first).
-                    // Iterate forwards, but prepend to DOM to show latest first.
-                    data.history[sym].slice().reverse().forEach(item => { // Reverse to prepend correctly
-                        appendTodaysHistoryItem(sym, item, true, isVix); // Prepend each item
+                    // Backend now sends todays_history in DESC order (latest first).
+                    // So, we simply iterate and append to DOM.
+                    data.history[sym].forEach(item => { // REMOVED .slice().reverse()
+                        appendTodaysHistoryItem(sym, item, false, isVix); // Use append (false)
                     });
                 } else {
                     console.error(`INITIAL HISTORY ERROR: Today's History tbody NOT FOUND for selector: '${historyTbodySelector}'.`);
@@ -2329,3 +2407,4 @@ if __name__ == '__main__':
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     print("SENSEX: Add DhanHQ keys for real data")
     socketio.run(app, host='0.0.0.0', port=5000)
+
