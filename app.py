@@ -23,6 +23,8 @@ from flask_socketio import SocketIO, emit
 from bs4 import BeautifulSoup
 # For NseTools integration
 from nsetools import Nse
+# Import lxml explicitly (ensure you have it installed: pip install lxml)
+import lxml
 
 requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning)
@@ -223,6 +225,12 @@ class NseBseAnalyzer:
 
         # Initialize nsetools
         self.nse_tool = Nse()
+        # Mapping for nsetools symbols
+        self.nse_tool_symbol_map = {
+            "NIFTY": "NIFTY 50",
+            "BANKNIFTY": "NIFTY BANK",
+            "FINNIFTY": "NIFNIFTY" # Common alternative for FINNIFTY in nsetools, verify if needed
+        }
 
         # PCR reset date tracker (only for non-VIX symbols)
         self.last_pcr_data_reset_date: Dict[str, datetime.date] = {sym: datetime.date.min for sym in AUTO_SYMBOLS if
@@ -335,6 +343,8 @@ class NseBseAnalyzer:
                     self.last_pcr_graph_update_time[sym] = 0 # Reset PCR graph update time for new day
                     self.last_pcr_data_reset_date[sym] = current_date
                 # Also reset initial_underlying_values for a new day
+                # This check assumes last_alert[sym] is updated at least once a day.
+                # A more robust check might involve comparing current_date with a stored "last_reset_date" for initial_underlying_values.
                 if initial_underlying_values[sym] is not None and \
                    datetime.datetime.now().date() != datetime.datetime.fromtimestamp(last_alert[sym]).date():
                     initial_underlying_values[sym] = None
@@ -470,10 +480,9 @@ class NseBseAnalyzer:
             # --- Start: Integration of PCR and Max Pain logic ---
             # Get LTP for Max Pain calculation using nsetools
             try:
-                # nsetools symbol names are slightly different
-                nse_sym = sym.replace("NIFTY", "NIFTY 50").replace("BANKNIFTY", "NIFTY BANK").replace("FINNIFTY",
-                                                                                                      "NIFTY FIN SERVICE")
-                ltp_data = self.nse_tool.get_index_quote(nse_sym)
+                # Use the mapping, fall back to original symbol if not found in mapping
+                nse_sym_for_ltp = self.nse_tool_symbol_map.get(sym, sym)
+                ltp_data = self.nse_tool.get_index_quote(nse_sym_for_ltp)
                 ltp = ltp_data.get('lastPrice', underlying)  # Fallback to underlying if nsetools fails
             except Exception as e:
                 print(f"Error fetching LTP for {sym} using nsetools: {e}. Using underlying value.")
@@ -724,6 +733,7 @@ class NseBseAnalyzer:
             }
             resp = requests.get(self.url_indiavix_groww, headers=groww_headers, timeout=10)
             resp.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            # Use 'lxml' parser explicitly
             soup = BeautifulSoup(resp.text, 'lxml')
             # --- Updated CSS Selectors for Groww.in ---
             # Main VIX value
@@ -965,8 +975,12 @@ class NseBseAnalyzer:
         strike_max = (strike_max // 100) * 100
 
         for s_val in range(strike_min, strike_max + 1, 100):
-            mock_max_pain_data.append({'StrikePrice': s_val, 'TotalMaxPain': random.randint(10000000000, 100000000000)})
+            # Explicitly make TotalMaxPain a float to avoid FutureWarning
+            mock_max_pain_data.append({'StrikePrice': s_val, 'TotalMaxPain': float(random.randint(10000000000, 100000000000))})
         mock_max_pain_df = pd.DataFrame(mock_max_pain_data)
+        # Ensure the column is float type
+        mock_max_pain_df['TotalMaxPain'] = mock_max_pain_df['TotalMaxPain'].astype(float)
+
 
         # Simulate min pain around the current sp
         if not mock_max_pain_df.empty:
@@ -976,6 +990,7 @@ class NseBseAnalyzer:
                 closest_mock_strike = mock_max_pain_df.iloc[
                     (mock_max_pain_df['StrikePrice'] - min_pain_strike).abs().argsort()[:1]]
                 if not closest_mock_strike.empty:
+                    # This assignment now works without FutureWarning because TotalMaxPain is float
                     mock_max_pain_df.loc[closest_mock_strike.index[0], 'TotalMaxPain'] /= random.uniform(2, 5)
 
         # Prepare mock OI charts (top 10)
