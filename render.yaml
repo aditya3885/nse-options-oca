@@ -3,8 +3,10 @@ services:
     name: nse-oca-pro
     env: python
     pythonVersion: "3.11.9"
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -k eventlet -w 1 app:app
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn -k eventlet -w 1 app:app"
     envVars:
-      TELEGRAM_BOT_TOKEN: 8081075640:AAEDdrUSdg8BRX4CcKJ4W7jG1EOnSFTQPr4
-      TELEGRAM_CHAT_ID: 275529219
+      TELEGRAM_BOT_TOKEN:
+        value: "8081075640:AAEDdrUSdg8BRX4CcKJ4W7jG1EOnSFTQPr4"
+      TELEGRAM_CHAT_ID:
+        value: "275529219"
