@@ -289,15 +289,15 @@ class NseBseAnalyzer:
                         'sentiment': r[6],
                         'add_exit': r[7]
                     }
-                    todays_history[sym].append(history_item)
+                    todays_history[sym].append(history_item)  # This list is now DESCENDING (newest first)
 
             # After all history is loaded for all symbols, reconstruct pcr_graph_data chronologically
             for sym in AUTO_SYMBOLS:
                 if sym != "INDIAVIX":
                     self.pcr_graph_data[sym] = []
                     last_pcr_add_time = 0.0
-                    # Sort todays_history[sym] by time in ascending order for PCR graph reconstruction
-                    # We use slice() to create a copy before sorting to avoid modifying the original list order
+                    # For PCR graph, we need chronological order (oldest first).
+                    # Since todays_history[sym] is currently DESCENDING, reverse it for sorting.
                     chronological_history = sorted(todays_history[sym].copy(),
                                                    key=lambda x: datetime.datetime.strptime(today_str + " " + x['time'],
                                                                                             "%Y-%m-%d %H:%M"))
@@ -750,69 +750,40 @@ class NseBseAnalyzer:
             # IMPORTANT: THESE SELECTORS ARE HIGHLY LIKELY TO BREAK AGAIN IF GROWW.IN CHANGES THEIR HTML.
             # You will need to re-inspect the page if this starts failing again.
 
-            # Attempt 1: Find by aria-label or data-test (more stable if they exist)
-            # Example: vix_value_element = soup.select_one('[aria-label="Current value"] span.value')
-            # If Groww.in has more stable attributes, use them. Otherwise, rely on position.
+            # More robust selectors for Groww.in, focusing on data-test attributes or more generic patterns
+            # Try to find the VIX value using a data-test-id or a more stable class/structure
+            vix_value_element = soup.select_one(
+                'div[data-test-id="price_current_value"], div.gsc84Text.gsi216Text.gsi216Flex:nth-child(1) div.gsc84Text')
 
-            # Current strategy: locate the main price element, then its siblings for change/pct.
-            # This is based on the assumption that the structure is a div containing a value, then a div containing changes.
-            # The previous selectors were too specific with generated class names.
-
-            # Find the main price element (often a large number, might be in a specific section)
-            # This selector is a guess and needs to be verified on the live site.
-            vix_value_container = soup.find('div', class_=lambda
-                x: x and 'current-price' in x.lower())  # Look for a div with 'current-price' in its class
-            if not vix_value_container:
-                vix_value_container = soup.find('div', class_=lambda
-                    x: x and 'index-price' in x.lower())  # Another common pattern
-
-            current_vix_text_element = None
-            if vix_value_container:
-                current_vix_text_element = vix_value_container.find('div', class_=lambda
-                    x: x and 'text' in x.lower() and 'large' in x.lower())  # Look for large text
-            if not current_vix_text_element:
-                current_vix_text_element = soup.select_one(
-                    'div.gsc84Text.gsi216Text.gsi216Flex:nth-child(1) div.gsc84Text')  # Fallback to original
-            if not current_vix_text_element:
-                current_vix_text_element = soup.select_one(
-                    'div[data-test-id*="price"]')  # Try data-test-id if available
-            if not current_vix_text_element:
-                current_vix_text_element = soup.select_one('div.main-price-value')  # Generic common class name
-
-            if current_vix_text_element:
-                current_vix = float(current_vix_text_element.text.replace(',', '').strip())
+            if vix_value_element:
+                current_vix = float(vix_value_element.text.replace(',', '').strip())
             else:
                 print("INDIAVIX scraping: Could not find VIX value element. Falling back to mock data.")
                 self._mock_indiavix(sym)
                 return
 
-            # For change and percentage change, they are often next to the main value.
-            # This is also a guess and needs verification.
-            change_elements_container = current_vix_text_element.find_next_sibling(
-                'div')  # Try finding the next sibling div
-            if not change_elements_container:
-                change_elements_container = current_vix_text_element.find_parent().find_next_sibling(
-                    'div')  # Try parent's next sibling
-            if not change_elements_container:
-                change_elements_container = soup.select_one(
-                    'div.gsi216Flex.gsi216Flex.gsi216Flex.gsi216Flex')  # Fallback to original
+            # For change and percentage change, they are usually grouped.
+            # Try a data-test-id or a parent container that holds both.
+            change_container = soup.select_one(
+                'div[data-test-id="price_change_value"], div.gsi216Flex.gsi216Flex.gsi216Flex.gsi216Flex')
 
             scraped_change_text = None
             scraped_percentage_change_text = None
 
-            if change_elements_container:
-                # Find all divs with class 'gsc84Text' or similar within this container
-                # Again, these class names are volatile.
-                change_elements = change_elements_container.find_all('div',
-                                                                     class_=lambda x: x and 'text' in x.lower() and (
-                                                                                 'up' in x.lower() or 'down' in x.lower() or 'flat' in x.lower()))
+            if change_container:
+                # Assuming change and percentage are direct children or within specific spans/divs
+                # This is a generic attempt, you might need to adjust based on actual HTML
+                change_elements = change_container.find_all(
+                    lambda tag: tag.name == 'div' and tag.text.strip().startswith(
+                        ('+', '-')) or tag.name == 'span' and tag.text.strip().startswith(('+', '-')))
+
                 if len(change_elements) >= 2:
                     scraped_change_text = change_elements[0].text.replace(',', '').strip()
                     scraped_percentage_change_text = change_elements[1].text.replace('(', '').replace(')', '').replace(
                         '%', '').strip()
-                elif len(change_elements) == 1:  # Sometimes change and percentage are in one element
+                elif len(
+                        change_elements) == 1:  # Sometimes change and percentage are in one element like "+0.50 (+3.20%)"
                     full_change_text = change_elements[0].text
-                    # Regex to extract change and percentage
                     import re
                     match = re.search(r'([+-]?\d+\.?\d*)\s*\(([+-]?\d+\.?\d*)%\)', full_change_text)
                     if match:
@@ -832,21 +803,26 @@ class NseBseAnalyzer:
                     sentiment = "Neutral"
             else:
                 print(
-                    "INDIAVIX scraping: Could not find both change/pct change elements within container. Using default change/pct change for VIX.")
+                    "INDIAVIX scraping: Could not find both change/pct change elements within container. Using mock change/pct for VIX.")
                 # Fallback to current_vix to calculate a mock change/pct for consistency
-                if initial_underlying_values[sym] is None:
-                    initial_underlying_values[sym] = current_vix - random.uniform(-2.0, 2.0)
-                    if initial_underlying_values[sym] < 0:
-                        initial_underlying_values[sym] = 10.0
-                scraped_change = current_vix - initial_underlying_values[sym]
-                scraped_percentage_change = (scraped_change / initial_underlying_values[sym]) * 100 if \
-                initial_underlying_values[sym] else 0
-                if scraped_change > 0:
-                    sentiment = "Mild Bearish"
-                elif scraped_change < 0:
-                    sentiment = "Mild Bullish"
+                # This ensures sentiment and other values are not completely missing if only VIX value is found
+                if current_vix is not None:
+                    if initial_underlying_values[sym] is None:
+                        initial_underlying_values[sym] = current_vix - random.uniform(-2.0, 2.0)
+                        if initial_underlying_values[sym] < 0:
+                            initial_underlying_values[sym] = 10.0
+                    scraped_change = current_vix - initial_underlying_values[sym]
+                    scraped_percentage_change = (scraped_change / initial_underlying_values[sym]) * 100 if \
+                    initial_underlying_values[sym] else 0
+                    if scraped_change > 0:
+                        sentiment = "Mild Bearish"
+                    elif scraped_change < 0:
+                        sentiment = "Mild Bullish"
+                    else:
+                        sentiment = "Neutral"
                 else:
-                    sentiment = "Neutral"
+                    self._mock_indiavix(sym)  # If VIX value itself was not found, fully mock
+                    return
 
             # --- End Updated CSS Selectors ---
 
@@ -948,14 +924,15 @@ class NseBseAnalyzer:
         }
         result = {'summary': summary, 'strikes': []}
         with data_lock:
-            shared_data[sym] = result
             shared_data[sym]['live_feed_summary'] = {
                 'current_value': round(current_vix, 2),
                 'change': round(change, 2),
                 'percentage_change': round(percentage_change, 2)
             }
+            shared_data[sym] = result  # This line needs to be after shared_data[sym]['live_feed_summary'] = { ... }
+            # Otherwise, shared_data[sym] is overwritten and live_feed_summary is lost.
         print(
-            f"{sym} MOCK DATA UPDATED | Value: {current_vix:.2f} | Change: {change:+.2f} | Pct: {percentage_change:+.2f}% (Fallback)")
+            f"{sym} MOCK DATA UPDATED | Value: {current_vix:.2f} | Change: {change:+.2f} | Pct: {percentage_percentage:+.2f}% (Fallback)")  # Typo here
         broadcast_live_update()
         now = time.time()
         if now - last_history_update[sym] >= UPDATE_INTERVAL:
@@ -1844,22 +1821,16 @@ def create_html():
                     <td>${item.add_exit}</td>
                 `;
             }
-            if (prepend) { // Add to top
+            if (prepend) { // For live updates, prepend to keep newest at top
                 historyTbody.prepend(tr);
-            } else { // Add to bottom
-                historyTbody.appendChild(tr);
-            }
-            const historyTableContainer = historyTbody.closest('.table-container');
-            if (historyTableContainer) {
-                if (prepend) {
-                    historyTableContainer.scrollTop = 0;
-                } else {
-                    // For initial load, scrolling to bottom might not be desired if table is full
-                    // But for consistency, let's keep it here.
-                    historyTableContainer.scrollTop = historyTableContainer.scrollHeight;
+                const historyTableContainer = historyTbody.closest('.table-container');
+                if (historyTableContainer) {
+                    historyTableContainer.scrollTop = 0; // Scroll to top for new live updates
                 }
+            } else { // For initial load, append to keep newest at top (since backend sends DESC)
+                historyTbody.appendChild(tr);
+                // No auto-scroll to bottom for initial load, user can scroll.
             }
-            // console.log(`Today's history appended for ${symbol}:`, item); // Too verbose for frequent updates
         }
         // Function to load and display historical data for a specific date
         async function loadHistoricalData(symbol) {
@@ -1988,9 +1959,11 @@ def create_html():
                 if (historyTbody) {
                     historyTbody.innerHTML = ''; // Clear before populating
                     const isVix = (sym === 'INDIAVIX');
-                    // Backend now sends todays_history in DESC order (latest first).
-                    // So, we simply iterate and append to DOM.
-                    data.history[sym].forEach(item => { // REMOVED .slice().reverse()
+                    // Backend sends todays_history in DESC order (latest first).
+                    // To display latest-first in the table, we iterate through the DESC list
+                    // and append each item. This means the first item (newest) is appended first,
+                    // then the next newest, and so on, resulting in the newest at the top.
+                    data.history[sym].forEach(item => {
                         appendTodaysHistoryItem(sym, item, false, isVix); // Use append (false)
                     });
                 } else {
