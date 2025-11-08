@@ -29,8 +29,8 @@ requests.packages.urllib3.disable_warnings(
 # --------------------------------------------------------------------------- #
 # CONFIG
 # --------------------------------------------------------------------------- #
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+TELEGRAM_BOT_TOKEN = "8081075640:AAEDdrUSdg8BRX4CcKJ4W7jG1EOnSFTQPr4"
+TELEGRAM_CHAT_ID = "275529219"
 SEND_TEXT_UPDATES = True
 UPDATE_INTERVAL = 120
 MAX_HISTORY_ROWS_DB = 10000
@@ -53,8 +53,9 @@ initial_underlying_values: Dict[str, Optional[float]] = {sym: None for sym in AU
 site_visits = 0
 
 fno_stocks_list = []
-# Cache now stores current and previous data for reversal calculation
 equity_data_cache: Dict[str, Dict[str, Any]] = {}
+previous_improving_list = set()
+previous_worsening_list = set()
 
 
 @app.route('/')
@@ -160,6 +161,7 @@ class NseBseAnalyzer:
         self._populate_initial_shared_chart_data()
         threading.Thread(target=self.run_loop, daemon=True).start()
         threading.Thread(target=self.equity_fetcher_thread, daemon=True).start()
+        self.send_telegram_message("✅ *NSE OCA PRO Bot is Online*\n\nMonitoring will begin during market hours.")
 
     def get_stock_symbols(self):
         global fno_stocks_list
@@ -293,6 +295,27 @@ class NseBseAnalyzer:
                 print(f"Market is closed. Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}")
                 time.sleep(60)
 
+    def send_telegram_message(self, message):
+        if not SEND_TEXT_UPDATES or TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
+            print("Telegram notifications are disabled or token is not set. Skipping.")
+            return
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                print("Successfully sent Telegram notification.")
+            else:
+                print(
+                    f"Failed to send Telegram notification. Status: {response.status_code}, Response: {response.text}")
+        except Exception as e:
+            print(f"Exception while sending Telegram message: {e}")
+
     def calculate_strength_score(self, data: Dict) -> float:
         summary = data.get('summary', {})
         sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2}
@@ -316,14 +339,13 @@ class NseBseAnalyzer:
 
         intraday_pcr_change = current_intraday_pcr - previous_intraday_pcr
 
-        # Positive score for bullish reversal potential
         bullish_reversal_score = (1 / (current_pcr + 0.1)) * (current_intraday_pcr * 1.5) + (
                     intraday_pcr_change * 10) + sentiment_score
 
-        # Return the score. Higher is more likely to be a bullish reversal.
         return round(bullish_reversal_score, 2)
 
     def rank_and_emit_movers(self):
+        global previous_improving_list, previous_worsening_list
         if not equity_data_cache: return
 
         strength_scores = []
@@ -334,13 +356,11 @@ class NseBseAnalyzer:
             previous_data = data_points.get('previous')
             if not current_data: continue
 
-            # Strength Score
             strength_score = self.calculate_strength_score(current_data)
             strength_scores.append(
                 {'symbol': symbol, 'score': strength_score, 'sentiment': current_data['summary']['sentiment'],
                  'pcr': current_data['summary']['pcr']})
 
-            # Reversal Score
             reversal_score = self.calculate_reversal_score(current_data, previous_data)
             reversal_scores.append(
                 {'symbol': symbol, 'score': reversal_score, 'sentiment': current_data['summary']['sentiment'],
@@ -352,7 +372,7 @@ class NseBseAnalyzer:
         top_strongest = strength_scores[:10]
         top_weakest = strength_scores[-10:][::-1]
         top_improving = reversal_scores[:10]
-        top_worsening = sorted(reversal_scores, key=lambda x: x['score'])[:10]  # Bottom 10 of reversal scores
+        top_worsening = sorted(reversal_scores, key=lambda x: x['score'])[:10]
 
         socketio.emit('top_movers_update', {
             'strongest': top_strongest,
@@ -361,6 +381,24 @@ class NseBseAnalyzer:
             'worsening': top_worsening
         })
         print("Emitted Top Movers update with 4 categories.")
+
+        current_improving_symbols = {stock['symbol'] for stock in top_improving}
+        if current_improving_symbols != previous_improving_list:
+            print("Change detected in Potential Buys list. Sending Telegram notification.")
+            message = "📈 *Potential Buys Update (Getting Better)* 📈\n\n"
+            for i, stock in enumerate(top_improving):
+                message += f"*{i + 1}. {stock['symbol']}* (Score: {stock['score']})\n"
+            self.send_telegram_message(message)
+            previous_improving_list = current_improving_symbols
+
+        current_worsening_symbols = {stock['symbol'] for stock in top_worsening}
+        if current_worsening_symbols != previous_worsening_list:
+            print("Change detected in Potential Sells list. Sending Telegram notification.")
+            message = "📉 *Potential Sells Update (Getting Worsening)* 📉\n\n"
+            for i, stock in enumerate(top_worsening):
+                message += f"*{i + 1}. {stock['symbol']}* (Score: {stock['score']})\n"
+            self.send_telegram_message(message)
+            previous_worsening_list = current_worsening_symbols
 
     def fetch_and_process_symbol(self, sym: str):
         if sym in self.YFINANCE_SYMBOLS:
@@ -677,8 +715,31 @@ class NseBseAnalyzer:
     def _get_enhanced_sentiment(self, sym: str, base_sentiment: str) -> str:
         return base_sentiment
 
+    # +++ CHANGE: Implemented the send_alert function +++
     def send_alert(self, sym: str, row: Dict[str, Any]):
-        pass
+        """Formats and sends a Telegram alert for the main indices."""
+        try:
+            with data_lock:
+                live_feed = shared_data.get(sym, {}).get('live_feed_summary', {})
+
+            change = live_feed.get('change', 0)
+            pct_change = live_feed.get('percentage_change', 0)
+
+            change_str = f"+{change:.2f}" if change >= 0 else f"{change:.2f}"
+            pct_str = f"+{pct_change:.2f}%" if pct_change >= 0 else f"{pct_change:.2f}%"
+
+            message = f"🔔 *{sym.upper()} Update* 🔔\n\n"
+            message += f"• *Value:* {row.get('value', 'N/A')}\n"
+            message += f"• *Change:* {change_str} ({pct_str})\n"
+            message += f"• *PCR:* {row.get('pcr', 'N/A')}\n"
+            message += f"• *Sentiment:* {row.get('sentiment', 'N/A')}\n"
+
+            if 'add_exit' in row and row['add_exit'] != "Live Price" and row['add_exit'] != "No Change":
+                message += f"\n*OI Changes:*\n`{row['add_exit']}`"
+
+            self.send_telegram_message(message)
+        except Exception as e:
+            print(f"Error formatting alert for {sym}: {e}")
 
     def _save_db(self, sym, row):
         if not self.conn: return
