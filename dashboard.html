@@ -12,7 +12,7 @@
     <div class="container">
         <h1>NSE OCA PRO LIVE DASHBOARD</h1>
 
-        <!-- +++ THE TICKER FIX +++ -->
+        <!-- +++ FIX: Standardized IDs for all ticker items, removing hyphens +++ -->
         <div class="ticker-wrap">
             <div class="ticker">
                 <div class="ticker-item"><span class="ticker-symbol">NIFTY:</span><span id="ticker-nifty-value" class="ticker-value">-</span><span id="ticker-nifty-change" class="ticker-change">-</span></div>
@@ -22,7 +22,7 @@
                 <div class="ticker-item"><span class="ticker-symbol">INDIAVIX:</span><span id="ticker-indiavix-value" class="ticker-value">-</span><span id="ticker-indiavix-change" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">GOLD:</span><span id="ticker-gold-value" class="ticker-value">-</span><span id="ticker-gold-change" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">SILVER:</span><span id="ticker-silver-value" class="ticker-value">-</span><span id="ticker-silver-change" class="ticker-change">-</span></div>
-                <div class="ticker-item"><span class="ticker-symbol">BTC-USD:</span><span id="ticker-btc-value" class="ticker-value">-</span><span id="ticker-btc-change" class="ticker-change">-</span></div>
+                <div class="ticker-item"><span class="ticker-symbol">BTC-USD:</span><span id="ticker-btcusd-value" class="ticker-value">-</span><span id="ticker-btcusd-change" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">USD-INR:</span><span id="ticker-usdinr-value" class="ticker-value">-</span><span id="ticker-usdinr-change" class="ticker-change">-</span></div>
                 <!-- Cloned items for seamless loop -->
                 <div class="ticker-item"><span class="ticker-symbol">NIFTY:</span><span id="ticker-nifty-value-clone" class="ticker-value">-</span><span id="ticker-nifty-change-clone" class="ticker-change">-</span></div>
@@ -32,9 +32,13 @@
                 <div class="ticker-item"><span class="ticker-symbol">INDIAVIX:</span><span id="ticker-indiavix-value-clone" class="ticker-value">-</span><span id="ticker-indiavix-change-clone" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">GOLD:</span><span id="ticker-gold-value-clone" class="ticker-value">-</span><span id="ticker-gold-change-clone" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">SILVER:</span><span id="ticker-silver-value-clone" class="ticker-value">-</span><span id="ticker-silver-change-clone" class="ticker-change">-</span></div>
-                <div class="ticker-item"><span class="ticker-symbol">BTC-USD:</span><span id="ticker-btc-value-clone" class="ticker-value">-</span><span id="ticker-btc-change-clone" class="ticker-change">-</span></div>
+                <div class="ticker-item"><span class="ticker-symbol">BTC-USD:</span><span id="ticker-btcusd-value-clone" class="ticker-value">-</span><span id="ticker-btcusd-change-clone" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">USD-INR:</span><span id="ticker-usdinr-value-clone" class="ticker-value">-</span><span id="ticker-usdinr-change-clone" class="ticker-change">-</span></div>
             </div>
+        </div>
+
+        <div id="market-pulse-container" class="market-pulse-container">
+            <!-- This will be populated by JS -->
         </div>
 
         <div class="grid">
@@ -45,7 +49,6 @@
             <div class="card" id="INDIAVIX_summary"><h2>INDIAVIX</h2><p>Value: <span id="indiavix-value">-</span></p><p>Change: <span id="indiavix-change">-</span></p><p>Pct Change: <span id="indiavix-pct">-</span>%</p><p>Sentiment: <span id="indiavix-sentiment">-</span></p></div>
         </div>
 
-        <!-- Rest of the HTML is from your trusted reference file -->
         <div class="tabs">
             <button class="tablink active" onclick="openTab(event, 'NIFTY')" id="NIFTYOpen" data-symbol="NIFTY">NIFTY</button>
             <button class="tablink" onclick="openTab(event, 'FINNIFTY')" data-symbol="FINNIFTY">FINNIFTY</button>
@@ -59,21 +62,21 @@
         <div id="NIFTY_tab" class="tabcontent" style="display: block;">
             <h3 style="margin-top: 20px;">NIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="nifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
             <h3>NIFTY Charts</h3><div class="chart-grid"><div class="chart-container"><canvas id="nifty-pcr-chart"></canvas></div><div class="chart-container"><canvas id="nifty-max-pain-chart"></canvas></div><div class="chart-container"><canvas id="nifty-ce-oi-chart"></canvas></div><div class="chart-container"><canvas id="nifty-pe-oi-chart"></canvas></div></div>
-            <h3>NIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="nifty-table"><thead><tr><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th></tr></thead><tbody></tbody></table></div>
+            <h3>NIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="nifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">NIFTY Historical Data</h3><div class="history-controls"><label for="nifty-history-date">Date:</label><input type="date" id="nifty-history-date" class="history-date-picker"><button onclick="loadHistoricalData('NIFTY')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('NIFTY')">Clear Today's NIFTY History</button></div>
             <div class="table-container"><table id="nifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div id="FINNIFTY_tab" class="tabcontent">
             <h3 style="margin-top: 20px;">FINNIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="finnifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
             <h3>FINNIFTY Charts</h3><div class="chart-grid"><div class="chart-container"><canvas id="finnifty-pcr-chart"></canvas></div><div class="chart-container"><canvas id="finnifty-max-pain-chart"></canvas></div><div class="chart-container"><canvas id="finnifty-ce-oi-chart"></canvas></div><div class="chart-container"><canvas id="finnifty-pe-oi-chart"></canvas></div></div>
-            <h3>FINNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="finnifty-table"><thead><tr><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th></tr></thead><tbody></tbody></table></div>
+            <h3>FINNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="finnifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">FINNIFTY Historical Data</h3><div class="history-controls"><label for="finnifty-history-date">Date:</label><input type="date" id="finnifty-history-date" class="history-date-picker"><button onclick="loadHistoricalData('FINNIFTY')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('FINNIFTY')">Clear Today's FINNIFTY History</button></div>
             <div class="table-container"><table id="finnifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div id="BANKNIFTY_tab" class="tabcontent">
             <h3 style="margin-top: 20px;">BANKNIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="banknifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
             <h3>BANKNIFTY Charts</h3><div class="chart-grid"><div class="chart-container"><canvas id="banknifty-pcr-chart"></canvas></div><div class="chart-container"><canvas id="banknifty-max-pain-chart"></canvas></div><div class="chart-container"><canvas id="banknifty-ce-oi-chart"></canvas></div><div class="chart-container"><canvas id="banknifty-pe-oi-chart"></canvas></div></div>
-            <h3>BANKNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="banknifty-table"><thead><tr><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th></tr></thead><tbody></tbody></table></div>
+            <h3>BANKNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="banknifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">BANKNIFTY Historical Data</h3><div class="history-controls"><label for="banknifty-history-date">Date:</label><input type="date" id="banknifty-history-date" class="history-date-picker"><button onclick="loadHistoricalData('BANKNIFTY')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('BANKNIFTY')">Clear Today's BANKNIFTY History</button></div>
             <div class="table-container"><table id="banknifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
         </div>
@@ -92,11 +95,19 @@
         <footer>@aditya_nse_bot | Updated: <span id="time">-</span> | Site Visits: <span id="visit-counter">-</span></footer>
     </div>
 
+    <div class="disclaimer-ticker-wrap">
+        <div class="disclaimer-ticker">
+            <span class="disclaimer-text">Disclaimer: 9 out of 10 individual traders in the Equity Futures and Options Segment incurred net losses. On average, loss-makers registered net trading losses close to ₹50,000. Over and above the net trading losses incurred, loss-makers expended an additional 28% of net trading losses as transaction costs. This tool is for educational purposes only and does not constitute investment advice. Please consult a SEBI-registered financial advisor before trading.</span>
+            <span class="disclaimer-text">Disclaimer: 9 out of 10 individual traders in the Equity Futures and Options Segment incurred net losses. On average, loss-makers registered net trading losses close to ₹50,000. Over and above the net trading losses incurred, loss-makers expended an additional 28% of net trading losses as transaction costs. This tool is for educational purposes only and does not constitute investment advice. Please consult a SEBI-registered financial advisor before trading.</span>
+        </div>
+    </div>
+
     <script>
         const socket = io();
         const charts = {};
         const shared_data_cache = {};
-        const ALL_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC", "USDINR"];
+        const ALL_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"];
+        const OI_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY"];
         const SIMPLE_ASSETS = ["SENSEX", "INDIAVIX"];
 
         function openTab(evt, symbol) {
@@ -166,6 +177,32 @@
             }
         }
 
+        function getBuildupClass(buildup) {
+            if (!buildup) return '';
+            if (buildup.includes('Long Buildup')) return 'buildup-long';
+            if (buildup.includes('Short Buildup')) return 'buildup-short';
+            if (buildup.includes('Short Covering')) return 'buildup-short-covering';
+            if (buildup.includes('Long Unwinding')) return 'buildup-long-unwinding';
+            if (buildup.includes('Fresh OI Added')) return 'buildup-long';
+            if (buildup.includes('OI Exited')) return 'buildup-short';
+            return '';
+        }
+
+        function createPulseCard(symbol) {
+            const lower = symbol.toLowerCase();
+            const card = document.createElement('div');
+            card.className = 'pulse-card';
+            card.innerHTML = `
+                <h3>${symbol} Pulse</h3>
+                <div class="pulse-row"><span>CALLS</span><div class="pulse-bar-container"><div class="pulse-bar calls" id="${lower}-total-call-oi-bar"></div><div class="pulse-bar puts" id="${lower}-total-put-oi-bar"></div></div><span>PUTS</span></div>
+                <div class="pulse-labels"><span id="${lower}-total-call-oi-label">-</span><span id="${lower}-total-put-oi-label">-</span></div>
+                <h5>Today's Change</h5>
+                <div class="pulse-row"><span>CALLS Δ</span><div class="pulse-bar-container"><div class="pulse-bar calls-change" id="${lower}-total-call-coi-bar"></div><div class="pulse-bar puts-change" id="${lower}-total-put-coi-bar"></div></div><span>PUTS Δ</span></div>
+                <div class="pulse-labels"><span id="${lower}-total-call-coi-label">-</span><span id="${lower}-total-put-coi-label">-</span></div>
+            `;
+            return card;
+        }
+
         socket.on('initial_todays_history', (data) => {
             if (!data.history) return;
             Object.keys(data.history).forEach(sym => {
@@ -184,19 +221,24 @@
             }
         });
 
+        socket.on('update_visits', (data) => {
+            document.getElementById('visit-counter').textContent = data.count;
+        });
+
         socket.on('update', (data) => {
             document.getElementById('time').textContent = new Date().toLocaleTimeString();
 
             if (data.live_feed_summary) {
                 ALL_SYMBOLS.forEach(sym => {
-                    const lower = sym.toLowerCase().replace('-','');
+                    // +++ FIX: Remove all hyphens to create a clean ID +++
+                    const lower = sym.toLowerCase().replace(/-/g, '');
                     const feed = data.live_feed_summary[sym];
                     const valEl = document.getElementById(`ticker-${lower}-value`);
                     const chgEl = document.getElementById(`ticker-${lower}-change`);
                     const valElClone = document.getElementById(`ticker-${lower}-value-clone`);
                     const chgElClone = document.getElementById(`ticker-${lower}-change-clone`);
 
-                    if (feed && feed.current_value && valEl && chgEl) {
+                    if (feed && typeof feed.current_value !== 'undefined' && valEl && chgEl) {
                         const valText = feed.current_value.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 4});
                         const chgText = `${feed.change >= 0 ? '▲' : '▼'} ${Math.abs(feed.change).toFixed(2)} (${feed.percentage_change.toFixed(2)}%)`;
                         const color = feed.change >= 0 ? '#4CAF50' : '#F44336';
@@ -211,43 +253,86 @@
             }
 
             if (data.live) {
+                OI_SYMBOLS.forEach(sym => {
+                    const liveData = data.live[sym];
+                    if (!liveData || !liveData.pulse_summary) return;
+                    const lower = sym.toLowerCase();
+                    const s = liveData.pulse_summary;
+
+                    const totalOI = s.total_call_oi + s.total_put_oi;
+                    const callOIPct = totalOI > 0 ? (s.total_call_oi / totalOI * 100) : 50;
+                    document.getElementById(`${lower}-total-call-oi-bar`).style.width = `${callOIPct}%`;
+                    document.getElementById(`${lower}-total-put-oi-bar`).style.width = `${100 - callOIPct}%`;
+                    document.getElementById(`${lower}-total-call-oi-label`).textContent = s.total_call_oi.toLocaleString();
+                    document.getElementById(`${lower}-total-put-oi-label`).textContent = s.total_put_oi.toLocaleString();
+
+                    const totalCOI = Math.abs(s.total_call_coi) + Math.abs(s.total_put_coi);
+                    const callCOIPct = totalCOI > 0 ? (Math.abs(s.total_call_coi) / totalCOI * 100) : 50;
+                    document.getElementById(`${lower}-total-call-coi-bar`).style.width = `${callCOIPct}%`;
+                    document.getElementById(`${lower}-total-put-coi-bar`).style.width = `${100 - callCOIPct}%`;
+                    document.getElementById(`${lower}-total-call-coi-label`).textContent = s.total_call_coi.toLocaleString();
+                    document.getElementById(`${lower}-total-put-coi-label`).textContent = s.total_put_coi.toLocaleString();
+                });
+
                 Object.keys(data.live).forEach(sym => {
-                    if (SIMPLE_ASSETS.includes(sym)) return; // Handled by ticker
                     const lower = sym.toLowerCase();
                     const liveData = data.live[sym];
+
                     if (liveData.summary) {
-                        const s = liveData.summary;
-                        document.getElementById(`${lower}-sentiment`).textContent = s.sentiment;
-                        document.getElementById(`${lower}-sp`).textContent = s.sp;
-                        document.getElementById(`${lower}-value`).textContent = s.value;
-                        document.getElementById(`${lower}-call`).textContent = s.call_oi;
-                        document.getElementById(`${lower}-put`).textContent = s.put_oi;
-                        document.getElementById(`${lower}-pcr`).textContent = s.pcr.toFixed(2);
-                        document.getElementById(`${lower}-add-exit`).textContent = s.add_exit;
+                        const summaryCard = document.getElementById(`${sym}_summary`);
+                        if (summaryCard) {
+                             if(document.getElementById(`${lower}-sp`)) document.getElementById(`${lower}-sp`).textContent = liveData.summary.sp;
+                             if(summaryCard.querySelector(`#${lower}-value`)) summaryCard.querySelector(`#${lower}-value`).textContent = liveData.summary.value;
+                             if(document.getElementById(`${lower}-call`)) document.getElementById(`${lower}-call`).textContent = liveData.summary.call_oi;
+                             if(document.getElementById(`${lower}-put`)) document.getElementById(`${lower}-put`).textContent = liveData.summary.put_oi;
+                             if(document.getElementById(`${lower}-pcr`)) document.getElementById(`${lower}-pcr`).textContent = liveData.summary.pcr;
+                             if(document.getElementById(`${lower}-sentiment`)) document.getElementById(`${lower}-sentiment`).textContent = liveData.summary.sentiment;
+                             if(document.getElementById(`${lower}-add-exit`)) document.getElementById(`${lower}-add-exit`).textContent = liveData.summary.add_exit;
+                             if(summaryCard.querySelector(`#${lower}-change`)) summaryCard.querySelector(`#${lower}-change`).textContent = liveData.summary.sp >= 0 ? `+${liveData.summary.sp}` : liveData.summary.sp;
+                             if(summaryCard.querySelector(`#${lower}-pct`)) summaryCard.querySelector(`#${lower}-pct`).textContent = liveData.summary.pcr;
+                        }
                     }
-                    if (liveData.strikes) {
+
+                    if (OI_SYMBOLS.includes(sym) && liveData.strikes) {
                         const tbody = document.querySelector(`#${lower}-table tbody`);
-                        if(tbody){
+                        if(tbody) {
                             tbody.innerHTML = '';
                             liveData.strikes.forEach(row => {
                                 const tr = document.createElement('tr');
                                 if (row.is_atm) tr.classList.add('atm-strike');
-                                tr.innerHTML = `<td>${row.strike}</td><td>${row.call_oi.toLocaleString()}</td><td style="color: ${row.call_coi > 0 ? '#4CAF50' : '#F44336'}">${row.call_coi.toLocaleString()}</td><td class="action-cell">${row.call_action}</td><td>${row.put_oi.toLocaleString()}</td><td style="color: ${row.put_coi > 0 ? '#4CAF50' : '#F44336'}">${row.put_coi.toLocaleString()}</td><td class="action-cell">${row.put_action}</td>`;
+                                tr.innerHTML = `
+                                    <td class="${getBuildupClass(row.call_buildup)}">${row.call_buildup}</td>
+                                    <td>${row.strike}</td>
+                                    <td>${row.call_oi.toLocaleString()}</td>
+                                    <td style="color: ${row.call_coi > 0 ? '#4CAF50' : '#F44336'}">${row.call_coi.toLocaleString()}</td>
+                                    <td class="action-cell">${row.call_action}</td>
+                                    <td>${row.put_oi.toLocaleString()}</td>
+                                    <td style="color: ${row.put_coi > 0 ? '#4CAF50' : '#F44336'}">${row.put_coi.toLocaleString()}</td>
+                                    <td class="action-cell">${row.put_action}</td>
+                                    <td class="${getBuildupClass(row.put_buildup)}">${row.put_buildup}</td>`;
                                 tbody.appendChild(tr);
                             });
                         }
                     }
                     shared_data_cache[sym] = liveData;
-                    if (document.querySelector('.tablink.active').dataset.symbol === sym) {
-                        updateCharts(sym, liveData);
-                    }
                 });
+
+                const activeSymbol = document.querySelector('.tablink.active').dataset.symbol;
+                if(data.live[activeSymbol]) {
+                    updateCharts(activeSymbol, data.live[activeSymbol]);
+                }
             }
         });
 
         document.addEventListener('DOMContentLoaded', () => {
             const today = new Date().toISOString().split('T')[0];
             document.querySelectorAll('.history-date-picker').forEach(input => input.value = today);
+
+            const pulseContainer = document.getElementById('market-pulse-container');
+            OI_SYMBOLS.forEach(sym => {
+                pulseContainer.appendChild(createPulseCard(sym));
+            });
+
             document.getElementById("NIFTYOpen").click();
         });
     </script>

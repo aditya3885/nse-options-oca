@@ -21,6 +21,7 @@ from nsetools import Nse
 import lxml
 import re
 import yfinance as yf
+import numpy as np
 
 requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning)
@@ -34,7 +35,8 @@ UPDATE_INTERVAL = 120
 MAX_HISTORY_ROWS_DB = 10000
 LIVE_DATA_INTERVAL = 15
 
-AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC", "USDINR"]
+# +++ FIX: Standardize symbols to match yfinance and NSE ETFs +++
+AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
 
 # --------------------------------------------------------------------------- #
 # WEB DASHBOARD
@@ -121,10 +123,19 @@ class NseBseAnalyzer:
         self.db_path = 'nse_bse_data.db'
         self.conn: Optional[sqlite3.Connection] = None
 
-        self.YFINANCE_SYMBOLS = ["SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC", "USDINR"]
-        self.YFINANCE_TICKER_MAP = {"SENSEX": "^BSESN", "INDIAVIX": "^INDIAVIX", "GOLD": "GC=F", "SILVER": "SI=F",
-                                    "BTC": "BTC-USD", "USDINR": "INR=X"}
-        self.TICKER_ONLY_SYMBOLS = ["GOLD", "SILVER", "BTC", "USDINR"]
+        # +++ FIX: Use consistent yfinance tickers and Indian commodity ETFs +++
+        self.YFINANCE_SYMBOLS = ["SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
+        self.YFINANCE_TICKER_MAP = {
+            "SENSEX": "^BSESN",
+            "INDIAVIX": "^INDIAVIX",
+            "GOLD": "GOLDBEES.NS",
+            "SILVER": "SILVERBEES.NS",
+            "BTC-USD": "BTC-USD",
+            "USD-INR": "INR=X"
+        }
+        self.TICKER_ONLY_SYMBOLS = ["GOLD", "SILVER", "BTC-USD", "USD-INR"]
+
+        self.previous_data = {}
 
         self._init_db()
         self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in AUTO_SYMBOLS}
@@ -181,7 +192,6 @@ class NseBseAnalyzer:
             print(f"History load error: {e}")
 
     def _load_initial_underlying_values(self):
-        # This function is from your reference and is correct
         pass
 
     def _get_ist_time(self) -> datetime.datetime:
@@ -196,7 +206,6 @@ class NseBseAnalyzer:
             return "00:00"
 
     def clear_todays_history_db(self, sym: Optional[str] = None):
-        # This function is from your reference and is correct
         pass
 
     def run_loop(self):
@@ -263,6 +272,22 @@ class NseBseAnalyzer:
         except Exception as e:
             print(f"{sym} yfinance processing error: {e}")
 
+    def _get_oi_buildup(self, price_change, oi_change):
+        # First, check for significant price movement to do full analysis
+        if abs(price_change) > 0.01:  # Use a small threshold to avoid floating point issues
+            if price_change > 0 and oi_change > 0: return "Long Buildup"
+            if price_change > 0 and oi_change < 0: return "Short Covering"
+            if price_change < 0 and oi_change > 0: return "Short Buildup"
+            if price_change < 0 and oi_change < 0: return "Long Unwinding"
+
+        # If price change is not significant (like on the first run), check only OI change
+        if oi_change > 100:
+            return "Fresh OI Added"
+        if oi_change < -100:
+            return "OI Exited"
+
+        return ""
+
     def _process_nse_data(self, sym: str):
         try:
             url = self.url_nse + sym
@@ -273,11 +298,22 @@ class NseBseAnalyzer:
 
             data = resp.json()
             expiry = data['records']['expiryDates'][0]
+
+            underlying = data['records']['underlyingValue']
+
+            # +++ THE DEFINITIVE FIX FOR TypeError +++
+            prev_price = initial_underlying_values.get(sym)
+            if prev_price is None:
+                price_change = 0
+                initial_underlying_values[sym] = float(underlying)
+            else:
+                price_change = underlying - prev_price
+            # +++ END OF FIX +++
+
             ce_values = [d['CE'] for d in data['records']['data'] if 'CE' in d and d['expiryDate'] == expiry]
             pe_values = [d['PE'] for d in data['records']['data'] if 'PE' in d and d['expiryDate'] == expiry]
             if not ce_values or not pe_values: return
 
-            underlying = data['records']['underlyingValue']
             df_ce = pd.DataFrame(ce_values)
             df_pe = pd.DataFrame(pe_values)
             df = pd.merge(df_ce[['strikePrice', 'openInterest', 'changeinOpenInterest']],
@@ -292,12 +328,20 @@ class NseBseAnalyzer:
             idx = idx_list[0]
 
             strikes_data, ce_add_strikes, ce_exit_strikes, pe_add_strikes, pe_exit_strikes = [], [], [], [], []
+
             for i in range(-10, 11):
                 if not (0 <= idx + i < len(df)): continue
                 row = df.iloc[idx + i]
-                strike, call_oi, put_oi, call_coi, put_coi = int(row['strikePrice']), int(
-                    row['openInterest_call']), int(row['openInterest_put']), int(row['changeinOpenInterest_call']), int(
-                    row['changeinOpenInterest_put'])
+                strike = int(row['strikePrice'])
+
+                call_oi = int(row['openInterest_call'])
+                put_oi = int(row['openInterest_put'])
+                call_coi = int(row['changeinOpenInterest_call'])
+                put_coi = int(row['changeinOpenInterest_put'])
+
+                call_buildup = self._get_oi_buildup(price_change, call_coi)
+                put_buildup = self._get_oi_buildup(price_change, put_coi)
+
                 call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
                 put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
                 if call_action == "ADD":
@@ -308,16 +352,22 @@ class NseBseAnalyzer:
                     pe_add_strikes.append(str(strike))
                 elif put_action == "EXIT":
                     pe_exit_strikes.append(str(strike))
+
                 strikes_data.append(
                     {'strike': strike, 'call_oi': call_oi, 'call_coi': call_coi, 'call_action': call_action,
-                     'put_oi': put_oi, 'put_coi': put_coi, 'put_action': put_action, 'is_atm': i == 0})
+                     'put_oi': put_oi, 'put_coi': put_coi, 'put_action': put_action, 'is_atm': i == 0,
+                     'call_buildup': call_buildup, 'put_buildup': put_buildup})
 
-            pcr = round(sum(df['openInterest_put']) / sum(df['openInterest_call']), 2) if sum(
-                df['openInterest_call']) else 0.0
+            total_call_oi = int(df['openInterest_call'].sum())
+            total_put_oi = int(df['openInterest_put'].sum())
+            total_call_coi = int(df['changeinOpenInterest_call'].sum())
+            total_put_coi = int(df['changeinOpenInterest_put'].sum())
+
+            pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
             pcr_change = round(pcr - self.previous_pcr.get(sym, pcr), 2) if self.previous_pcr.get(sym,
                                                                                                   0.0) != 0.0 else 0.0
-            intraday_pcr = round(sum(df['changeinOpenInterest_put']) / sum(df['changeinOpenInterest_call']), 2) if sum(
-                df['changeinOpenInterest_call']) != 0 else 0.0
+            intraday_pcr = round(total_put_coi / total_call_coi, 2) if total_call_coi != 0 else 0.0
+
             atm_index_in_strikes_data = next((j for j, s in enumerate(strikes_data) if s['is_atm']), 10)
             atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
             atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
@@ -335,7 +385,9 @@ class NseBseAnalyzer:
                        'sentiment': enhanced_sentiment, 'expiry': expiry, 'add_exit': add_exit_str,
                        'pcr_change': pcr_change, 'intraday_pcr': intraday_pcr}
 
-            # +++ THE MAX PAIN FIX +++
+            pulse_summary = {'total_call_oi': total_call_oi, 'total_put_oi': total_put_oi,
+                             'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi}
+
             max_pain_df = self._calculate_max_pain(df_ce, df_pe)
             ce_dt_for_charts = df_ce.sort_values(['openInterest'], ascending=False)
             pe_dt_for_charts = df_pe.sort_values(['openInterest'], ascending=False)
@@ -344,18 +396,18 @@ class NseBseAnalyzer:
 
             with data_lock:
                 if sym not in shared_data: shared_data[sym] = {}
-                shared_data[sym].update({'summary': summary, 'strikes': strikes_data})
+                shared_data[sym].update({'summary': summary, 'strikes': strikes_data, 'pulse_summary': pulse_summary})
+
                 shared_data[sym]['max_pain_chart_data'] = max_pain_df.to_dict(orient='records')
                 shared_data[sym]['ce_oi_chart_data'] = final_ce_data
                 shared_data[sym]['pe_oi_chart_data'] = final_pe_data
                 shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data.get(sym, [])
-                if initial_underlying_values.get(sym) is None: initial_underlying_values[sym] = float(underlying)
-                change = underlying - initial_underlying_values.get(sym, underlying)
+
                 shared_data[sym]['live_feed_summary'] = {'current_value': int(round(underlying)),
-                                                         'change': round(change, 2), 'percentage_change': round((
-                                                                                                                            change / initial_underlying_values.get(
-                                                                                                                        sym,
-                                                                                                                        underlying)) * 100 if initial_underlying_values.get(
+                                                         'change': round(price_change, 2), 'percentage_change': round((
+                                                                                                                                  price_change / initial_underlying_values.get(
+                                                                                                                              sym,
+                                                                                                                              underlying)) * 100 if initial_underlying_values.get(
                         sym) else 0, 2)}
 
             print(f"{sym} LIVE DATA UPDATED | SP: {sp} | PCR: {pcr}")
@@ -417,7 +469,6 @@ class NseBseAnalyzer:
         except Exception as e:
             print(f"DB save error for {sym}: {e}")
 
-    # +++ THE MAX PAIN FIX - Using the function from your reference +++
     def _calculate_max_pain(self, ce_dt: pd.DataFrame, pe_dt: pd.DataFrame) -> pd.DataFrame:
         MxPn_CE = ce_dt[['strikePrice', 'openInterest']]
         MxPn_PE = pe_dt[['strikePrice', 'openInterest']]
