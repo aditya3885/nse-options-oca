@@ -7,12 +7,14 @@
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 </head>
 <body>
     <div class="container">
         <h1>NSE OCA PRO LIVE DASHBOARD</h1>
 
-        <!-- +++ FIX: Standardized IDs for all ticker items, removing hyphens +++ -->
         <div class="ticker-wrap">
             <div class="ticker">
                 <div class="ticker-item"><span class="ticker-symbol">NIFTY:</span><span id="ticker-nifty-value" class="ticker-value">-</span><span id="ticker-nifty-change" class="ticker-change">-</span></div>
@@ -37,9 +39,7 @@
             </div>
         </div>
 
-        <div id="market-pulse-container" class="market-pulse-container">
-            <!-- This will be populated by JS -->
-        </div>
+        <div id="market-pulse-container" class="market-pulse-container"></div>
 
         <div class="grid">
             <div class="card" id="NIFTY_summary"><h2>NIFTY</h2><p>SP: <span id="nifty-sp">-</span></p><p>Value: <span id="nifty-value">-</span></p><p>Call COI: <span id="nifty-call">-</span>K</p><p>Put COI: <span id="nifty-put">-</span>K</p><p>PCR: <span id="nifty-pcr">-</span></p><p>Sentiment: <span id="nifty-sentiment">-</span></p><p>OI Changes: <span id="nifty-add-exit">-</span></p></div>
@@ -53,6 +53,7 @@
             <button class="tablink active" onclick="openTab(event, 'NIFTY')" id="NIFTYOpen" data-symbol="NIFTY">NIFTY</button>
             <button class="tablink" onclick="openTab(event, 'FINNIFTY')" data-symbol="FINNIFTY">FINNIFTY</button>
             <button class="tablink" onclick="openTab(event, 'BANKNIFTY')" data-symbol="BANKNIFTY">BANKNIFTY</button>
+            <button class="tablink" onclick="openTab(event, 'EQUITY')" data-symbol="EQUITY">Equity</button>
             <button class="tablink" onclick="openTab(event, 'SENSEX')" data-symbol="SENSEX">SENSEX</button>
             <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button>
         </div>
@@ -80,7 +81,6 @@
             <h3 style="margin-top: 20px;">BANKNIFTY Historical Data</h3><div class="history-controls"><label for="banknifty-history-date">Date:</label><input type="date" id="banknifty-history-date" class="history-date-picker"><button onclick="loadHistoricalData('BANKNIFTY')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('BANKNIFTY')">Clear Today's BANKNIFTY History</button></div>
             <div class="table-container"><table id="banknifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
         </div>
-
         <div id="SENSEX_tab" class="tabcontent">
             <h3 style="margin-top: 20px;">SENSEX Today's Updates (Newest First)</h3><div class="table-container"><table id="sensex-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">SENSEX Historical Data</h3><div class="history-controls"><label for="sensex-history-date">Date:</label><input type="date" id="sensex-history-date" class="history-date-picker"><button onclick="loadHistoricalData('SENSEX')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('SENSEX')">Clear Today's SENSEX History</button></div>
@@ -90,6 +90,49 @@
             <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (Newest First)</h3><div class="table-container"><table id="indiavix-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">INDIAVIX Historical Data</h3><div class="history-controls"><label for="indiavix-history-date">Date:</label><input type="date" id="indiavix-history-date" class="history-date-picker"><button onclick="loadHistoricalData('INDIAVIX')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('INDIAVIX')">Clear Today's INDIAVIX History</button></div>
             <div class="table-container"><table id="indiavix-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th></tr></thead><tbody></tbody></table></div>
+        </div>
+
+        <div id="EQUITY_tab" class="tabcontent">
+            <div class="equity-selector-bar">
+                <label for="equity-symbol-selector">Select Stock:</label>
+                <select id="equity-symbol-selector" style="width: 250px;"></select>
+                <button id="fetch-equity-btn">Fetch Data</button>
+            </div>
+            <div id="equity-data-container" class="hidden">
+                <h2 id="equity-title" style="text-align: center; margin-bottom: 20px;"></h2>
+                <div id="equity-market-pulse-container" class="market-pulse-container"></div>
+                <div class="grid">
+                    <div class="card" id="EQUITY_summary_card">
+                        <h2>Summary</h2>
+                        <p>SP: <span id="equity-sp">-</span></p>
+                        <p>Value: <span id="equity-value">-</span></p>
+                        <p>PCR: <span id="equity-pcr">-</span></p>
+                        <p>Intraday PCR: <span id="equity-intraday-pcr">-</span></p>
+                        <p>Sentiment: <span id="equity-sentiment">-</span></p>
+                    </div>
+                </div>
+                <h3>Option Chain (ATM ±10)</h3>
+                <div class="table-container">
+                    <table id="equity-table">
+                        <thead>
+                            <tr>
+                                <th>Call Buildup</th>
+                                <th>Strike</th>
+                                <th>Call OI</th>
+                                <th>Call COI</th>
+                                <th class="action-header">Call Action</th>
+                                <th>Put OI</th>
+                                <th>Put COI</th>
+                                <th class="action-header">Put Action</th>
+                                <th>Put Buildup</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="equity-loader" class="hidden" style="text-align: center; padding: 40px;">Loading...</div>
+            <div id="equity-error" class="hidden" style="text-align: center; padding: 40px; color: #F44336;"></div>
         </div>
 
         <footer>@aditya_nse_bot | Updated: <span id="time">-</span> | Site Visits: <span id="visit-counter">-</span></footer>
@@ -115,7 +158,7 @@
             document.querySelectorAll(".tablink").forEach(el => el.classList.remove("active"));
             document.getElementById(`${symbol}_tab`).style.display = "block";
             evt.currentTarget.classList.add("active");
-            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol]) {
+            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY") {
                 updateCharts(symbol, shared_data_cache[symbol]);
             }
         }
@@ -193,7 +236,7 @@
             const card = document.createElement('div');
             card.className = 'pulse-card';
             card.innerHTML = `
-                <h3>${symbol} Pulse</h3>
+                <h3>${symbol === 'EQUITY' ? 'Equity' : symbol} Pulse</h3>
                 <div class="pulse-row"><span>CALLS</span><div class="pulse-bar-container"><div class="pulse-bar calls" id="${lower}-total-call-oi-bar"></div><div class="pulse-bar puts" id="${lower}-total-put-oi-bar"></div></div><span>PUTS</span></div>
                 <div class="pulse-labels"><span id="${lower}-total-call-oi-label">-</span><span id="${lower}-total-put-oi-label">-</span></div>
                 <h5>Today's Change</h5>
@@ -230,7 +273,6 @@
 
             if (data.live_feed_summary) {
                 ALL_SYMBOLS.forEach(sym => {
-                    // +++ FIX: Remove all hyphens to create a clean ID +++
                     const lower = sym.toLowerCase().replace(/-/g, '');
                     const feed = data.live_feed_summary[sym];
                     const valEl = document.getElementById(`ticker-${lower}-value`);
@@ -324,6 +366,73 @@
             }
         });
 
+        socket.on('equity_data_update', (response) => {
+            document.getElementById('equity-loader').classList.add('hidden');
+            const dataContainer = document.getElementById('equity-data-container');
+            const errorContainer = document.getElementById('equity-error');
+
+            if (response.error) {
+                errorContainer.textContent = `Error fetching data for ${response.symbol}: ${response.error}`;
+                errorContainer.classList.remove('hidden');
+                dataContainer.classList.add('hidden');
+                return;
+            }
+
+            errorContainer.classList.add('hidden');
+            dataContainer.classList.remove('hidden');
+
+            const equityData = response.data;
+            const symbol = response.symbol;
+            document.getElementById('equity-title').textContent = `${symbol} Option Chain Analysis`;
+
+            const pulseContainer = document.getElementById('equity-market-pulse-container');
+            if (!document.getElementById('equity_pulse_card')) {
+                const pulseCard = createPulseCard('EQUITY');
+                pulseCard.id = 'equity_pulse_card';
+                pulseContainer.innerHTML = '';
+                pulseContainer.appendChild(pulseCard);
+            }
+            const pulseSummary = equityData.pulse_summary;
+            const totalOI = pulseSummary.total_call_oi + pulseSummary.total_put_oi;
+            const callOIPct = totalOI > 0 ? (pulseSummary.total_call_oi / totalOI * 100) : 50;
+            document.getElementById('equity-total-call-oi-bar').style.width = `${callOIPct}%`;
+            document.getElementById('equity-total-put-oi-bar').style.width = `${100 - callOIPct}%`;
+            document.getElementById('equity-total-call-oi-label').textContent = pulseSummary.total_call_oi.toLocaleString();
+            document.getElementById('equity-total-put-oi-label').textContent = pulseSummary.total_put_oi.toLocaleString();
+
+            const totalCOI = Math.abs(pulseSummary.total_call_coi) + Math.abs(pulseSummary.total_put_coi);
+            const callCOIPct = totalCOI > 0 ? (Math.abs(pulseSummary.total_call_coi) / totalCOI * 100) : 50;
+            document.getElementById('equity-total-call-coi-bar').style.width = `${callCOIPct}%`;
+            document.getElementById('equity-total-put-coi-bar').style.width = `${100 - callCOIPct}%`;
+            document.getElementById('equity-total-call-coi-label').textContent = pulseSummary.total_call_coi.toLocaleString();
+            document.getElementById('equity-total-put-coi-label').textContent = pulseSummary.total_put_coi.toLocaleString();
+
+            const summary = equityData.summary;
+            document.getElementById('equity-sp').textContent = summary.sp;
+            document.getElementById('equity-value').textContent = summary.value.toFixed(2);
+            document.getElementById('equity-pcr').textContent = summary.pcr.toFixed(2);
+            document.getElementById('equity-intraday-pcr').textContent = summary.intraday_pcr.toFixed(2);
+            document.getElementById('equity-sentiment').textContent = summary.sentiment;
+
+            const tableBody = document.querySelector('#equity-table tbody');
+            tableBody.innerHTML = '';
+            equityData.strikes.forEach(row => {
+                const tr = document.createElement('tr');
+                if (row.is_atm) tr.classList.add('atm-strike');
+                tr.innerHTML = `
+                    <td class="${getBuildupClass(row.call_buildup)}">${row.call_buildup}</td>
+                    <td>${row.strike}</td>
+                    <td>${row.call_oi.toLocaleString()}</td>
+                    <td style="color: ${row.call_coi > 0 ? '#4CAF50' : '#F44336'}">${row.call_coi.toLocaleString()}</td>
+                    <td class="action-cell">${row.call_action}</td>
+                    <td>${row.put_oi.toLocaleString()}</td>
+                    <td style="color: ${row.put_coi > 0 ? '#4CAF50' : '#F44336'}">${row.put_coi.toLocaleString()}</td>
+                    <td class="action-cell">${row.put_action}</td>
+                    <td class="${getBuildupClass(row.put_buildup)}">${row.put_buildup}</td>`;
+                tableBody.appendChild(tr);
+            });
+        });
+
         document.addEventListener('DOMContentLoaded', () => {
             const today = new Date().toISOString().split('T')[0];
             document.querySelectorAll('.history-date-picker').forEach(input => input.value = today);
@@ -334,6 +443,34 @@
             });
 
             document.getElementById("NIFTYOpen").click();
+
+            const equitySelector = $('#equity-symbol-selector');
+            equitySelector.select2({
+                placeholder: "Select a stock",
+                allowClear: true
+            });
+
+            fetch('/api/stocks')
+                .then(response => response.json())
+                .then(stocks => {
+                    stocks.forEach(stock => {
+                        const option = new Option(stock, stock, false, false);
+                        equitySelector.append(option);
+                    });
+                    equitySelector.trigger('change');
+                });
+
+            document.getElementById('fetch-equity-btn').addEventListener('click', () => {
+                const selectedStock = equitySelector.val();
+                if (selectedStock) {
+                    document.getElementById('equity-data-container').classList.add('hidden');
+                    document.getElementById('equity-error').classList.add('hidden');
+                    document.getElementById('equity-loader').classList.remove('hidden');
+                    socket.emit('fetch_equity_data', { symbol: selectedStock });
+                } else {
+                    alert("Please select a stock first.");
+                }
+            });
         });
     </script>
 </body>

@@ -35,7 +35,6 @@ UPDATE_INTERVAL = 120
 MAX_HISTORY_ROWS_DB = 10000
 LIVE_DATA_INTERVAL = 15
 
-# +++ FIX: Standardize symbols to match yfinance and NSE ETFs +++
 AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
 
 # --------------------------------------------------------------------------- #
@@ -51,9 +50,16 @@ last_history_update: Dict[str, float] = {sym: 0 for sym in AUTO_SYMBOLS}
 initial_underlying_values: Dict[str, Optional[float]] = {sym: None for sym in AUTO_SYMBOLS}
 site_visits = 0
 
+fno_stocks_list = []
+
 
 @app.route('/')
 def index(): return render_template('dashboard.html')
+
+
+@app.route('/api/stocks')
+def get_stocks():
+    return jsonify(fno_stocks_list)
 
 
 @socketio.on('connect')
@@ -68,6 +74,15 @@ def handle_connect():
         emit('initial_todays_history', {'history': todays_history}, to=request.sid)
 
 
+@socketio.on('fetch_equity_data')
+def handle_fetch_equity(data):
+    stock_symbol = data.get('symbol')
+    if stock_symbol and stock_symbol in fno_stocks_list:
+        print(f"Received request to fetch data for equity: {stock_symbol}")
+        socketio.start_background_task(target=analyzer.process_and_emit_equity_data, symbol=stock_symbol,
+                                       sid=request.sid)
+
+
 def broadcast_live_update():
     with data_lock:
         live_feed_summary = {sym: data.get('live_feed_summary', {}) for sym, data in shared_data.items()}
@@ -80,7 +95,8 @@ def broadcast_history_append(sym: str, new_history_item: Dict[str, Any]):
 
 @app.route('/history/<symbol>/<date_str>')
 def get_historical_data(symbol: str, date_str: str):
-    if symbol not in AUTO_SYMBOLS: return jsonify({"error": f"Invalid symbol: {symbol}"}), 400
+    if symbol not in AUTO_SYMBOLS and symbol not in fno_stocks_list: return jsonify(
+        {"error": f"Invalid symbol: {symbol}"}), 400
     history_for_date: List[Dict[str, Any]] = []
     if analyzer.conn:
         cur = analyzer.conn.cursor()
@@ -117,22 +133,18 @@ class NseBseAnalyzer:
     def __init__(self):
         self.stop = threading.Event()
         self.session = requests.Session()
-        self.nse_headers = {'user-agent': 'Mozilla/5.0'}
+        self.nse_headers = {
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
         self.url_oc = "https://www.nseindia.com/option-chain"
-        self.url_nse = "https://www.nseindia.com/api/option-chain-indices?symbol="
+        self.url_indices = "https://www.nseindia.com/api/option-chain-indices?symbol="
+        self.url_equities = "https://www.nseindia.com/api/option-chain-equities?symbol="
+        self.url_symbols = "https://www.nseindia.com/api/underlying-information"
         self.db_path = 'nse_bse_data.db'
         self.conn: Optional[sqlite3.Connection] = None
 
-        # +++ FIX: Use consistent yfinance tickers and Indian commodity ETFs +++
         self.YFINANCE_SYMBOLS = ["SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
-        self.YFINANCE_TICKER_MAP = {
-            "SENSEX": "^BSESN",
-            "INDIAVIX": "^INDIAVIX",
-            "GOLD": "GOLDBEES.NS",
-            "SILVER": "SILVERBEES.NS",
-            "BTC-USD": "BTC-USD",
-            "USD-INR": "INR=X"
-        }
+        self.YFINANCE_TICKER_MAP = {"SENSEX": "^BSESN", "INDIAVIX": "^INDIAVIX", "GOLD": "GOLDBEES.NS",
+                                    "SILVER": "SILVERBEES.NS", "BTC-USD": "BTC-USD", "USD-INR": "INR=X"}
         self.TICKER_ONLY_SYMBOLS = ["GOLD", "SILVER", "BTC-USD", "USD-INR"]
 
         self.previous_data = {}
@@ -140,11 +152,26 @@ class NseBseAnalyzer:
         self._init_db()
         self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in AUTO_SYMBOLS}
         self.previous_pcr: Dict[str, float] = {sym: 0.0 for sym in AUTO_SYMBOLS}
+        self.get_stock_symbols()
         self._load_todays_history_from_db()
         self._load_initial_underlying_values()
         self._populate_initial_shared_chart_data()
         self.nse_tool = Nse()
         threading.Thread(target=self.run_loop, daemon=True).start()
+
+    def get_stock_symbols(self):
+        global fno_stocks_list
+        try:
+            request = self.session.get(self.url_oc, headers=self.nse_headers, timeout=10)
+            cookies = dict(request.cookies)
+            response = self.session.get(self.url_symbols, headers=self.nse_headers, timeout=10, cookies=cookies)
+            response.raise_for_status()
+            json_data = response.json()
+            fno_stocks_list = sorted([item['symbol'] for item in json_data['data']['UnderlyingList']])
+            print(f"Successfully fetched {len(fno_stocks_list)} F&O stock symbols.")
+        except Exception as e:
+            print(f"Fatal error: Could not fetch stock symbols. {e}")
+            fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
 
     def _init_db(self):
         try:
@@ -170,7 +197,8 @@ class NseBseAnalyzer:
             ist_now = self._get_ist_time()
             utc_start_str = ist_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(
                 datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-            for sym in AUTO_SYMBOLS:
+            all_symbols_to_load = AUTO_SYMBOLS + fno_stocks_list
+            for sym in all_symbols_to_load:
                 if sym in self.TICKER_ONLY_SYMBOLS: continue
                 cur.execute(
                     "SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, pcr_change, intraday_pcr FROM history WHERE symbol = ? AND timestamp >= ? ORDER BY timestamp DESC",
@@ -185,9 +213,10 @@ class NseBseAnalyzer:
                              'pcr_change': r[8] if r[8] is not None else 0.0,
                              'intraday_pcr': r[9] if r[9] is not None else 0.0})
                     if sym not in self.YFINANCE_SYMBOLS:
-                        if todays_history[sym]: self.previous_pcr[sym] = todays_history[sym][0]['pcr']
+                        if todays_history.get(sym) and todays_history[sym]: self.previous_pcr[sym] = \
+                        todays_history[sym][0]['pcr']
                         self.pcr_graph_data[sym] = [{"TIME": item['time'], "PCR": item['pcr']} for item in
-                                                    reversed(todays_history[sym])]
+                                                    reversed(todays_history.get(sym, []))]
         except Exception as e:
             print(f"History load error: {e}")
 
@@ -214,7 +243,8 @@ class NseBseAnalyzer:
         except requests.exceptions.RequestException as e:
             print(f"Initial NSE session setup failed: {e}")
         while not self.stop.is_set():
-            for sym in AUTO_SYMBOLS:
+            symbols_to_process = [s for s in AUTO_SYMBOLS if s not in fno_stocks_list]
+            for sym in symbols_to_process:
                 try:
                     self.fetch_and_process_symbol(sym)
                 except Exception as e:
@@ -262,7 +292,9 @@ class NseBseAnalyzer:
             if sym not in self.TICKER_ONLY_SYMBOLS:
                 now = time.time()
                 if now - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
-                    with data_lock: todays_history[sym].insert(0, summary)
+                    with data_lock:
+                        if sym not in todays_history: todays_history[sym] = []
+                        todays_history[sym].insert(0, summary)
                     broadcast_history_append(sym, summary)
                     last_history_update[sym] = now
                     self._save_db(sym, summary)
@@ -273,24 +305,18 @@ class NseBseAnalyzer:
             print(f"{sym} yfinance processing error: {e}")
 
     def _get_oi_buildup(self, price_change, oi_change):
-        # First, check for significant price movement to do full analysis
-        if abs(price_change) > 0.01:  # Use a small threshold to avoid floating point issues
+        if abs(price_change) > 0.01:
             if price_change > 0 and oi_change > 0: return "Long Buildup"
             if price_change > 0 and oi_change < 0: return "Short Covering"
             if price_change < 0 and oi_change > 0: return "Short Buildup"
             if price_change < 0 and oi_change < 0: return "Long Unwinding"
-
-        # If price change is not significant (like on the first run), check only OI change
-        if oi_change > 100:
-            return "Fresh OI Added"
-        if oi_change < -100:
-            return "OI Exited"
-
+        if oi_change > 100: return "Fresh OI Added"
+        if oi_change < -100: return "OI Exited"
         return ""
 
     def _process_nse_data(self, sym: str):
         try:
-            url = self.url_nse + sym
+            url = self.url_indices + sym
             resp = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
             if resp.status_code == 401:
                 self.session.get(self.url_oc, headers=self.nse_headers, timeout=5, verify=False)
@@ -298,17 +324,14 @@ class NseBseAnalyzer:
 
             data = resp.json()
             expiry = data['records']['expiryDates'][0]
-
             underlying = data['records']['underlyingValue']
 
-            # +++ THE DEFINITIVE FIX FOR TypeError +++
             prev_price = initial_underlying_values.get(sym)
             if prev_price is None:
                 price_change = 0
                 initial_underlying_values[sym] = float(underlying)
             else:
                 price_change = underlying - prev_price
-            # +++ END OF FIX +++
 
             ce_values = [d['CE'] for d in data['records']['data'] if 'CE' in d and d['expiryDate'] == expiry]
             pe_values = [d['PE'] for d in data['records']['data'] if 'PE' in d and d['expiryDate'] == expiry]
@@ -328,20 +351,16 @@ class NseBseAnalyzer:
             idx = idx_list[0]
 
             strikes_data, ce_add_strikes, ce_exit_strikes, pe_add_strikes, pe_exit_strikes = [], [], [], [], []
-
             for i in range(-10, 11):
                 if not (0 <= idx + i < len(df)): continue
                 row = df.iloc[idx + i]
                 strike = int(row['strikePrice'])
-
                 call_oi = int(row['openInterest_call'])
                 put_oi = int(row['openInterest_put'])
                 call_coi = int(row['changeinOpenInterest_call'])
                 put_coi = int(row['changeinOpenInterest_put'])
-
                 call_buildup = self._get_oi_buildup(price_change, call_coi)
                 put_buildup = self._get_oi_buildup(price_change, put_coi)
-
                 call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
                 put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
                 if call_action == "ADD":
@@ -352,7 +371,6 @@ class NseBseAnalyzer:
                     pe_add_strikes.append(str(strike))
                 elif put_action == "EXIT":
                     pe_exit_strikes.append(str(strike))
-
                 strikes_data.append(
                     {'strike': strike, 'call_oi': call_oi, 'call_coi': call_coi, 'call_action': call_action,
                      'put_oi': put_oi, 'put_coi': put_coi, 'put_action': put_action, 'is_atm': i == 0,
@@ -362,12 +380,10 @@ class NseBseAnalyzer:
             total_put_oi = int(df['openInterest_put'].sum())
             total_call_coi = int(df['changeinOpenInterest_call'].sum())
             total_put_coi = int(df['changeinOpenInterest_put'].sum())
-
             pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
             pcr_change = round(pcr - self.previous_pcr.get(sym, pcr), 2) if self.previous_pcr.get(sym,
                                                                                                   0.0) != 0.0 else 0.0
             intraday_pcr = round(total_put_coi / total_call_coi, 2) if total_call_coi != 0 else 0.0
-
             atm_index_in_strikes_data = next((j for j, s in enumerate(strikes_data) if s['is_atm']), 10)
             atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
             atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
@@ -379,15 +395,12 @@ class NseBseAnalyzer:
                                               f"PE Add: {', '.join(sorted(pe_add_strikes))}" if pe_add_strikes else "",
                                               f"CE Exit: {', '.join(sorted(ce_exit_strikes))}" if ce_exit_strikes else "",
                                               f"PE Exit: {', '.join(sorted(pe_exit_strikes))}" if pe_exit_strikes else ""])) or "No Change"
-
             summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': int(sp), 'value': int(round(underlying)),
                        'call_oi': round(atm_call_coi / 1000, 1), 'put_oi': round(atm_put_coi / 1000, 1), 'pcr': pcr,
                        'sentiment': enhanced_sentiment, 'expiry': expiry, 'add_exit': add_exit_str,
                        'pcr_change': pcr_change, 'intraday_pcr': intraday_pcr}
-
             pulse_summary = {'total_call_oi': total_call_oi, 'total_put_oi': total_put_oi,
                              'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi}
-
             max_pain_df = self._calculate_max_pain(df_ce, df_pe)
             ce_dt_for_charts = df_ce.sort_values(['openInterest'], ascending=False)
             pe_dt_for_charts = df_pe.sort_values(['openInterest'], ascending=False)
@@ -397,12 +410,10 @@ class NseBseAnalyzer:
             with data_lock:
                 if sym not in shared_data: shared_data[sym] = {}
                 shared_data[sym].update({'summary': summary, 'strikes': strikes_data, 'pulse_summary': pulse_summary})
-
                 shared_data[sym]['max_pain_chart_data'] = max_pain_df.to_dict(orient='records')
                 shared_data[sym]['ce_oi_chart_data'] = final_ce_data
                 shared_data[sym]['pe_oi_chart_data'] = final_pe_data
                 shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data.get(sym, [])
-
                 shared_data[sym]['live_feed_summary'] = {'current_value': int(round(underlying)),
                                                          'change': round(price_change, 2), 'percentage_change': round((
                                                                                                                                   price_change / initial_underlying_values.get(
@@ -417,6 +428,7 @@ class NseBseAnalyzer:
             if now - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
                 self.previous_pcr[sym] = pcr
                 with data_lock:
+                    if sym not in todays_history: todays_history[sym] = []
                     todays_history[sym].insert(0, summary)
                     if sym not in self.YFINANCE_SYMBOLS:
                         self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
@@ -432,6 +444,104 @@ class NseBseAnalyzer:
         except Exception as e:
             import traceback
             print(f"{sym} processing error: {e}\n{traceback.format_exc()}")
+
+    def process_and_emit_equity_data(self, symbol: str, sid: str):
+        print(f"Processing equity data for {symbol} for client {sid}")
+        try:
+            equity_data = self._process_equity_data(symbol)
+            if equity_data:
+                socketio.emit('equity_data_update', {'symbol': symbol, 'data': equity_data}, to=sid)
+            else:
+                socketio.emit('equity_data_update', {'symbol': symbol, 'error': 'No data found.'}, to=sid)
+        except Exception as e:
+            import traceback
+            print(f"Error processing equity {symbol}: {e}\n{traceback.format_exc()}")
+            socketio.emit('equity_data_update', {'symbol': symbol, 'error': str(e)}, to=sid)
+
+    def _process_equity_data(self, sym: str) -> Optional[Dict]:
+        try:
+            url = self.url_equities + sym
+            resp = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
+            if resp.status_code == 401:
+                self.session.get(self.url_oc, headers=self.nse_headers, timeout=5, verify=False)
+                resp = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
+
+            resp.raise_for_status()
+            data = resp.json()
+
+            if not data.get('records') or not data['records'].get('data'):
+                print(f"No option chain data returned for {sym}")
+                return None
+
+            expiry_dates = data['records']['expiryDates']
+            if not expiry_dates: return None
+            expiry = expiry_dates[0]
+
+            underlying = data['records']['underlyingValue']
+
+            prev_price = initial_underlying_values.get(sym, underlying)
+            price_change = underlying - prev_price
+            if initial_underlying_values.get(sym) is None:
+                initial_underlying_values[sym] = float(underlying)
+
+            ce_values = [d['CE'] for d in data['records']['data'] if 'CE' in d and d['expiryDate'] == expiry]
+            pe_values = [d['PE'] for d in data['records']['data'] if 'PE' in d and d['expiryDate'] == expiry]
+            if not ce_values or not pe_values: return None
+
+            df_ce = pd.DataFrame(ce_values)
+            df_pe = pd.DataFrame(pe_values)
+            df = pd.merge(df_ce[['strikePrice', 'openInterest', 'changeinOpenInterest']],
+                          df_pe[['strikePrice', 'openInterest', 'changeinOpenInterest']], on='strikePrice', how='outer',
+                          suffixes=('_call', '_put')).fillna(0)
+
+            sp = self.get_atm_strike(df, underlying)
+            if not sp: return None
+
+            idx_list = df[df['strikePrice'] == sp].index.tolist()
+            if not idx_list: return None
+            idx = idx_list[0]
+
+            strikes_data = []
+            for i in range(-10, 11):
+                if not (0 <= idx + i < len(df)): continue
+                row = df.iloc[idx + i]
+                strike = int(row['strikePrice'])
+                call_oi = int(row['openInterest_call'])
+                put_oi = int(row['openInterest_put'])
+                call_coi = int(row['changeinOpenInterest_call'])
+                put_coi = int(row['changeinOpenInterest_put'])
+                call_buildup = self._get_oi_buildup(price_change, call_coi)
+                put_buildup = self._get_oi_buildup(price_change, put_coi)
+                call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
+                put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
+                strikes_data.append(
+                    {'strike': strike, 'call_oi': call_oi, 'call_coi': call_coi, 'call_action': call_action,
+                     'put_oi': put_oi, 'put_coi': put_coi, 'put_action': put_action, 'is_atm': i == 0,
+                     'call_buildup': call_buildup, 'put_buildup': put_buildup})
+
+            total_call_oi = int(df['openInterest_call'].sum())
+            total_put_oi = int(df['openInterest_put'].sum())
+            total_call_coi = int(df['changeinOpenInterest_call'].sum())
+            total_put_coi = int(df['changeinOpenInterest_put'].sum())
+
+            pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
+            intraday_pcr = round(total_put_coi / total_call_coi, 2) if total_call_coi != 0 else 0.0
+
+            atm_index_in_strikes_data = next((j for j, s in enumerate(strikes_data) if s['is_atm']), 10)
+            atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
+            atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
+            diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
+            sentiment = self.get_sentiment(diff, pcr)
+
+            summary = {'sp': int(sp), 'value': float(underlying), 'pcr': pcr, 'sentiment': sentiment,
+                       'intraday_pcr': intraday_pcr}
+            pulse_summary = {'total_call_oi': total_call_oi, 'total_put_oi': total_put_oi,
+                             'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi}
+
+            return {'summary': summary, 'strikes': strikes_data, 'pulse_summary': pulse_summary}
+        except Exception as e:
+            print(f"Error processing equity data for {sym}: {e}")
+            return None
 
     def get_atm_strike(self, df: pd.DataFrame, underlying: float) -> Optional[int]:
         try:
