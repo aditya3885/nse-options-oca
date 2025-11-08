@@ -53,7 +53,8 @@ initial_underlying_values: Dict[str, Optional[float]] = {sym: None for sym in AU
 site_visits = 0
 
 fno_stocks_list = []
-equity_data_cache: Dict[str, Dict[str, Any]] = {}  # Cache for ranking
+# Cache now stores current and previous data for reversal calculation
+equity_data_cache: Dict[str, Dict[str, Any]] = {}
 
 
 @app.route('/')
@@ -145,14 +146,11 @@ class NseBseAnalyzer:
         self.db_path = 'nse_bse_data.db'
         self.conn: Optional[sqlite3.Connection] = None
         self.ist_timezone = pytz.timezone('Asia/Kolkata')
-
         self.YFINANCE_SYMBOLS = ["SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
         self.YFINANCE_TICKER_MAP = {"SENSEX": "^BSESN", "INDIAVIX": "^INDIAVIX", "GOLD": "GOLDBEES.NS",
                                     "SILVER": "SILVERBEES.NS", "BTC-USD": "BTC-USD", "USD-INR": "INR=X"}
         self.TICKER_ONLY_SYMBOLS = ["GOLD", "SILVER", "BTC-USD", "USD-INR"]
-
         self.previous_data = {}
-
         self._init_db()
         self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {}
         self.previous_pcr: Dict[str, float] = {}
@@ -160,7 +158,6 @@ class NseBseAnalyzer:
         self._load_todays_history_from_db()
         self._load_initial_underlying_values()
         self._populate_initial_shared_chart_data()
-        self.nse_tool = Nse()
         threading.Thread(target=self.run_loop, daemon=True).start()
         threading.Thread(target=self.equity_fetcher_thread, daemon=True).start()
 
@@ -181,8 +178,7 @@ class NseBseAnalyzer:
     def _init_db(self):
         try:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            cur = self.conn.cursor()
-            cur.execute(
+            self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, symbol TEXT, sp REAL, value REAL, call_oi REAL, put_oi REAL, pcr REAL, sentiment TEXT, add_exit TEXT, pcr_change REAL, intraday_pcr REAL)")
             self.conn.commit()
         except Exception as e:
@@ -271,7 +267,6 @@ class NseBseAnalyzer:
             time.sleep(LIVE_DATA_INTERVAL)
 
     def equity_fetcher_thread(self):
-        """A dedicated thread to fetch all F&O stocks data during market hours."""
         print("Equity fetcher thread started.")
         while not self.stop.is_set():
             now_ist = self._get_ist_time()
@@ -280,61 +275,92 @@ class NseBseAnalyzer:
 
             if market_open <= now_ist <= market_close:
                 print(f"Market is open. Starting equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
-
                 for i, symbol in enumerate(fno_stocks_list):
                     try:
                         print(f"Fetching equity {i + 1}/{len(fno_stocks_list)}: {symbol}")
                         equity_data = self._process_equity_data(symbol)
                         if equity_data:
-                            equity_data_cache[symbol] = equity_data
+                            previous_data = equity_data_cache.get(symbol, {}).get('current')
+                            equity_data_cache[symbol] = {'current': equity_data, 'previous': previous_data}
                             self._save_db(symbol, equity_data['summary'])
                         time.sleep(1)
                     except Exception as e:
                         print(f"Error fetching {symbol} in equity loop: {e}")
-
                 self.rank_and_emit_movers()
-
                 print(f"Equity fetch cycle finished. Sleeping for {EQUITY_FETCH_INTERVAL} seconds.")
                 time.sleep(EQUITY_FETCH_INTERVAL)
             else:
                 print(f"Market is closed. Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}")
                 time.sleep(60)
 
-    def calculate_score(self, data: Dict) -> float:
-        """Calculates a score for a stock based on its data."""
-        score = 0
+    def calculate_strength_score(self, data: Dict) -> float:
         summary = data.get('summary', {})
-        sentiment = summary.get('sentiment', 'Neutral')
+        sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2}
+        sentiment_score = sentiment_map.get(summary.get('sentiment', 'Neutral'), 0)
         pcr = summary.get('pcr', 1.0)
         intraday_pcr = summary.get('intraday_pcr', 1.0)
+        return round((sentiment_score * 1.5) + (pcr * 1.0) + (intraday_pcr * 1.2), 2)
+
+    def calculate_reversal_score(self, current_data: Dict, previous_data: Optional[Dict]) -> float:
+        if not previous_data: return 0.0
+
+        current_summary = current_data.get('summary', {})
+        previous_summary = previous_data.get('summary', {})
+
+        current_pcr = current_summary.get('pcr', 1.0)
+        current_intraday_pcr = current_summary.get('intraday_pcr', 1.0)
+        previous_intraday_pcr = previous_summary.get('intraday_pcr', 1.0)
 
         sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2}
-        sentiment_score = sentiment_map.get(sentiment, 0)
+        sentiment_score = sentiment_map.get(current_summary.get('sentiment', 'Neutral'), 0)
 
-        score = (sentiment_score * 1.5) + (pcr * 1.0) + (intraday_pcr * 1.2)
-        return round(score, 2)
+        intraday_pcr_change = current_intraday_pcr - previous_intraday_pcr
+
+        # Positive score for bullish reversal potential
+        bullish_reversal_score = (1 / (current_pcr + 0.1)) * (current_intraday_pcr * 1.5) + (
+                    intraday_pcr_change * 10) + sentiment_score
+
+        # Return the score. Higher is more likely to be a bullish reversal.
+        return round(bullish_reversal_score, 2)
 
     def rank_and_emit_movers(self):
-        """Ranks stocks based on score and emits the top/bottom 10."""
-        if not equity_data_cache:
-            return
+        if not equity_data_cache: return
 
-        scored_stocks = []
-        for symbol, data in equity_data_cache.items():
-            score = self.calculate_score(data)
-            scored_stocks.append({
-                'symbol': symbol,
-                'score': score,
-                'sentiment': data['summary']['sentiment'],
-                'pcr': data['summary']['pcr']
-            })
+        strength_scores = []
+        reversal_scores = []
 
-        scored_stocks.sort(key=lambda x: x['score'], reverse=True)
-        top_gainers = scored_stocks[:10]
-        top_losers = scored_stocks[-10:][::-1]
+        for symbol, data_points in equity_data_cache.items():
+            current_data = data_points.get('current')
+            previous_data = data_points.get('previous')
+            if not current_data: continue
 
-        socketio.emit('top_movers_update', {'gainers': top_gainers, 'losers': top_losers})
-        print("Emitted Top Movers update.")
+            # Strength Score
+            strength_score = self.calculate_strength_score(current_data)
+            strength_scores.append(
+                {'symbol': symbol, 'score': strength_score, 'sentiment': current_data['summary']['sentiment'],
+                 'pcr': current_data['summary']['pcr']})
+
+            # Reversal Score
+            reversal_score = self.calculate_reversal_score(current_data, previous_data)
+            reversal_scores.append(
+                {'symbol': symbol, 'score': reversal_score, 'sentiment': current_data['summary']['sentiment'],
+                 'pcr': current_data['summary']['pcr']})
+
+        strength_scores.sort(key=lambda x: x['score'], reverse=True)
+        reversal_scores.sort(key=lambda x: x['score'], reverse=True)
+
+        top_strongest = strength_scores[:10]
+        top_weakest = strength_scores[-10:][::-1]
+        top_improving = reversal_scores[:10]
+        top_worsening = sorted(reversal_scores, key=lambda x: x['score'])[:10]  # Bottom 10 of reversal scores
+
+        socketio.emit('top_movers_update', {
+            'strongest': top_strongest,
+            'weakest': top_weakest,
+            'improving': top_improving,
+            'worsening': top_worsening
+        })
+        print("Emitted Top Movers update with 4 categories.")
 
     def fetch_and_process_symbol(self, sym: str):
         if sym in self.YFINANCE_SYMBOLS:
@@ -533,10 +559,9 @@ class NseBseAnalyzer:
     def process_and_emit_equity_data(self, symbol: str, sid: str):
         print(f"Processing equity data for {symbol} for client {sid}")
         try:
-            # Use cached data if available
-            if symbol in equity_data_cache:
+            if symbol in equity_data_cache and equity_data_cache[symbol].get('current'):
                 print(f"Using cached data for {symbol}")
-                equity_data = equity_data_cache[symbol]
+                equity_data = equity_data_cache[symbol]['current']
             else:
                 print(f"No cache, fetching live data for {symbol}")
                 equity_data = self._process_equity_data(symbol)

@@ -15,7 +15,6 @@
     <div class="container">
         <h1>NSE OCA PRO LIVE DASHBOARD</h1>
 
-        <!-- +++ CHANGE: Moved Ticker back inside the container, below the title +++ -->
         <div class="ticker-wrap">
             <div class="ticker">
                 <div class="ticker-item"><span class="ticker-symbol">NIFTY:</span><span id="ticker-nifty-value" class="ticker-value">-</span><span id="ticker-nifty-change" class="ticker-change">-</span></div>
@@ -42,18 +41,40 @@
 
         <div class="top-movers-container">
             <div class="movers-card">
-                <h3>Top 10 Gainers (Bullish)</h3>
+                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
+                <h3 class="gainer-title">Top 10 Strongest (Bullish)</h3>
                 <div class="table-container-small">
-                    <table id="top-gainers-table">
+                    <table id="top-strongest-table">
                         <thead><tr><th>#</th><th>Stock</th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
                         <tbody><tr><td colspan="5">Waiting for data...</td></tr></tbody>
                     </table>
                 </div>
             </div>
             <div class="movers-card">
-                <h3>Top 10 Losers (Bearish)</h3>
+                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
+                <h3 class="loser-title">Top 10 Weakest (Bearish)</h3>
                 <div class="table-container-small">
-                    <table id="top-losers-table">
+                    <table id="top-weakest-table">
+                        <thead><tr><th>#</th><th>Stock</th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
+                        <tbody><tr><td colspan="5">Waiting for data...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="movers-card">
+                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
+                <h3 class="gainer-title">Top 10 Getting Better (Potential Buys)</h3>
+                <div class="table-container-small">
+                    <table id="top-improving-table">
+                        <thead><tr><th>#</th><th>Stock</th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
+                        <tbody><tr><td colspan="5">Waiting for data...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="movers-card">
+                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
+                <h3 class="loser-title">Top 10 Getting Worsening (Potential Sells)</h3>
+                <div class="table-container-small">
+                    <table id="top-worsening-table">
                         <thead><tr><th>#</th><th>Stock</th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
                         <tbody><tr><td colspan="5">Waiting for data...</td></tr></tbody>
                     </table>
@@ -315,20 +336,32 @@
         });
 
         socket.on('top_movers_update', (data) => {
-            const gainersTbody = document.querySelector('#top-gainers-table tbody');
-            const losersTbody = document.querySelector('#top-losers-table tbody');
-            gainersTbody.innerHTML = '';
-            losersTbody.innerHTML = '';
+            const strongestTbody = document.querySelector('#top-strongest-table tbody');
+            const weakestTbody = document.querySelector('#top-weakest-table tbody');
+            const improvingTbody = document.querySelector('#top-improving-table tbody');
+            const worseningTbody = document.querySelector('#top-worsening-table tbody');
 
-            data.gainers.forEach((stock, index) => {
+            [strongestTbody, weakestTbody, improvingTbody, worseningTbody].forEach(tbody => tbody.innerHTML = '');
+
+            data.strongest.forEach((stock, index) => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
-                gainersTbody.appendChild(tr);
+                strongestTbody.appendChild(tr);
             });
-            data.losers.forEach((stock, index) => {
+            data.weakest.forEach((stock, index) => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
-                losersTbody.appendChild(tr);
+                weakestTbody.appendChild(tr);
+            });
+            data.improving.forEach((stock, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                improvingTbody.appendChild(tr);
+            });
+            data.worsening.forEach((stock, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                worseningTbody.appendChild(tr);
             });
         });
 
