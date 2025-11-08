@@ -15,6 +15,7 @@
     <div class="container">
         <h1>NSE OCA PRO LIVE DASHBOARD</h1>
 
+        <!-- +++ CHANGE: Moved Ticker back inside the container, below the title +++ -->
         <div class="ticker-wrap">
             <div class="ticker">
                 <div class="ticker-item"><span class="ticker-symbol">NIFTY:</span><span id="ticker-nifty-value" class="ticker-value">-</span><span id="ticker-nifty-change" class="ticker-change">-</span></div>
@@ -26,7 +27,7 @@
                 <div class="ticker-item"><span class="ticker-symbol">SILVER:</span><span id="ticker-silver-value" class="ticker-value">-</span><span id="ticker-silver-change" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">BTC-USD:</span><span id="ticker-btcusd-value" class="ticker-value">-</span><span id="ticker-btcusd-change" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">USD-INR:</span><span id="ticker-usdinr-value" class="ticker-value">-</span><span id="ticker-usdinr-change" class="ticker-change">-</span></div>
-                <!-- Cloned items for seamless loop -->
+                <!-- Cloned items -->
                 <div class="ticker-item"><span class="ticker-symbol">NIFTY:</span><span id="ticker-nifty-value-clone" class="ticker-value">-</span><span id="ticker-nifty-change-clone" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">FINNIFTY:</span><span id="ticker-finnifty-value-clone" class="ticker-value">-</span><span id="ticker-finnifty-change-clone" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">BANKNIFTY:</span><span id="ticker-banknifty-value-clone" class="ticker-value">-</span><span id="ticker-banknifty-change-clone" class="ticker-change">-</span></div>
@@ -36,6 +37,27 @@
                 <div class="ticker-item"><span class="ticker-symbol">SILVER:</span><span id="ticker-silver-value-clone" class="ticker-value">-</span><span id="ticker-silver-change-clone" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">BTC-USD:</span><span id="ticker-btcusd-value-clone" class="ticker-value">-</span><span id="ticker-btcusd-change-clone" class="ticker-change">-</span></div>
                 <div class="ticker-item"><span class="ticker-symbol">USD-INR:</span><span id="ticker-usdinr-value-clone" class="ticker-value">-</span><span id="ticker-usdinr-change-clone" class="ticker-change">-</span></div>
+            </div>
+        </div>
+
+        <div class="top-movers-container">
+            <div class="movers-card">
+                <h3>Top 10 Gainers (Bullish)</h3>
+                <div class="table-container-small">
+                    <table id="top-gainers-table">
+                        <thead><tr><th>#</th><th>Stock</th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
+                        <tbody><tr><td colspan="5">Waiting for data...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="movers-card">
+                <h3>Top 10 Losers (Bearish)</h3>
+                <div class="table-container-small">
+                    <table id="top-losers-table">
+                        <thead><tr><th>#</th><th>Stock</th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
+                        <tbody><tr><td colspan="5">Waiting for data...</td></tr></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -130,6 +152,20 @@
                         <tbody></tbody>
                     </table>
                 </div>
+                <h3 style="margin-top: 20px;">Equity Historical Data</h3>
+                <div class="history-controls">
+                    <label for="equity-history-date">Date:</label>
+                    <input type="date" id="equity-history-date" class="history-date-picker">
+                    <button onclick="loadHistoricalData('EQUITY')">Load History</button>
+                </div>
+                <div class="table-container">
+                    <table id="equity-historical-data-table">
+                        <thead>
+                            <tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>ΔPCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
             <div id="equity-loader" class="hidden" style="text-align: center; padding: 40px;">Loading...</div>
             <div id="equity-error" class="hidden" style="text-align: center; padding: 40px; color: #F44336;"></div>
@@ -191,29 +227,39 @@
                 const intradayPcr = item.intraday_pcr || 0.0;
                 const pcrChangeColor = pcrChange > 0 ? '#4CAF50' : (pcrChange < 0 ? '#F44336' : '#fff');
                 const intradayPcrColor = intradayPcr > 1.2 ? '#4CAF50' : (intradayPcr < 0.8 && intradayPcr != 0) ? '#F44336' : '#fff';
-                tr.innerHTML = `<td>${item.time}</td><td>${item.sp}</td><td>${item.value}</td><td>${item.call_oi}K</td><td>${item.put_oi}K</td><td>${item.pcr.toFixed(2)}</td><td style="color: ${pcrChangeColor};">${pcrChange > 0 ? '+' : ''}${pcrChange.toFixed(2)}</td><td style="color: ${intradayPcrColor};">${intradayPcr.toFixed(2)}</td><td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : '#FFC107'}">${item.sentiment}</td><td>${item.add_exit}</td>`;
+                tr.innerHTML = `<td>${item.time}</td><td>${item.sp}</td><td>${item.value}</td><td>${item.call_oi || '-'}K</td><td>${item.put_oi || '-'}K</td><td>${item.pcr.toFixed(2)}</td><td style="color: ${pcrChangeColor};">${pcrChange > 0 ? '+' : ''}${pcrChange.toFixed(2)}</td><td style="color: ${intradayPcrColor};">${intradayPcr.toFixed(2)}</td><td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : '#FFC107'}">${item.sentiment}</td><td>${item.add_exit || '-'}</td>`;
             }
             if (prepend) tbody.prepend(tr); else tbody.appendChild(tr);
         }
 
         async function loadHistoricalData(symbol) {
+            let effectiveSymbol = symbol;
+            if (symbol === 'EQUITY') {
+                effectiveSymbol = $('#equity-symbol-selector').val();
+                if (!effectiveSymbol) {
+                    alert("Please select a stock first.");
+                    return;
+                }
+            }
             const lower = symbol.toLowerCase();
             const dateInput = document.getElementById(`${lower}-history-date`);
             const historicalTbody = document.querySelector(`#${lower}-historical-data-table tbody`);
             if (!dateInput || !historicalTbody) return;
+
             const selectedDate = dateInput.value;
             if (!selectedDate) { alert("Please select a date."); return; }
+
             const colspan = SIMPLE_ASSETS.includes(symbol) ? 5 : 10;
             historicalTbody.innerHTML = `<tr><td colspan="${colspan}">Loading...</td></tr>`;
             try {
-                const response = await fetch(`/history/${symbol}/${selectedDate}`);
+                const response = await fetch(`/history/${effectiveSymbol}/${selectedDate}`);
                 const data = await response.json();
                 historicalTbody.innerHTML = '';
                 if (data.error || data.history.length === 0) {
                     historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">${data.error || 'No data found for this date.'}</td></tr>`;
                     return;
                 }
-                data.history.forEach(item => addHistoryItemToTable(historicalTbody, item, symbol, false));
+                data.history.forEach(item => addHistoryItemToTable(historicalTbody, item, effectiveSymbol, false));
             } catch (error) {
                 historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">Failed to load history. Check console for errors.</td></tr>`;
                 console.error("Error loading historical data:", error);
@@ -266,6 +312,24 @@
 
         socket.on('update_visits', (data) => {
             document.getElementById('visit-counter').textContent = data.count;
+        });
+
+        socket.on('top_movers_update', (data) => {
+            const gainersTbody = document.querySelector('#top-gainers-table tbody');
+            const losersTbody = document.querySelector('#top-losers-table tbody');
+            gainersTbody.innerHTML = '';
+            losersTbody.innerHTML = '';
+
+            data.gainers.forEach((stock, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                gainersTbody.appendChild(tr);
+            });
+            data.losers.forEach((stock, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                losersTbody.appendChild(tr);
+            });
         });
 
         socket.on('update', (data) => {

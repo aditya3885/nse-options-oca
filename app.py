@@ -22,6 +22,7 @@ import lxml
 import re
 import yfinance as yf
 import numpy as np
+import pytz
 
 requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning)
@@ -34,11 +35,12 @@ SEND_TEXT_UPDATES = True
 UPDATE_INTERVAL = 120
 MAX_HISTORY_ROWS_DB = 10000
 LIVE_DATA_INTERVAL = 15
+EQUITY_FETCH_INTERVAL = 300  # 5 minutes
 
 AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
 
 # --------------------------------------------------------------------------- #
-# WEB DASHBOARD
+# WEB DASHBOARD & GLOBAL VARS
 # --------------------------------------------------------------------------- #
 app = Flask(__name__, template_folder='.', static_folder='static')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
@@ -51,6 +53,7 @@ initial_underlying_values: Dict[str, Optional[float]] = {sym: None for sym in AU
 site_visits = 0
 
 fno_stocks_list = []
+equity_data_cache: Dict[str, Dict[str, Any]] = {}  # Cache for ranking
 
 
 @app.route('/')
@@ -141,6 +144,7 @@ class NseBseAnalyzer:
         self.url_symbols = "https://www.nseindia.com/api/underlying-information"
         self.db_path = 'nse_bse_data.db'
         self.conn: Optional[sqlite3.Connection] = None
+        self.ist_timezone = pytz.timezone('Asia/Kolkata')
 
         self.YFINANCE_SYMBOLS = ["SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
         self.YFINANCE_TICKER_MAP = {"SENSEX": "^BSESN", "INDIAVIX": "^INDIAVIX", "GOLD": "GOLDBEES.NS",
@@ -150,14 +154,15 @@ class NseBseAnalyzer:
         self.previous_data = {}
 
         self._init_db()
-        self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in AUTO_SYMBOLS}
-        self.previous_pcr: Dict[str, float] = {sym: 0.0 for sym in AUTO_SYMBOLS}
+        self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {}
+        self.previous_pcr: Dict[str, float] = {}
         self.get_stock_symbols()
         self._load_todays_history_from_db()
         self._load_initial_underlying_values()
         self._populate_initial_shared_chart_data()
         self.nse_tool = Nse()
         threading.Thread(target=self.run_loop, daemon=True).start()
+        threading.Thread(target=self.equity_fetcher_thread, daemon=True).start()
 
     def get_stock_symbols(self):
         global fno_stocks_list
@@ -195,8 +200,8 @@ class NseBseAnalyzer:
         try:
             cur = self.conn.cursor()
             ist_now = self._get_ist_time()
-            utc_start_str = ist_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(
-                datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            utc_start_str = ist_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(pytz.utc).strftime(
+                '%Y-%m-%d %H:%M:%S')
             all_symbols_to_load = AUTO_SYMBOLS + fno_stocks_list
             for sym in all_symbols_to_load:
                 if sym in self.TICKER_ONLY_SYMBOLS: continue
@@ -224,18 +229,32 @@ class NseBseAnalyzer:
         pass
 
     def _get_ist_time(self) -> datetime.datetime:
-        return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+        return datetime.datetime.now(self.ist_timezone)
 
     def _convert_utc_to_ist_display(self, utc_timestamp_str: str) -> str:
         try:
-            utc_dt = datetime.datetime.strptime(utc_timestamp_str, "%Y-%m-%d %H:%M:%S").replace(
-                tzinfo=datetime.timezone.utc)
-            return (utc_dt + datetime.timedelta(hours=5, minutes=30)).strftime("%H:%M")
+            utc_dt = datetime.datetime.strptime(utc_timestamp_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
+            return (utc_dt.astimezone(self.ist_timezone)).strftime("%H:%M")
         except (ValueError, TypeError):
             return "00:00"
 
     def clear_todays_history_db(self, sym: Optional[str] = None):
-        pass
+        if not self.conn: return
+        try:
+            cur = self.conn.cursor()
+            ist_now = self._get_ist_time()
+            utc_start_str = ist_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(pytz.utc).strftime(
+                '%Y-%m-%d %H:%M:%S')
+            if sym:
+                cur.execute("DELETE FROM history WHERE symbol = ? AND timestamp >= ?", (sym, utc_start_str))
+                if sym in todays_history: todays_history[sym] = []
+            else:
+                cur.execute("DELETE FROM history WHERE timestamp >= ?", (utc_start_str,))
+                for key in todays_history: todays_history[key] = []
+            self.conn.commit()
+            print(f"Cleared today's history for: {'All' if not sym else sym}")
+        except Exception as e:
+            print(f"Error clearing history: {e}")
 
     def run_loop(self):
         try:
@@ -250,6 +269,72 @@ class NseBseAnalyzer:
                 except Exception as e:
                     print(f"{sym} error during fetch and process: {e}")
             time.sleep(LIVE_DATA_INTERVAL)
+
+    def equity_fetcher_thread(self):
+        """A dedicated thread to fetch all F&O stocks data during market hours."""
+        print("Equity fetcher thread started.")
+        while not self.stop.is_set():
+            now_ist = self._get_ist_time()
+            market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+            market_close = now_ist.replace(hour=15, minute=45, second=0, microsecond=0)
+
+            if market_open <= now_ist <= market_close:
+                print(f"Market is open. Starting equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
+
+                for i, symbol in enumerate(fno_stocks_list):
+                    try:
+                        print(f"Fetching equity {i + 1}/{len(fno_stocks_list)}: {symbol}")
+                        equity_data = self._process_equity_data(symbol)
+                        if equity_data:
+                            equity_data_cache[symbol] = equity_data
+                            self._save_db(symbol, equity_data['summary'])
+                        time.sleep(1)
+                    except Exception as e:
+                        print(f"Error fetching {symbol} in equity loop: {e}")
+
+                self.rank_and_emit_movers()
+
+                print(f"Equity fetch cycle finished. Sleeping for {EQUITY_FETCH_INTERVAL} seconds.")
+                time.sleep(EQUITY_FETCH_INTERVAL)
+            else:
+                print(f"Market is closed. Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}")
+                time.sleep(60)
+
+    def calculate_score(self, data: Dict) -> float:
+        """Calculates a score for a stock based on its data."""
+        score = 0
+        summary = data.get('summary', {})
+        sentiment = summary.get('sentiment', 'Neutral')
+        pcr = summary.get('pcr', 1.0)
+        intraday_pcr = summary.get('intraday_pcr', 1.0)
+
+        sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2}
+        sentiment_score = sentiment_map.get(sentiment, 0)
+
+        score = (sentiment_score * 1.5) + (pcr * 1.0) + (intraday_pcr * 1.2)
+        return round(score, 2)
+
+    def rank_and_emit_movers(self):
+        """Ranks stocks based on score and emits the top/bottom 10."""
+        if not equity_data_cache:
+            return
+
+        scored_stocks = []
+        for symbol, data in equity_data_cache.items():
+            score = self.calculate_score(data)
+            scored_stocks.append({
+                'symbol': symbol,
+                'score': score,
+                'sentiment': data['summary']['sentiment'],
+                'pcr': data['summary']['pcr']
+            })
+
+        scored_stocks.sort(key=lambda x: x['score'], reverse=True)
+        top_gainers = scored_stocks[:10]
+        top_losers = scored_stocks[-10:][::-1]
+
+        socketio.emit('top_movers_update', {'gainers': top_gainers, 'losers': top_losers})
+        print("Emitted Top Movers update.")
 
     def fetch_and_process_symbol(self, sym: str):
         if sym in self.YFINANCE_SYMBOLS:
@@ -274,7 +359,6 @@ class NseBseAnalyzer:
                 shared_data[sym]['live_feed_summary'] = {'current_value': round(current_price, 4),
                                                          'change': round(change, 4),
                                                          'percentage_change': round(pct_change, 2)}
-
                 if sym not in self.TICKER_ONLY_SYMBOLS:
                     sentiment = "Mild Bearish" if change < 0 else "Mild Bullish" if change > 0 else "Neutral"
                     summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': round(change, 2),
@@ -431,6 +515,7 @@ class NseBseAnalyzer:
                     if sym not in todays_history: todays_history[sym] = []
                     todays_history[sym].insert(0, summary)
                     if sym not in self.YFINANCE_SYMBOLS:
+                        if sym not in self.pcr_graph_data: self.pcr_graph_data[sym] = []
                         self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
                         if len(self.pcr_graph_data[sym]) > 180: self.pcr_graph_data[sym].pop(0)
                         shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
@@ -448,7 +533,14 @@ class NseBseAnalyzer:
     def process_and_emit_equity_data(self, symbol: str, sid: str):
         print(f"Processing equity data for {symbol} for client {sid}")
         try:
-            equity_data = self._process_equity_data(symbol)
+            # Use cached data if available
+            if symbol in equity_data_cache:
+                print(f"Using cached data for {symbol}")
+                equity_data = equity_data_cache[symbol]
+            else:
+                print(f"No cache, fetching live data for {symbol}")
+                equity_data = self._process_equity_data(symbol)
+
             if equity_data:
                 socketio.emit('equity_data_update', {'symbol': symbol, 'data': equity_data}, to=sid)
             else:
@@ -566,7 +658,7 @@ class NseBseAnalyzer:
     def _save_db(self, sym, row):
         if not self.conn: return
         try:
-            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.datetime.now(pytz.utc).strftime("%Y-%m-%d %H:%M:%S")
             self.conn.execute(
                 "INSERT INTO history (timestamp, symbol, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, pcr_change, intraday_pcr) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (ts, sym, row.get('sp', 0), row.get('value', 0), row.get('call_oi', 0), row.get('put_oi', 0),
