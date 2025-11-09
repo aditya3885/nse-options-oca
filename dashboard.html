@@ -41,7 +41,6 @@
 
         <div class="top-movers-container">
             <div class="movers-card">
-                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
                 <h3 class="gainer-title">Top 10 Strongest (Bullish)</h3>
                 <div class="table-container-small">
                     <table id="top-strongest-table">
@@ -51,7 +50,6 @@
                 </div>
             </div>
             <div class="movers-card">
-                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
                 <h3 class="loser-title">Top 10 Weakest (Bearish)</h3>
                 <div class="table-container-small">
                     <table id="top-weakest-table">
@@ -61,7 +59,6 @@
                 </div>
             </div>
             <div class="movers-card">
-                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
                 <h3 class="gainer-title">Top 10 Getting Better (Potential Buys)</h3>
                 <div class="table-container-small">
                     <table id="top-improving-table">
@@ -71,7 +68,6 @@
                 </div>
             </div>
             <div class="movers-card">
-                <!-- +++ CHANGE: Applied new CSS class for coloring +++ -->
                 <h3 class="loser-title">Top 10 Getting Worsening (Potential Sells)</h3>
                 <div class="table-container-small">
                     <table id="top-worsening-table">
@@ -99,6 +95,7 @@
             <button class="tablink" onclick="openTab(event, 'EQUITY')" data-symbol="EQUITY">Equity</button>
             <button class="tablink" onclick="openTab(event, 'SENSEX')" data-symbol="SENSEX">SENSEX</button>
             <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button>
+            <button class="tablink" onclick="openTab(event, 'BHAVCOPY')" data-symbol="BHAVCOPY">Bhavcopy</button>
         </div>
 
         <div class="global-controls"><button class="clear-history-button" onclick="clearTodaysHistory(null)">Clear All Today's History</button></div>
@@ -192,6 +189,34 @@
             <div id="equity-error" class="hidden" style="text-align: center; padding: 40px; color: #F44336;"></div>
         </div>
 
+        <!-- +++ MODIFIED: Added history controls to Bhavcopy tab +++ -->
+        <div id="BHAVCOPY_tab" class="tabcontent">
+            <h3 id="bhavcopy-title">Bhavcopy Daily Scanner</h3>
+            <div class="bhavcopy-controls">
+                <button id="run-bhavcopy-btn">Run Scanner Manually</button>
+                <div class="history-controls" style="justify-content: center; margin-top: 15px;">
+                    <label for="bhavcopy-history-date">View History:</label>
+                    <input type="date" id="bhavcopy-history-date" class="history-date-picker">
+                    <button onclick="loadBhavcopyHistory()">Load History</button>
+                </div>
+            </div>
+            <p id="bhavcopy-status" style="text-align: center; margin-bottom: 20px;">Fetching latest Bhavcopy data...</p>
+            <div class="table-container">
+                <table id="bhavcopy-equity-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Close</th>
+                            <th>Volume</th>
+                            <th>% Change</th>
+                            <th>Delivery %</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
         <footer>@aditya_nse_bot | Updated: <span id="time">-</span> | Site Visits: <span id="visit-counter">-</span></footer>
     </div>
 
@@ -215,7 +240,7 @@
             document.querySelectorAll(".tablink").forEach(el => el.classList.remove("active"));
             document.getElementById(`${symbol}_tab`).style.display = "block";
             evt.currentTarget.classList.add("active");
-            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY") {
+            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY" && symbol !== "BHAVCOPY") {
                 updateCharts(symbol, shared_data_cache[symbol]);
             }
         }
@@ -313,6 +338,91 @@
             return card;
         }
 
+        function updateBhavcopyTables(data) {
+            const statusEl = document.getElementById('bhavcopy-status');
+            const titleEl = document.getElementById('bhavcopy-title');
+            const equityTbody = document.querySelector('#bhavcopy-equity-table tbody');
+
+            if (!data || !data.date) {
+                statusEl.textContent = 'No Bhavcopy data available yet. The scanner runs automatically after 9 PM IST or can be run manually.';
+                statusEl.style.color = '#fff';
+                return;
+            }
+
+            titleEl.textContent = `Bhavcopy Daily Scanner - Data for ${data.date}`;
+            statusEl.textContent = 'Latest data loaded successfully.';
+            statusEl.style.color = '#4CAF50';
+            equityTbody.innerHTML = '';
+
+            if (data.equities && data.equities.length > 0) {
+                data.equities.forEach(stock => {
+                    const tr = document.createElement('tr');
+                    const changeColor = stock['% Change'] >= 0 ? '#4CAF50' : '#F44336';
+                    tr.innerHTML = `
+                        <td>${stock.Symbol}</td>
+                        <td>${stock.Close.toLocaleString('en-IN')}</td>
+                        <td>${stock.Volume.toLocaleString('en-IN')}</td>
+                        <td style="color: ${changeColor}">${stock['% Change'].toFixed(2)}%</td>
+                        <td>${stock['Delivery %']}</td>
+                    `;
+                    equityTbody.appendChild(tr);
+                });
+            } else {
+                equityTbody.innerHTML = '<tr><td colspan="5">No equity data found for this date.</td></tr>';
+            }
+        }
+
+        // +++ NEW: Function to load historical Bhavcopy data from the new API +++
+        async function loadBhavcopyHistory() {
+            const dateInput = document.getElementById('bhavcopy-history-date');
+            const selectedDate = dateInput.value;
+            if (!selectedDate) {
+                alert("Please select a date.");
+                return;
+            }
+            const statusEl = document.getElementById('bhavcopy-status');
+            const equityTbody = document.querySelector('#bhavcopy-equity-table tbody');
+            statusEl.textContent = `Loading Bhavcopy for ${selectedDate}...`;
+            statusEl.style.color = '#FFC107'; // Yellow for loading
+            equityTbody.innerHTML = '<tr><td colspan="5">Loading...</td></tr>';
+
+            try {
+                const response = await fetch(`/api/bhavcopy/${selectedDate}`);
+                const data = await response.json();
+                if (data.error || !data.equities || data.equities.length === 0) {
+                    statusEl.textContent = data.error || `No Bhavcopy data found for ${selectedDate}.`;
+                    statusEl.style.color = '#F44336'; // Red for error/not found
+                    equityTbody.innerHTML = `<tr><td colspan="5">${data.error || `No Bhavcopy data found for ${selectedDate}.`}</td></tr>`;
+                } else {
+                    updateBhavcopyTables(data); // Reuse the existing update function
+                }
+            } catch (error) {
+                statusEl.textContent = 'Failed to load historical data.';
+                statusEl.style.color = '#F44336';
+                equityTbody.innerHTML = '<tr><td colspan="5">Failed to load data.</td></tr>';
+                console.error("Error loading historical bhavcopy:", error);
+            }
+        }
+
+        async function clearTodaysHistory(symbol) {
+            const confirmation = confirm(`Are you sure you want to clear ALL of today's history data for ${symbol || 'all symbols'}? This cannot be undone.`);
+            if (confirmation) {
+                try {
+                    const response = await fetch('/clear_todays_history', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbol: symbol })
+                    });
+                    const result = await response.json();
+                    alert(result.message);
+                    window.location.reload();
+                } catch (error) {
+                    alert('An error occurred while clearing history.');
+                    console.error(error);
+                }
+            }
+        }
+
         socket.on('initial_todays_history', (data) => {
             if (!data.history) return;
             Object.keys(data.history).forEach(sym => {
@@ -363,6 +473,11 @@
                 tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
                 worseningTbody.appendChild(tr);
             });
+        });
+
+        socket.on('bhavcopy_update', (data) => {
+            console.log("Received live Bhavcopy update:", data);
+            updateBhavcopyTables(data);
         });
 
         socket.on('update', (data) => {
@@ -557,6 +672,13 @@
                     equitySelector.trigger('change');
                 });
 
+            fetch('/api/bhavcopy')
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Fetched initial Bhavcopy data:", data);
+                    updateBhavcopyTables(data);
+                });
+
             document.getElementById('fetch-equity-btn').addEventListener('click', () => {
                 const selectedStock = equitySelector.val();
                 if (selectedStock) {
@@ -567,6 +689,13 @@
                 } else {
                     alert("Please select a stock first.");
                 }
+            });
+
+            document.getElementById('run-bhavcopy-btn').addEventListener('click', () => {
+                const statusEl = document.getElementById('bhavcopy-status');
+                statusEl.textContent = 'Manual scan triggered... Please wait.';
+                statusEl.style.color = '#FFC107';
+                socket.emit('run_bhavcopy_manually');
             });
         });
     </script>

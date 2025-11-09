@@ -4,6 +4,7 @@
 import eventlet
 
 eventlet.monkey_patch()
+
 # === 2. IMPORTS ===
 import datetime
 import time
@@ -23,9 +24,12 @@ import re
 import yfinance as yf
 import numpy as np
 import pytz
+from zipfile import ZipFile
+from io import BytesIO
 
 requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning)
+
 # --------------------------------------------------------------------------- #
 # CONFIG
 # --------------------------------------------------------------------------- #
@@ -56,6 +60,7 @@ fno_stocks_list = []
 equity_data_cache: Dict[str, Dict[str, Any]] = {}
 previous_improving_list = set()
 previous_worsening_list = set()
+latest_bhavcopy_data = {}
 
 
 @app.route('/')
@@ -65,6 +70,50 @@ def index(): return render_template('dashboard.html')
 @app.route('/api/stocks')
 def get_stocks():
     return jsonify(fno_stocks_list)
+
+
+@app.route('/api/bhavcopy')
+def get_bhavcopy_data():
+    return jsonify(latest_bhavcopy_data)
+
+
+# +++ NEW: API endpoint to get historical Bhavcopy data for a specific date +++
+@app.route('/api/bhavcopy/<date_str>')
+def get_historical_bhavcopy(date_str: str):
+    if not analyzer.conn:
+        return jsonify({"error": "Database connection not available."}), 500
+    try:
+        # Validate date format
+        datetime.datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "Invalid date format. Please use YYYY-MM-DD."}), 400
+
+    try:
+        cur = analyzer.conn.cursor()
+        cur.execute(
+            "SELECT symbol, close, volume, pct_change, delivery_pct FROM bhavcopy_data WHERE date = ?",
+            (date_str,)
+        )
+        rows = cur.fetchall()
+
+        if not rows:
+            return jsonify({"error": f"No Bhavcopy data found for {date_str}."}), 404
+
+        equities = []
+        for row in rows:
+            equities.append({
+                "Symbol": row[0],
+                "Close": row[1],
+                "Volume": row[2],
+                "% Change": row[3],
+                "Delivery %": row[4]
+            })
+
+        return jsonify({"equities": equities, "date": date_str})
+
+    except Exception as e:
+        print(f"Error fetching historical bhavcopy for {date_str}: {e}")
+        return jsonify({"error": "An internal error occurred while fetching data."}), 500
 
 
 @socketio.on('connect')
@@ -86,6 +135,23 @@ def handle_fetch_equity(data):
         print(f"Received request to fetch data for equity: {stock_symbol}")
         socketio.start_background_task(target=analyzer.process_and_emit_equity_data, symbol=stock_symbol,
                                        sid=request.sid)
+
+
+@socketio.on('run_bhavcopy_manually')
+def handle_manual_bhavcopy_run():
+    print("--- Manual Bhavcopy scan triggered by user ---")
+
+    def manual_scan_wrapper():
+        now_ist = analyzer._get_ist_time()
+        for i in range(1, 6):
+            target_day = now_ist - datetime.timedelta(days=i)
+            if analyzer.run_bhavcopy_for_date(target_day):
+                print(f"Manual Scan Success: Processed Bhavcopy for date: {target_day.strftime('%Y-%m-%d')}")
+                analyzer.send_telegram_message(
+                    f"✅ Manual Scan: Bhavcopy for {target_day.strftime('%d-%b-%Y')} processed and loaded.")
+                break
+
+    socketio.start_background_task(manual_scan_wrapper)
 
 
 def broadcast_live_update():
@@ -139,7 +205,9 @@ class NseBseAnalyzer:
         self.stop = threading.Event()
         self.session = requests.Session()
         self.nse_headers = {
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+            "Referer": "https://www.nseindia.com/", "Accept": "*/*"
+        }
         self.url_oc = "https://www.nseindia.com/option-chain"
         self.url_indices = "https://www.nseindia.com/api/option-chain-indices?symbol="
         self.url_equities = "https://www.nseindia.com/api/option-chain-equities?symbol="
@@ -155,13 +223,24 @@ class NseBseAnalyzer:
         self._init_db()
         self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {}
         self.previous_pcr: Dict[str, float] = {}
+
+        self.bhavcopy_running = threading.Event()
+
+        self.BHAVCOPY_INDICES = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK", "FINNIFTY": "NIFTY FIN SERVICE",
+                                 "SENSEX": "S&P BSE SENSEX"}
+        self.bhavcopy_last_run_date = None
+
         self.get_stock_symbols()
         self._load_todays_history_from_db()
         self._load_initial_underlying_values()
         self._populate_initial_shared_chart_data()
+        self._load_latest_bhavcopy_from_db()
+
         threading.Thread(target=self.run_loop, daemon=True).start()
         threading.Thread(target=self.equity_fetcher_thread, daemon=True).start()
-        self.send_telegram_message("✅ *NSE OCA PRO Bot is Online*\n\nMonitoring will begin during market hours.")
+        threading.Thread(target=self.bhavcopy_scanner_thread, daemon=True).start()
+
+        self.send_telegram_message("NSE OCA PRO Bot is Online\n\nMonitoring will begin during market hours.")
 
     def get_stock_symbols(self):
         global fno_stocks_list
@@ -182,9 +261,54 @@ class NseBseAnalyzer:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, symbol TEXT, sp REAL, value REAL, call_oi REAL, put_oi REAL, pcr REAL, sentiment TEXT, add_exit TEXT, pcr_change REAL, intraday_pcr REAL)")
+            self.conn.execute(
+                """CREATE TABLE IF NOT EXISTS bhavcopy_data (
+                    date TEXT,
+                    symbol TEXT,
+                    close REAL,
+                    volume INTEGER,
+                    pct_change REAL,
+                    delivery_pct TEXT,
+                    PRIMARY KEY (date, symbol)
+                )"""
+            )
             self.conn.commit()
         except Exception as e:
             print(f"DB error: {e}")
+
+    def _load_latest_bhavcopy_from_db(self):
+        global latest_bhavcopy_data
+        if not self.conn: return
+        try:
+            cur = self.conn.cursor()
+            cur.execute("SELECT date FROM bhavcopy_data ORDER BY date DESC LIMIT 1")
+            latest_date_row = cur.fetchone()
+            if not latest_date_row:
+                print("No previous Bhavcopy data found in the database.")
+                return
+
+            latest_date = latest_date_row[0]
+            cur.execute(
+                "SELECT symbol, close, volume, pct_change, delivery_pct FROM bhavcopy_data WHERE date = ?",
+                (latest_date,)
+            )
+            rows = cur.fetchall()
+            equities = []
+            for row in rows:
+                equities.append({
+                    "Symbol": row[0],
+                    "Close": row[1],
+                    "Volume": row[2],
+                    "% Change": row[3],
+                    "Delivery %": row[4]
+                })
+
+            if equities:
+                latest_bhavcopy_data = {"equities": equities, "date": latest_date}
+                print(f"Successfully loaded Bhavcopy data for {latest_date} from database.")
+
+        except Exception as e:
+            print(f"Error loading Bhavcopy from DB: {e}")
 
     def _populate_initial_shared_chart_data(self):
         with data_lock:
@@ -217,7 +341,7 @@ class NseBseAnalyzer:
                              'intraday_pcr': r[9] if r[9] is not None else 0.0})
                     if sym not in self.YFINANCE_SYMBOLS:
                         if todays_history.get(sym) and todays_history[sym]: self.previous_pcr[sym] = \
-                        todays_history[sym][0]['pcr']
+                            todays_history[sym][0]['pcr']
                         self.pcr_graph_data[sym] = [{"TIME": item['time'], "PCR": item['pcr']} for item in
                                                     reversed(todays_history.get(sym, []))]
         except Exception as e:
@@ -271,6 +395,11 @@ class NseBseAnalyzer:
     def equity_fetcher_thread(self):
         print("Equity fetcher thread started.")
         while not self.stop.is_set():
+            if self.bhavcopy_running.is_set():
+                print("Bhavcopy scan in progress, pausing equity fetcher for 10 seconds...")
+                time.sleep(10)
+                continue
+
             now_ist = self._get_ist_time()
             market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
             market_close = now_ist.replace(hour=15, minute=45, second=0, microsecond=0)
@@ -295,9 +424,153 @@ class NseBseAnalyzer:
                 print(f"Market is closed. Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}")
                 time.sleep(60)
 
+    # +++ MODIFIED: Smart scheduler for Bhavcopy scan +++
+    def bhavcopy_scanner_thread(self):
+        print("Bhavcopy scanner thread started.")
+        while not self.stop.is_set():
+            now_ist = self._get_ist_time()
+            # Run if it's 9 PM or later AND it hasn't run for today's date yet.
+            if now_ist.hour >= 21 and (self.bhavcopy_last_run_date != now_ist.date().isoformat()):
+                print(f"--- Triggering daily Bhavcopy scan for {now_ist.date().isoformat()} ---")
+
+                # Try to find Bhavcopy for the last 5 days, starting with today.
+                scan_successful = False
+                for i in range(5):
+                    target_day = now_ist - datetime.timedelta(days=i)
+                    if self.run_bhavcopy_for_date(target_day):
+                        print(f"Successfully processed Bhavcopy for date: {target_day.strftime('%Y-%m-%d')}")
+                        scan_successful = True
+                        break  # Exit loop on first success
+
+                # Mark today's scan as attempted, even if unsuccessful, to prevent re-running.
+                self.bhavcopy_last_run_date = now_ist.date().isoformat()
+
+                if scan_successful:
+                    self.send_telegram_message(f"✅ Daily Bhavcopy scan complete.")
+                else:
+                    print("Could not find any Bhavcopy in the last 5 days during the scheduled scan.")
+
+            # Check every 15 minutes
+            time.sleep(900)
+
+    def run_bhavcopy_for_date(self, date_obj):
+        global latest_bhavcopy_data
+        target_date_str = date_obj.strftime('%d%m%Y')
+        print(f"Attempting to download Bhavcopy for {target_date_str}...")
+
+        self.bhavcopy_running.set()
+        try:
+            bhav_session = requests.Session()
+            bhav_session.headers.update(self.nse_headers)
+
+            url_eq = f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{target_date_str}.csv"
+
+            success = False
+            try:
+                print(f"Trying Equity Bhavcopy: {url_eq}")
+                r = bhav_session.get(url_eq, timeout=40)
+                if r.status_code == 200:
+                    path_eq = f"Bhavcopy_Downloads/NSE/sec_bhavdata_full_{target_date_str}.csv"
+                    os.makedirs(os.path.dirname(path_eq), exist_ok=True)
+                    with open(path_eq, "wb") as f:
+                        f.write(r.content)
+                    print("Equity Bhavcopy downloaded")
+                    success = True
+                else:
+                    print(f"Equity Bhavcopy not found (status {r.status_code})")
+            except Exception as e:
+                print(f"Equity download failed: {e}")
+
+            if success:
+                print(f"Bhavcopy downloaded successfully for {target_date_str}.")
+                extracted_data = self._extract_bhavcopy_data_from_new_file(target_date_str)
+                if extracted_data and extracted_data.get("equities"):
+                    print(f"Successfully extracted {len(extracted_data['equities'])} records from Bhavcopy.")
+                    latest_bhavcopy_data = extracted_data
+                    print("Bhavcopy data extracted, stored in memory, and saved to DB.")
+                    socketio.emit('bhavcopy_update', latest_bhavcopy_data)
+                else:
+                    print("Bhavcopy downloaded, but no relevant equity data was extracted.")
+                return True
+            else:
+                print(f"No Bhavcopy found for {target_date_str}.")
+                return False
+        finally:
+            self.bhavcopy_running.clear()
+
+    def _extract_bhavcopy_data_from_new_file(self, target_date_str):
+        date_obj = datetime.datetime.strptime(target_date_str, '%d%m%Y')
+        file_path = f"Bhavcopy_Downloads/NSE/sec_bhavdata_full_{target_date_str}.csv"
+        db_date_str = date_obj.strftime('%Y-%m-%d')
+
+        if not os.path.exists(file_path):
+            print(f"File not found: {file_path}")
+            return None
+
+        try:
+            df = pd.read_csv(file_path, skipinitialspace=True)
+            df.columns = [col.strip().upper() for col in df.columns]
+            print(f"Bhavcopy columns found and standardized: {df.columns.tolist()}")
+
+            df['SYMBOL'] = df['SYMBOL'].str.strip()
+            df['SERIES'] = df['SERIES'].str.strip()
+
+            eq_df = df[df['SERIES'] == 'EQ'].copy()
+            print(f"Total rows in Bhavcopy: {len(df)}, Rows in 'EQ' series: {len(eq_df)}")
+
+            fno_df = eq_df[eq_df['SYMBOL'].isin(fno_stocks_list)].copy()
+            print(f"Found {len(fno_df)} F&O stocks in the Bhavcopy file.")
+
+            if fno_df.empty:
+                print("No F&O stocks were found in the Bhavcopy EQ series data. No data to extract.")
+                return None
+
+            equity_data = []
+            for index, r in fno_df.iterrows():
+                sym = r['SYMBOL']
+                prev_close = r['PREV_CLOSE']
+                close_price = r['CLOSE_PRICE']
+                volume = r['TTL_TRD_QNTY']
+
+                chg = ((close_price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 else 0
+                delivery_str = str(r.get('DELIV_PER', 'N/A')).strip()
+                delivery = delivery_str if delivery_str != '-' and delivery_str != 'N/A' else 'N/A'
+
+                equity_data.append({
+                    "Symbol": sym,
+                    "Close": round(close_price, 2),
+                    "Volume": int(volume),
+                    "% Change": round(chg, 2),
+                    "Delivery %": delivery
+                })
+
+            if self.conn and equity_data:
+                cur = self.conn.cursor()
+                for stock in equity_data:
+                    cur.execute(
+                        "INSERT OR REPLACE INTO bhavcopy_data (date, symbol, close, volume, pct_change, delivery_pct) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            db_date_str,
+                            stock['Symbol'],
+                            stock['Close'],
+                            stock['Volume'],
+                            stock['% Change'],
+                            str(stock['Delivery %'])
+                        )
+                    )
+                self.conn.commit()
+                print(f"Saved {len(equity_data)} bhavcopy records for {db_date_str} to the database.")
+
+            return {"equities": equity_data, "date": db_date_str}
+        except KeyError as e:
+            print(f"CRITICAL ERROR: A required column is missing in the Bhavcopy CSV: {e}. Data extraction failed.")
+            return None
+        except Exception as e:
+            print(f"Error reading new Bhavcopy file or saving to DB: {e}")
+            return None
+
     def send_telegram_message(self, message):
         if not SEND_TEXT_UPDATES or TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
-            print("Telegram notifications are disabled or token is not set. Skipping.")
             return
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -340,7 +613,7 @@ class NseBseAnalyzer:
         intraday_pcr_change = current_intraday_pcr - previous_intraday_pcr
 
         bullish_reversal_score = (1 / (current_pcr + 0.1)) * (current_intraday_pcr * 1.5) + (
-                    intraday_pcr_change * 10) + sentiment_score
+                intraday_pcr_change * 10) + sentiment_score
 
         return round(bullish_reversal_score, 2)
 
@@ -385,7 +658,7 @@ class NseBseAnalyzer:
         current_improving_symbols = {stock['symbol'] for stock in top_improving}
         if current_improving_symbols != previous_improving_list:
             print("Change detected in Potential Buys list. Sending Telegram notification.")
-            message = "📈 *Potential Buys Update (Getting Better)* 📈\n\n"
+            message = "Potential Buys Update (Getting Better)\n\n"
             for i, stock in enumerate(top_improving):
                 message += f"*{i + 1}. {stock['symbol']}* (Score: {stock['score']})\n"
             self.send_telegram_message(message)
@@ -394,7 +667,7 @@ class NseBseAnalyzer:
         current_worsening_symbols = {stock['symbol'] for stock in top_worsening}
         if current_worsening_symbols != previous_worsening_list:
             print("Change detected in Potential Sells list. Sending Telegram notification.")
-            message = "📉 *Potential Sells Update (Getting Worsening)* 📉\n\n"
+            message = "Potential Sells Update (Getting Worsening)\n\n"
             for i, stock in enumerate(top_worsening):
                 message += f"*{i + 1}. {stock['symbol']}* (Score: {stock['score']})\n"
             self.send_telegram_message(message)
@@ -412,7 +685,12 @@ class NseBseAnalyzer:
             if not ticker_str: return
             ticker = yf.Ticker(ticker_str)
             hist = ticker.history(period="2d")
-            if hist.empty or len(hist) < 2: return
+
+            if hist.empty or len(hist) < 2:
+                if sym == "GOLD":
+                    print(
+                        f"Warning: Could not fetch data for {sym} ($GOLDBEES.NS). It might be temporarily unavailable.")
+                return
 
             current_price, previous_close = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
             change = current_price - previous_close
@@ -564,9 +842,9 @@ class NseBseAnalyzer:
                 shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data.get(sym, [])
                 shared_data[sym]['live_feed_summary'] = {'current_value': int(round(underlying)),
                                                          'change': round(price_change, 2), 'percentage_change': round((
-                                                                                                                                  price_change / initial_underlying_values.get(
-                                                                                                                              sym,
-                                                                                                                              underlying)) * 100 if initial_underlying_values.get(
+                                                                                                                              price_change / initial_underlying_values.get(
+                                                                                                                          sym,
+                                                                                                                          underlying)) * 100 if initial_underlying_values.get(
                         sym) else 0, 2)}
 
             print(f"{sym} LIVE DATA UPDATED | SP: {sp} | PCR: {pcr}")
@@ -715,9 +993,7 @@ class NseBseAnalyzer:
     def _get_enhanced_sentiment(self, sym: str, base_sentiment: str) -> str:
         return base_sentiment
 
-    # +++ CHANGE: Implemented the send_alert function +++
     def send_alert(self, sym: str, row: Dict[str, Any]):
-        """Formats and sends a Telegram alert for the main indices."""
         try:
             with data_lock:
                 live_feed = shared_data.get(sym, {}).get('live_feed_summary', {})
@@ -728,7 +1004,7 @@ class NseBseAnalyzer:
             change_str = f"+{change:.2f}" if change >= 0 else f"{change:.2f}"
             pct_str = f"+{pct_change:.2f}%" if pct_change >= 0 else f"{pct_change:.2f}%"
 
-            message = f"🔔 *{sym.upper()} Update* 🔔\n\n"
+            message = f"* {sym.upper()} Update*\n\n"
             message += f"• *Value:* {row.get('value', 'N/A')}\n"
             message += f"• *Change:* {change_str} ({pct_str})\n"
             message += f"• *PCR:* {row.get('pcr', 'N/A')}\n"

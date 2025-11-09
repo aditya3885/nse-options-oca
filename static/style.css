@@ -73,7 +73,6 @@ h1 { text-align: center; margin-bottom: 20px; color: #4CAF50; }
     font-size: 1.2em;
 }
 
-/* +++ CHANGE: Replaced :first-child/:last-child with specific classes for better control +++ */
 .gainer-title {
     color: #4CAF50;
 }
@@ -267,4 +266,26 @@ footer { text-align: center; margin-top: 30px; font-size: 12px; color: #888; }
 .select2-container--default .select2-results__option--highlighted[aria-selected] {
     background-color: #4CAF50;
     color: #fff;
+}
+
+/* +++ ADDITION: Styles for Bhavcopy manual run button +++ */
+.bhavcopy-controls {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+#run-bhavcopy-btn {
+    padding: 10px 20px;
+    font-size: 1em;
+    font-weight: bold;
+    color: #fff;
+    background-color: #007bff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#run-bhavcopy-btn:hover {
+    background-color: #0056b3;
 }
