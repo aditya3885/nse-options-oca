@@ -48,6 +48,17 @@ h1 { text-align: center; margin-bottom: 20px; color: #4CAF50; }
     font-size: 0.95em;
     font-weight: 500;
 }
+/* ADDED: Styles for dynamically added color classes */
+.ticker-change.positive {
+    color: #4CAF50; /* Green */
+}
+.ticker-change.negative {
+    color: #F44336; /* Red */
+}
+.ticker-change.neutral {
+    color: #fff; /* White or default */
+}
+
 @keyframes ticker-scroll {
     0% { transform: translateX(0); }
     100% { transform: translateX(-50%); }
@@ -275,6 +286,14 @@ footer { text-align: center; margin-top: 30px; font-size: 12px; color: #888; }
 .bhavcopy-controls {
     text-align: center;
     margin-bottom: 20px;
+    display: flex; /* Make it a flex container */
+    flex-wrap: wrap; /* Allow items to wrap */
+    justify-content: center; /* Center items horizontally */
+    align-items: center; /* Center items vertically */
+    gap: 15px; /* Space between items */
+    padding: 15px;
+    background-color: #282828;
+    border-radius: 12px;
 }
 
 #run-bhavcopy-btn {
@@ -291,4 +310,134 @@ footer { text-align: center; margin-top: 30px; font-size: 12px; color: #888; }
 
 #run-bhavcopy-btn:hover {
     background-color: #0056b3;
+}
+
+/* ADDED: Styles for positive, negative, and neutral text */
+.positive {
+    color: #4CAF50; /* Green */
+}
+
+.negative {
+    color: #F44336; /* Red */
+}
+
+.neutral {
+    color: #fff; /* White or default */
+}
+
+/* ADDED: Styles for no data messages */
+.no-data-message {
+    color: #FFC107; /* Yellow */
+    text-align: center;
+    padding: 15px;
+    font-style: italic;
+}
+
+/* Adjust table headers for smaller tables in movers-card */
+.movers-card th {
+    font-size: 0.85em;
+    padding: 8px;
+}
+
+.movers-card td {
+    font-size: 0.85em;
+    padding: 8px;
+}
+
+/* Adjustments for strategy tables */
+#strategy-results-container h4 {
+    border-bottom: 1px solid #444;
+    padding-bottom: 5px;
+    margin-bottom: 15px;
+}
+
+#strategy-results-container .table-container {
+    margin-bottom: 30px;
+}
+
+#strategy-results-container table th,
+#strategy-results-container table td {
+    white-space: normal; /* Allow text to wrap within cells */
+    word-wrap: break-word; /* Break long words */
+    text-align: left; /* Align text left for better readability in strategy tables */
+}
+
+/* Specific width adjustments for strategy tables if needed */
+#strategy-fddt-table th:nth-child(1), #strategy-zdft-table th:nth-child(1),
+#strategy-bdgp-table th:nth-child(1), #strategy-var7-table th:nth-child(1),
+#strategy-hba21-table th:nth-child(1), #strategy-oimt-table th:nth-child(1),
+#strategy-vssb-table th:nth-child(1), #strategy-ooad-table th:nth-child(1),
+#strategy-caadt-table th:nth-child(1) {
+    width: 15%; /* Symbol column */
+}
+
+#strategy-fddt-table th:nth-child(2), #strategy-hba21-table th:nth-child(2),
+#strategy-ooad-table th:nth-child(2), #strategy-caadt-table th:nth-child(2) {
+    width: 85%; /* Signal column */
+}
+
+/* Further adjustments for multi-column strategy tables */
+#strategy-zdft-table th:nth-child(2), #strategy-zdft-table th:nth-child(3) { width: 25%; }
+#strategy-zdft-table th:nth-child(4) { width: 35%; }
+
+#strategy-bdgp-table th:nth-child(2), #strategy-bdgp-table th:nth-child(3),
+#strategy-bdgp-table th:nth-child(4) { width: 12%; }
+#strategy-bdgp-table th:nth-child(5), #strategy-bdgp-table th:nth-child(6) { width: 15%; }
+#strategy-bdgp-table th:nth-child(7) { width: 18%; }
+
+#strategy-var7-table th:nth-child(2), #strategy-var7-table th:nth-child(3),
+#strategy-var7-table th:nth-child(4), #strategy-var7-table th:nth-child(5) { width: 15%; }
+#strategy-var7-table th:nth-child(6) { width: 25%; }
+
+#strategy-oimt-table th:nth-child(2), #strategy-oimt-table th:nth-child(3) { width: 15%; }
+#strategy-oimt-table th:nth-child(4) { width: 25%; }
+#strategy-oimt-table th:nth-child(5) { width: 30%; }
+
+#strategy-vssb-table th:nth-child(2), #strategy-vssb-table th:nth-child(3),
+#strategy-vssb-table th:nth-child(4), #strategy-vssb-table th:nth-child(5),
+#strategy-vssb-table th:nth-child(6) { width: 13%; }
+#strategy-vssb-table th:nth-child(7) { width: 20%; }
+
+#strategy-pivot-table th {
+    width: 12.5%; /* 8 columns */
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 768px) {
+    .container { margin: 10px auto; padding: 10px; }
+    h1 { font-size: 1.8em; margin-bottom: 15px; }
+    .ticker-item { font-size: 0.9em; padding: 0 1rem; }
+    .top-movers-container { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: 1fr; }
+    .tabs { margin: 20px 0; }
+    .tablink { padding: 10px 15px; margin: 0 5px; font-size: 13px; }
+    .tabcontent { padding: 15px; }
+    .chart-grid { grid-template-columns: 1fr; }
+    .chart-container { height: 300px; }
+    .history-controls { flex-direction: column; align-items: stretch; }
+    .history-controls button { margin-left: 0; margin-top: 10px; }
+    .global-controls { padding: 10px; }
+    .clear-history-button { padding: 10px 20px; font-size: 14px; }
+    .pulse-row > span { width: 40px; }
+    .pulse-labels { padding: 0 50px; font-size: 0.8em; }
+
+    #strategy-results-container table th,
+    #strategy-results-container table td {
+        font-size: 0.75em;
+        padding: 5px;
+    }
+
+    /* Reset width for smaller screens, let content flow */
+    #strategy-fddt-table th:nth-child(1), #strategy-zdft-table th:nth-child(1),
+    #strategy-bdgp-table th:nth-child(1), #strategy-var7-table th:nth-child(1),
+    #strategy-hba21-table th:nth-child(1), #strategy-oimt-table th:nth-child(1),
+    #strategy-vssb-table th:nth-child(1), #strategy-ooad-table th:nth-child(1),
+    #strategy-caadt-table th:nth-child(1),
+    #strategy-fddt-table th:nth-child(2), #strategy-hba21-table th:nth-child(2),
+    #strategy-ooad-table th:nth-child(2), #strategy-caadt-table th:nth-child(2),
+    #strategy-zdft-table th, #strategy-bdgp-table th,
+    #strategy-var7-table th, #strategy-oimt-table th,
+    #strategy-vssb-table th, #strategy-pivot-table th {
+        width: auto !important;
+    }
 }

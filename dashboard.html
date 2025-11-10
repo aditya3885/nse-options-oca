@@ -7,9 +7,13 @@
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- ADDED: Chart.js DataZoom Plugin for better chart interaction -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <!-- ADDED: Moment.js for date formatting -->
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.1/moment.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -95,7 +99,8 @@
             <button class="tablink" onclick="openTab(event, 'EQUITY')" data-symbol="EQUITY">Equity</button>
             <button class="tablink" onclick="openTab(event, 'SENSEX')" data-symbol="SENSEX">SENSEX</button>
             <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button>
-            <button class="tablink" onclick="openTab(event, 'BHAVCOPY')" data-symbol="BHAVCOPY">Bhavcopy</button>
+            <button class="tablink" onclick="openTab(event, 'BHAVCOPY_EQUITIES')" data-symbol="BHAVCOPY_EQUITIES">Bhavcopy (F&O)</button>
+            <button class="tablink" onclick="openTab(event, 'BHAVCOPY_INDICES')" data-symbol="BHAVCOPY_INDICES">Bhavcopy (Indices)</button>
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY_STRATEGIES')" data-symbol="BHAVCOPY_STRATEGIES">Bhavcopy Strategies</button>
         </div>
 
@@ -190,18 +195,18 @@
             <div id="equity-error" class="hidden" style="text-align: center; padding: 40px; color: #F44336;"></div>
         </div>
 
-        <!-- +++ MODIFIED: Added history controls to Bhavcopy tab +++ -->
-        <div id="BHAVCOPY_tab" class="tabcontent">
-            <h3 id="bhavcopy-title">Bhavcopy Daily Scanner</h3>
+        <!-- NEW: BHAVCOPY F&O EQUITIES TAB -->
+        <div id="BHAVCOPY_EQUITIES_tab" class="tabcontent">
+            <h3 id="bhavcopy-equity-title">Bhavcopy Daily Scan - F&O Equities (<span id="bhavcopy-equity-date">Loading...</span>)</h3>
             <div class="bhavcopy-controls">
-                <button id="run-bhavcopy-btn">Run Scanner Manually</button>
-                <div class="history-controls" style="justify-content: center; margin-top: 15px;">
-                    <label for="bhavcopy-history-date">View History:</label>
-                    <input type="date" id="bhavcopy-history-date" class="history-date-picker">
-                    <button onclick="loadBhavcopyHistory()">Load History</button>
+                <button id="run-bhavcopy-btn">Run Manual Scan</button>
+                <div class="history-controls" style="justify-content: center;">
+                    <label for="bhavcopy-equity-history-date">View Historical Date:</label>
+                    <input type="date" id="bhavcopy-equity-history-date" class="history-date-picker">
+                    <button onclick="loadBhavcopyHistory('equities')">Load F&O History</button>
                 </div>
             </div>
-            <p id="bhavcopy-status" style="text-align: center; margin-bottom: 20px;">Fetching latest Bhavcopy data...</p>
+            <p id="bhavcopy-equity-status" style="text-align: center; margin-bottom: 20px;">Fetching latest Bhavcopy F&O equities data...</p>
             <div class="table-container">
                 <table id="bhavcopy-equity-table">
                     <thead>
@@ -211,14 +216,49 @@
                             <th>Volume</th>
                             <th>% Change</th>
                             <th>Delivery %</th>
+                            <th>Open</th>
+                            <th>High</th>
+                            <th>Low</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 </table>
+                <p id="no-bhavcopy-equity-data" class="no-data-message" style="display: none;">No F&O equity Bhavcopy data available for this date.</p>
             </div>
         </div>
 
-        <!-- +++ NEW: Bhavcopy Strategies Tab +++ -->
+        <!-- NEW: BHAVCOPY INDICES TAB -->
+        <div id="BHAVCOPY_INDICES_tab" class="tabcontent">
+            <h3 id="bhavcopy-indices-title">Bhavcopy Daily Scan - Indices (<span id="bhavcopy-indices-date">Loading...</span>)</h3>
+            <div class="bhavcopy-controls">
+                <!-- Manual scan button is shared, so not duplicated here. -->
+                <div class="history-controls" style="justify-content: center;">
+                    <label for="bhavcopy-indices-history-date">View Historical Date:</label>
+                    <input type="date" id="bhavcopy-indices-history-date" class="history-date-picker">
+                    <button onclick="loadBhavcopyHistory('indices')">Load Indices History</button>
+                </div>
+            </div>
+            <p id="bhavcopy-indices-status" style="text-align: center; margin-bottom: 20px;">Fetching latest Bhavcopy indices data...</p>
+            <div class="table-container">
+                <table id="bhavcopy-indices-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Close</th>
+                            <th>% Change</th>
+                            <th>Open</th>
+                            <th>High</th>
+                            <th>Low</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+                <p id="no-bhavcopy-indices-data" class="no-data-message" style="display: none;">No index Bhavcopy data available for this date.</p>
+            </div>
+        </div>
+
+
+        <!-- NEW: Bhavcopy Strategies Tab -->
         <div id="BHAVCOPY_STRATEGIES_tab" class="tabcontent">
             <h3 style="margin-top: 20px;">Bhavcopy Derived Trading Strategies</h3>
             <p>Select a date to analyze Bhavcopy data for potential trading signals. The strategies below are generated based on the selected day's data.</p>
@@ -231,48 +271,78 @@
             <div id="strategy-results-container">
                 <p id="strategy-status" style="text-align: center; margin-bottom: 20px;">Select a date and click "Analyze Strategies" to see results.</p>
 
-                <h4>1. Price Action: Breakouts & Breakdowns</h4>
+                <h4>1. FII-DII Delivery Divergence Trap (FDDT)</h4>
                 <div class="table-container">
-                    <table id="strategy-breakouts-table">
-                        <thead><tr><th>Symbol</th><th>Close</th><th>% Change</th><th>Volume</th><th>Signal</th></tr></thead>
-                        <tbody><tr><td colspan="5">No data available.</td></tr></tbody>
+                    <table id="strategy-fddt-table">
+                        <thead><tr><th>Symbol</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="2">No data available. (Requires FII/DII data integration)</td></tr></tbody>
                     </table>
                 </div>
 
-                <h4>2. Volume Analysis: High Volume Movers</h4>
+                <h4>2. Zero-Delivery Future Roll Trap (ZDFT)</h4>
                 <div class="table-container">
-                    <table id="strategy-volume-table">
-                        <thead><tr><th>Symbol</th><th>Close</th><th>% Change</th><th>Volume</th><th>Signal</th></tr></thead>
-                        <tbody><tr><td colspan="5">No data available.</td></tr></tbody>
+                    <table id="strategy-zdft-table">
+                        <thead><tr><th>Symbol</th><th>Near Month Delivery %</th><th>Next Month OI Increase %</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="4">No data available.</td></tr></tbody>
                     </table>
                 </div>
 
-                <h4>3. Delivery-Based Buying/Selling (Last 5-8 Days Trend)</h4>
-                <p>This section analyzes the trend of delivery percentage over the last few days to identify potential accumulation or distribution.</p>
+                <h4>3. Block-Deal Ghost Pump (BDGP)</h4>
                 <div class="table-container">
-                    <table id="strategy-delivery-table">
-                        <thead><tr><th>Symbol</th><th>Latest Close</th><th>Latest Delivery %</th><th>Average Delivery % (5-day)</th><th>Signal</th></tr></thead>
-                        <tbody><tr><td colspan="5">No data available.</td></tr></tbody>
+                    <table id="strategy-bdgp-table">
+                        <thead><tr><th>Symbol</th><th>Block Deal Price</th><th>Previous Close</th><th>Open Price</th><th>Block Discount %</th><th>Open Gap Up %</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="7">No data available.</td></tr></tbody>
                     </table>
                 </div>
 
-                <h4>4. Gaps Analysis</h4>
-                <p>Stocks that opened with significant gaps (up or down) from the previous day's close.</p>
+                <h4>4. VWAP Anchor Reversion (VAR-7)</h4>
                 <div class="table-container">
-                    <table id="strategy-gaps-table">
-                        <thead><tr><th>Symbol</th><th>Open</th><th>Close</th><th>Prev. Close</th><th>Gap %</th><th>Signal</th></tr></thead>
+                    <table id="strategy-var7-table">
+                        <thead><tr><th>Symbol</th><th>Close Price</th><th>VWAP</th><th>Close vs VWAP %</th><th>Delivery %</th><th>Signal</th></tr></thead>
                         <tbody><tr><td colspan="6">No data available.</td></tr></tbody>
                     </table>
                 </div>
 
-                <h4>5. Support & Resistance (Daily Pivots)</h4>
-                <p>Calculated daily pivot points, support, and resistance levels based on the selected day's OHLCC data.</p>
+                <h4>5. Hidden Bonus Arbitrage (HBA-21)</h4>
                 <div class="table-container">
-                    <table id="strategy-pivot-table">
-                        <thead><tr><th>Symbol</th><th>Pivot</th><th>R1</th><th>R2</th><th>R3</th><th>S1</th><th>S2</th><th>S3</th></tr></thead>
-                        <tbody><tr><td colspan="8">No data available.</td></tr></tbody>
+                    <table id="strategy-hba21-table">
+                        <thead><tr><th>Symbol</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="2">No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)</td></tr></tbody>
                     </table>
                 </div>
+
+                <h4>6. OI Momentum Trap (Long Buildup vs. Short Covering Detector)</h4>
+                <div class="table-container">
+                    <table id="strategy-oimt-table">
+                        <thead><tr><th>Symbol</th><th>Price Change %</th><th>OI Change</th><th>Signal Type</th><th>Institutional Conviction (Delivery > 60%)</th></tr></thead>
+                        <tbody><tr><td colspan="5">No data available.</td></tr></tbody>
+                    </table>
+                </div>
+
+                <h4>7. Volume Surge Scanner for Swing Breakouts</h4>
+                <div class="table-container">
+                    <table id="strategy-vssb-table">
+                        <thead><tr><th>Symbol</th><th>Today's Volume</th><th>10-Day Avg Volume</th><th>Volume Multiple</th><th>Delivery %</th><th>Price Change %</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="7">No data available.</td></tr></tbody>
+                    </table>
+                </div>
+
+                <h4>8. Options OI Anomaly for Directional Bets</h4>
+                <div class="table-container">
+                    <table id="strategy-ooad-table">
+                        <thead><tr><th>Symbol</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="2">No data available. (Requires detailed Options Bhavcopy parsing and storage)</td></tr></tbody>
+                    </table>
+                </div>
+
+                <h4>9. Corporate Action Arbitrage via Delivery Traps</h4>
+                <div class="table-container">
+                    <table id="strategy-caadt-table">
+                        <thead><tr><th>Symbol</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="2">No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)</td></tr></tbody>
+                    </table>
+                </div>
+
             </div>
         </div>
 
@@ -291,48 +361,191 @@
 
     <script>
         const socket = io();
-        const charts = {};
+        const chartInstances = {}; // Object to store Chart.js instances
         const shared_data_cache = {};
         const ALL_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"];
         const OI_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY"];
         const SIMPLE_ASSETS = ["SENSEX", "INDIAVIX"];
 
         function openTab(evt, symbol) {
+            console.log("openTab called for:", symbol); // Debugging
             document.querySelectorAll(".tabcontent").forEach(el => el.style.display = "none");
             document.querySelectorAll(".tablink").forEach(el => el.classList.remove("active"));
             document.getElementById(`${symbol}_tab`).style.display = "block";
             evt.currentTarget.classList.add("active");
-            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY" && symbol !== "BHAVCOPY" && symbol !== "BHAVCOPY_STRATEGIES") {
+
+            // Only update charts for non-simple assets and non-bhavcopy tabs
+            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY" && !symbol.startsWith("BHAVCOPY")) {
                 updateCharts(symbol, shared_data_cache[symbol]);
+            }
+
+            // MODIFIED: Ensure initial bhavcopy data loads when tab is opened
+            if (symbol === "BHAVCOPY_EQUITIES" || symbol === "BHAVCOPY_INDICES") {
+                console.log("Loading initial Bhavcopy data for tab:", symbol); // Debugging
+                loadInitialBhavcopyData();
+            }
+            // If strategies tab is opened, pre-fill date and show current status
+            if (symbol === "BHAVCOPY_STRATEGIES") {
+                const today = moment().format('YYYY-MM-DD'); // Use moment for today's date
+                document.getElementById('strategy-bhavcopy-date').value = today;
+                document.getElementById('strategy-status').textContent = 'Select a date and click "Analyze Strategies" to see results.';
+                document.getElementById('strategy-status').style.color = ''; // Reset color
+                // Clear strategy tables
+                document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
+                    const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
+                    tbody.innerHTML = `<tr><td colspan="${colspan}">No data available.</td></tr>`;
+                });
             }
         }
 
-        function renderChart(chartId, chartType, labels, data, label, backgroundColor, borderColor) {
-            const ctx = document.getElementById(chartId);
-            if (!ctx) return;
-            if (charts[chartId]) charts[chartId].destroy();
-            charts[chartId] = new Chart(ctx, {
-                type: chartType,
-                data: { labels: labels, datasets: [{ label: label, data: data, backgroundColor: backgroundColor, borderColor: borderColor, borderWidth: 1, fill: chartType === 'line' ? false : true, tension: chartType === 'line' ? 0.4 : 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, labels: { color: '#bbb' } } }, scales: { x: { ticks: { color: '#bbb' }, grid: { color: 'rgba(255,255,255,0.1)' } }, y: { beginAtZero: false, ticks: { color: '#bbb' }, grid: { color: 'rgba(255,255,255,0.1)' } } } }
+        // NEW: Helper function to render or update a Chart.js chart
+        function renderChart(canvasId, type, labels, data, label, backgroundColor, borderColor, options = {}) {
+            const ctx = document.getElementById(canvasId);
+            if (!ctx) return; // Ensure canvas exists
+
+            // Destroy existing chart instance if it exists
+            if (chartInstances[canvasId]) {
+                chartInstances[canvasId].destroy();
+            }
+
+            // Default options for better readability
+            const defaultOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#ccc'
+                        }
+                    },
+                    zoom: { // Enable zoom plugin
+                        zoom: {
+                            wheel: {
+                                enabled: true,
+                            },
+                            pinch: {
+                                enabled: true
+                            },
+                            mode: 'x',
+                        },
+                        pan: {
+                            enabled: true,
+                            mode: 'x',
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color: '#ccc',
+                        },
+                        grid: {
+                            color: 'rgba(200, 200, 200, 0.1)',
+                        }
+                    },
+                    y: {
+                        ticks: {
+                            color: '#ccc',
+                        },
+                        grid: {
+                            color: 'rgba(200, 200, 200, 0.1)',
+                        }
+                    }
+                },
+                animation: {
+                    duration: 0 // Disable animation for faster updates
+                },
+                elements: {
+                    line: {
+                        tension: 0.3 // Smooth lines
+                    }
+                }
+            };
+
+            // Merge default options with any custom options provided
+            const mergedOptions = { ...defaultOptions, ...options };
+
+            chartInstances[canvasId] = new Chart(ctx, {
+                type: type,
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: label,
+                        data: data,
+                        backgroundColor: backgroundColor,
+                        borderColor: borderColor,
+                        borderWidth: 1,
+                        fill: type === 'line' ? true : false, // Fill area under line chart
+                    }]
+                },
+                options: mergedOptions
             });
+        }
+
+
+        // UPDATED: updateCharts function to render actual charts
+        function updateCharts(symbol, liveData) {
+            console.log(`Updating charts for ${symbol}`, liveData); // Debugging
+
+            const lower = symbol.toLowerCase();
+
+            // PCR Chart
+            const pcrLabels = liveData.pcr_chart_data.map(d => d.TIME);
+            const pcrData = liveData.pcr_chart_data.map(d => d.PCR);
+            renderChart(`${lower}-pcr-chart`, 'line', pcrLabels, pcrData, `${symbol} PCR`, 'rgba(75, 192, 192, 0.2)', 'rgba(75, 192, 192, 1)');
+
+            // Max Pain Chart (Bar Chart)
+            const mpLabels = liveData.max_pain_chart_data.map(d => d.StrikePrice);
+            const mpData = liveData.max_pain_chart_data.map(d => d.TotalMaxPain);
+            renderChart(`${lower}-max-pain-chart`, 'bar', mpLabels, mpData, `${symbol} Max Pain`, 'rgba(255, 159, 64, 0.5)', 'rgba(255, 159, 64, 1)');
+
+            // CE OI Chart (Bar Chart)
+            const ceLabels = liveData.ce_oi_chart_data.map(d => d.strikePrice);
+            const ceData = liveData.ce_oi_chart_data.map(d => d.openInterest);
+            renderChart(`${lower}-ce-oi-chart`, 'bar', ceLabels, ceData, `${symbol} CE OI`, 'rgba(255, 99, 132, 0.5)', 'rgba(255, 99, 132, 1)');
+
+            // PE OI Chart (Bar Chart)
+            const peLabels = liveData.pe_oi_chart_data.map(d => d.strikePrice);
+            const peData = liveData.pe_oi_chart_data.map(d => d.openInterest);
+            renderChart(`${lower}-pe-oi-chart`, 'bar', peLabels, peData, `${symbol} PE OI`, 'rgba(54, 162, 235, 0.5)', 'rgba(54, 162, 235, 1)');
+        }
+
+        // ADDED: Helper function to format numbers for tables
+        function formatNumber(num, decimals = 2) {
+            if (num === null || num === undefined || num === 'N/A' || num === '-' || isNaN(num)) return 'N/A';
+            if (typeof num === 'string' && num.includes('%')) return num; // Already formatted delivery %
+            // Handle cases where num might be a string that represents a number
+            const parsedNum = parseFloat(num);
+            if (!isNaN(parsedNum)) {
+                return parsedNum.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+            }
+            return num; // Return as is if not a number
+        }
+
+        // ADDED/MODIFIED: Helper function to get color for percentage change - FIX FOR DOMException
+        function getChangeColorClass(pctChange) {
+            if (pctChange === null || pctChange === undefined || isNaN(pctChange)) return 'neutral'; // Returns 'neutral'
+            if (pctChange > 0) return 'positive';
+            if (pctChange < 0) return 'negative';
+            return 'neutral'; // Returns 'neutral' if pctChange is 0
         }
 
         function addHistoryItemToTable(tbody, item, symbol, prepend = false) {
             const tr = document.createElement('tr');
             if (SIMPLE_ASSETS.includes(symbol)) {
-                tr.innerHTML = `<td>${item.time}</td><td>${item.value.toLocaleString('en-IN')}</td><td style="color: ${item.sp >= 0 ? '#4CAF50' : '#F44336'}">${item.sp >= 0 ? '+' : ''}${item.sp.toFixed(2)}</td><td style="color: ${item.pcr >= 0 ? '#4CAF50' : '#F44336'}">${item.pcr >= 0 ? '+' : ''}${item.pcr.toFixed(2)}%</td><td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : '#FFC107'}">${item.sentiment}</td>`;
+                tr.innerHTML = `<td>${item.time}</td><td>${formatNumber(item.value)}</td><td class="${getChangeColorClass(item.sp)}">${item.sp >= 0 ? '+' : ''}${formatNumber(item.sp)}</td><td class="${getChangeColorClass(item.pcr)}">${item.pcr >= 0 ? '+' : ''}${formatNumber(item.pcr)}%</td><td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td>`;
             } else {
                 const pcrChange = item.pcr_change || 0.0;
                 const intradayPcr = item.intraday_pcr || 0.0;
-                const pcrChangeColor = pcrChange > 0 ? '#4CAF50' : (pcrChange < 0 ? '#F44336' : '#fff');
-                const intradayPcrColor = intradayPcr > 1.2 ? '#4CAF50' : (intradayPcr < 0.8 && intradayPcr != 0) ? '#F44336' : '#fff';
-                tr.innerHTML = `<td>${item.time}</td><td>${item.sp}</td><td>${item.value}</td><td>${item.call_oi || '-'}K</td><td>${item.put_oi || '-'}K</td><td>${item.pcr.toFixed(2)}</td><td style="color: ${pcrChangeColor};">${pcrChange >= 0 ? '+' : ''}${pcrChange.toFixed(2)}</td><td style="color: ${intradayPcrColor};">${intradayPcr.toFixed(2)}</td><td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : '#FFC107'}">${item.sentiment}</td><td>${item.add_exit || '-'}</td>`;
+                const pcrChangeClass = getChangeColorClass(pcrChange);
+                const intradayPcrClass = intradayPcr > 1.2 ? 'positive' : (intradayPcr < 0.8 && intradayPcr !== 0) ? 'negative' : 'neutral';
+                tr.innerHTML = `<td>${item.time}</td><td>${formatNumber(item.sp,0)}</td><td>${formatNumber(item.value)}</td><td>${formatNumber(item.call_oi,1)}K</td><td>${formatNumber(item.put_oi,1)}K</td><td>${formatNumber(item.pcr)}</td><td class="${pcrChangeClass}">${pcrChange >= 0 ? '+' : ''}${formatNumber(pcrChange)}</td><td class="${intradayPcrClass}">${formatNumber(intradayPcr)}</td><td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td><td>${item.add_exit || '-'}</td>`;
             }
             if (prepend) tbody.prepend(tr); else tbody.appendChild(tr);
         }
 
         async function loadHistoricalData(symbol) {
+            console.log("loadHistoricalData called for:", symbol); // Debugging
             let effectiveSymbol = symbol;
             if (symbol === 'EQUITY') {
                 effectiveSymbol = $('#equity-symbol-selector').val();
@@ -354,14 +567,15 @@
             try {
                 const response = await fetch(`/history/${effectiveSymbol}/${selectedDate}`);
                 const data = await response.json();
+                console.log("Received historical data for", effectiveSymbol, selectedDate, ":", data); // Debugging
                 historicalTbody.innerHTML = '';
                 if (data.error || data.history.length === 0) {
-                    historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">${data.error || 'No data found for this date.'}</td></tr>`;
+                    historicalTbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">${data.error || 'No data found for this date.'}</td></tr>`;
                     return;
                 }
                 data.history.forEach(item => addHistoryItemToTable(historicalTbody, item, effectiveSymbol, false));
             } catch (error) {
-                historicalTbody.innerHTML = `<tr><td colspan="${colspan}" style="color: red;">Failed to load history. Check console for errors.</td></tr>`;
+                historicalTbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">Failed to load history. Check console for errors.</td></tr>`;
                 console.error("Error loading historical data:", error);
             }
         }
@@ -384,80 +598,175 @@
             card.innerHTML = `
                 <h3>${symbol === 'EQUITY' ? 'Equity' : symbol} Pulse</h3>
                 <div class="pulse-row"><span>CALLS</span><div class="pulse-bar-container"><div class="pulse-bar calls" id="${lower}-total-call-oi-bar"></div><div class="pulse-bar puts" id="${lower}-total-put-oi-bar"></div></div><span>PUTS</span></div>
-                <div class="pulse-labels"><span>-</span><span id="${lower}-total-put-oi-label">-</span></div>
+                <div class="pulse-labels"><span id="${lower}-total-call-oi-label">-</span><span id="${lower}-total-put-oi-label">-</span></div>
                 <h5>Today's Change</h5>
                 <div class="pulse-row"><span>CALLS Δ</span><div class="pulse-bar-container"><div class="pulse-bar calls-change" id="${lower}-total-call-coi-bar"></div><div class="pulse-bar puts-change" id="${lower}-total-put-coi-bar"></div></div><span>PUTS Δ</span></div>
-                <div class="pulse-labels"><span>-</span><span id="${lower}-total-put-coi-label">-</span></div>
+                <div class="pulse-labels"><span id="${lower}-total-call-coi-label">-</span><span id="${lower}-total-put-coi-label">-</span></div>
             `;
-            // Update the span IDs for call labels
-            card.querySelector('.pulse-labels span:first-child').id = `${lower}-total-call-oi-label`;
-            card.querySelectorAll('.pulse-labels')[1].querySelector('span:first-child').id = `${lower}-total-call-coi-label`;
             return card;
         }
 
-        function updateBhavcopyTables(data) {
-            const statusEl = document.getElementById('bhavcopy-status');
-            const titleEl = document.getElementById('bhavcopy-title');
-            const equityTbody = document.querySelector('#bhavcopy-equity-table tbody');
+        // MODIFIED: updateBhavcopyTables to handle both equities and indices, and take a type parameter
+        let latestBhavcopyDataCache = {}; // Cache for the latest bhavcopy data received via websocket or initial fetch
 
-            if (!data || !data.date) {
-                statusEl.textContent = 'No Bhavcopy data available yet. The scanner runs automatically after 9 PM IST or can be run manually.';
-                statusEl.style.color = '#fff';
-                return;
+        function updateBhavcopyTables(data, type) {
+            console.log("updateBhavcopyTables called with data:", data, "and type:", type); // Debugging
+            // Update the cache with the latest data
+            if (data && data.date) {
+                latestBhavcopyDataCache = data;
+                console.log("Bhavcopy data cached for date:", data.date); // Debugging
             }
 
-            titleEl.textContent = `Bhavcopy Daily Scanner - Data for ${data.date}`;
-            statusEl.textContent = 'Latest data loaded successfully.';
-            statusEl.style.color = '#4CAF50';
-            equityTbody.innerHTML = '';
+            const equityStatusEl = document.getElementById('bhavcopy-equity-status');
+            const equityTitleEl = document.getElementById('bhavcopy-equity-title');
+            const equityTbody = document.querySelector('#bhavcopy-equity-table tbody');
+            const noEquityDataMessage = document.getElementById('no-bhavcopy-equity-data');
 
-            if (data.equities && data.equities.length > 0) {
-                data.equities.forEach(stock => {
-                    const tr = document.createElement('tr');
-                    const changeColor = stock['% Change'] >= 0 ? '#4CAF50' : '#F44336';
-                    tr.innerHTML = `
-                        <td>${stock.Symbol}</td>
-                        <td>${stock.Close.toLocaleString('en-IN')}</td>
-                        <td>${stock.Volume.toLocaleString('en-IN')}</td>
-                        <td style="color: ${changeColor}">${stock['% Change'].toFixed(2)}%</td>
-                        <td>${stock['Delivery %']}</td>
-                    `;
-                    equityTbody.appendChild(tr);
-                });
-            } else {
-                equityTbody.innerHTML = '<tr><td colspan="5">No equity data found for this date.</td></tr>';
+            const indicesStatusEl = document.getElementById('bhavcopy-indices-status');
+            const indicesTitleEl = document.getElementById('bhavcopy-indices-title');
+            const indicesTbody = document.querySelector('#bhavcopy-indices-table tbody');
+            const noIndicesDataMessage = document.getElementById('no-bhavcopy-indices-data');
+
+            // Always clear previous data
+            equityTbody.innerHTML = '';
+            indicesTbody.innerHTML = '';
+            noEquityDataMessage.style.display = 'none';
+            noIndicesDataMessage.style.display = 'none';
+
+            // If no type specified, update both if data is available
+            if (!type || type === 'equities') {
+                console.log("Attempting to update F&O equities table."); // Debugging
+                if (!data || !data.date || !data.equities || data.equities.length === 0) {
+                    console.log("No F&O equity data found or error:", data); // Debugging
+                    equityTitleEl.innerHTML = `Bhavcopy Daily Scan - F&O Equities (<span id="bhavcopy-equity-date">N/A</span>)`;
+                    equityStatusEl.textContent = data && data.error ? data.error : 'No F&O equity Bhavcopy data available for this date.';
+                    equityStatusEl.style.color = '#F44336';
+                    noEquityDataMessage.style.display = 'block';
+                } else {
+                    console.log("Populating F&O equities table with", data.equities.length, "items."); // Debugging
+                    equityTitleEl.innerHTML = `Bhavcopy Daily Scan - F&O Equities (<span id="bhavcopy-equity-date">${moment(data.date).format('DD MMM YYYY')}</span>)`;
+                    equityStatusEl.textContent = 'Latest F&O equity data loaded successfully.';
+                    equityStatusEl.style.color = '#4CAF50';
+                    data.equities.forEach(stock => {
+                        const tr = document.createElement('tr');
+                        const changeClass = getChangeColorClass(stock['Pct Change']);
+                        tr.innerHTML = `
+                            <td>${stock.Symbol}</td>
+                            <td>${formatNumber(stock.Close)}</td>
+                            <td>${formatNumber(stock.Volume, 0)}</td>
+                            <td class="${changeClass}">${formatNumber(stock['Pct Change'])}%</td>
+                            <td>${stock['Delivery %'] !== 'N/A' ? formatNumber(stock['Delivery %'], 2) + '%' : 'N/A'}</td>
+                            <td>${formatNumber(stock.Open)}</td>
+                            <td>${formatNumber(stock.High)}</td>
+                            <td>${formatNumber(stock.Low)}</td>
+                        `;
+                        equityTbody.appendChild(tr);
+                    });
+                }
+            }
+
+            if (!type || type === 'indices') {
+                console.log("Attempting to update indices table."); // Debugging
+                if (!data || !data.date || !data.indices || data.indices.length === 0) {
+                    console.log("No index data found or error:", data); // Debugging
+                    indicesTitleEl.innerHTML = `Bhavcopy Daily Scan - Indices (<span id="bhavcopy-indices-date">N/A</span>)`;
+                    indicesStatusEl.textContent = data && data.error ? data.error : 'No index Bhavcopy data available for this date.';
+                    indicesStatusEl.style.color = '#F44336';
+                    noIndicesDataMessage.style.display = 'block';
+                } else {
+                    console.log("Populating indices table with", data.indices.length, "items."); // Debugging
+                    indicesTitleEl.innerHTML = `Bhavcopy Daily Scan - Indices (<span id="bhavcopy-indices-date">${moment(data.date).format('DD MMM YYYY')}</span>)`;
+                    indicesStatusEl.textContent = 'Latest index data loaded successfully.';
+                    indicesStatusEl.style.color = '#4CAF50';
+                    data.indices.forEach(index => {
+                        const tr = document.createElement('tr');
+                        const changeClass = getChangeColorClass(index['Pct Change']);
+                        tr.innerHTML = `
+                            <td>${index.Symbol}</td>
+                            <td>${formatNumber(index.Close)}</td>
+                            <td class="${changeClass}">${formatNumber(index['Pct Change'])}%</td>
+                            <td>${formatNumber(index.Open)}</td>
+                            <td>${formatNumber(index.High)}</td>
+                            <td>${formatNumber(index.Low)}</td>
+                        `;
+                        indicesTbody.appendChild(tr);
+                    });
+                }
             }
         }
 
-        // +++ NEW: Function to load historical Bhavcopy data from the new API +++
-        async function loadBhavcopyHistory() {
-            const dateInput = document.getElementById('bhavcopy-history-date');
+        // ADDED: Function to load historical Bhavcopy data from the new API
+        async function loadBhavcopyHistory(typeToLoad) {
+            console.log("loadBhavcopyHistory called for type:", typeToLoad); // Debugging
+            let dateInput, statusEl, tbody, noDataMessage, titleEl, dateSpanId;
+            if (typeToLoad === 'equities') {
+                dateInput = document.getElementById('bhavcopy-equity-history-date');
+                statusEl = document.getElementById('bhavcopy-equity-status');
+                tbody = document.querySelector('#bhavcopy-equity-table tbody');
+                noDataMessage = document.getElementById('no-bhavcopy-equity-data');
+                titleEl = document.getElementById('bhavcopy-equity-title');
+                dateSpanId = 'bhavcopy-equity-date';
+            } else if (typeToLoad === 'indices') {
+                dateInput = document.getElementById('bhavcopy-indices-history-date');
+                statusEl = document.getElementById('bhavcopy-indices-status');
+                tbody = document.querySelector('#bhavcopy-indices-table tbody');
+                noDataMessage = document.getElementById('no-bhavcopy-indices-data');
+                titleEl = document.getElementById('bhavcopy-indices-title');
+                dateSpanId = 'bhavcopy-indices-date';
+            } else {
+                console.error("Invalid type for loadBhavcopyHistory:", typeToLoad);
+                return;
+            }
+
             const selectedDate = dateInput.value;
             if (!selectedDate) {
                 alert("Please select a date.");
                 return;
             }
-            const statusEl = document.getElementById('bhavcopy-status');
-            const equityTbody = document.querySelector('#bhavcopy-equity-table tbody');
+
             statusEl.textContent = `Loading Bhavcopy for ${selectedDate}...`;
             statusEl.style.color = '#FFC107'; // Yellow for loading
-            equityTbody.innerHTML = '<tr><td colspan="5">Loading...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8">Loading...</td></tr>'; // Max colspan for equity table
+            noDataMessage.style.display = 'none';
 
             try {
                 const response = await fetch(`/api/bhavcopy/${selectedDate}`);
                 const data = await response.json();
-                if (data.error || !data.equities || data.equities.length === 0) {
-                    statusEl.textContent = data.error || `No Bhavcopy data found for ${selectedDate}.`;
+                console.log("Received historical Bhavcopy data for", selectedDate, ":", data); // Debugging
+
+                if (data.error) {
+                    statusEl.textContent = data.error;
                     statusEl.style.color = '#F44336'; // Red for error/not found
-                    equityTbody.innerHTML = `<tr><td colspan="5">${data.error || `No Bhavcopy data found for ${selectedDate}.`}</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="8" class="negative">${data.error}</td></tr>`;
+                    noDataMessage.style.display = 'block';
+                    titleEl.innerHTML = `Bhavcopy Daily Scan - ${typeToLoad === 'equities' ? 'F&O Equities' : 'Indices'} (<span id="${dateSpanId}">N/A</span>)`;
                 } else {
-                    updateBhavcopyTables(data); // Reuse the existing update function
+                    updateBhavcopyTables(data, typeToLoad); // Reuse the existing update function
+                    document.getElementById(dateSpanId).textContent = moment(data.date).format('DD MMM YYYY');
                 }
             } catch (error) {
                 statusEl.textContent = 'Failed to load historical data.';
                 statusEl.style.color = '#F44336';
-                equityTbody.innerHTML = '<tr><td colspan="5">Failed to load data.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="negative">Failed to load data.</td></tr>';
                 console.error("Error loading historical bhavcopy:", error);
+            }
+        }
+
+        // ADDED: Function to handle initial load of Bhavcopy data when tabs are opened
+        async function loadInitialBhavcopyData() {
+            console.log("loadInitialBhavcopyData called."); // Debugging
+            try {
+                const response = await fetch('/api/bhavcopy');
+                const data = await response.json();
+                console.log("Received initial Bhavcopy data from /api/bhavcopy:", data); // Debugging
+                updateBhavcopyTables(data, 'equities'); // Update equity table
+                updateBhavcopyTables(data, 'indices'); // Update indices table
+            } catch (error) {
+                console.error("Error fetching initial Bhavcopy data:", error);
+                document.getElementById('bhavcopy-equity-status').textContent = 'Failed to load initial Bhavcopy data.';
+                document.getElementById('bhavcopy-equity-status').style.color = '#F44336';
+                document.getElementById('bhavcopy-indices-status').textContent = 'Failed to load initial Bhavcopy data.';
+                document.getElementById('bhavcopy-indices-status').style.color = '#F44336';
             }
         }
 
@@ -480,8 +789,9 @@
             }
         }
 
-        // +++ NEW: Function to analyze Bhavcopy strategies +++
+        // ADDED: Function to analyze Bhavcopy strategies
         async function analyzeBhavcopyStrategies() {
+            console.log("analyzeBhavcopyStrategies called."); // Debugging
             const dateInput = document.getElementById('strategy-bhavcopy-date');
             const selectedDate = dateInput.value;
             if (!selectedDate) {
@@ -493,251 +803,185 @@
             strategyStatusEl.textContent = `Analyzing Bhavcopy strategies for ${selectedDate}...`;
             strategyStatusEl.style.color = '#FFC107';
 
-            // Clear previous results
+            // Clear previous results and show loading
             document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
-                tbody.innerHTML = '<tr><td colspan="'+ tbody.previousElementSibling.querySelector('thead tr').children.length +'">Analyzing...</td></tr>';
+                const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
+                tbody.innerHTML = `<tr><td colspan="${colspan}">Analyzing...</td></tr>`;
             });
 
             try {
-                const response = await fetch(`/api/bhavcopy/${selectedDate}`);
-                const data = await response.json();
+                // Fetch strategies results from the new API endpoint
+                const strategyResponse = await fetch(`/api/bhavcopy/strategies/${selectedDate}`);
+                const results = await strategyResponse.json();
+                console.log("Received strategy results:", results); // Debugging
 
-                if (data.error || !data.equities || data.equities.length === 0) {
-                    strategyStatusEl.textContent = data.error || `No Bhavcopy data found for ${selectedDate} to analyze strategies.`;
+                if (results.error) {
+                    strategyStatusEl.textContent = `Error: ${results.error}`;
                     strategyStatusEl.style.color = '#F44336';
                     document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
-                        tbody.innerHTML = '<tr><td colspan="'+ tbody.previousElementSibling.querySelector('thead tr').children.length +'">No data available.</td></tr>';
+                        const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
+                        tbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">Error during analysis.</td></tr>`;
                     });
                     return;
                 }
 
-                const equities = data.equities;
                 strategyStatusEl.textContent = `Strategies analyzed for ${selectedDate}.`;
                 strategyStatusEl.style.color = '#4CAF50';
 
-                // Implement Strategy Logic Here
-                updateBreakoutsTable(equities);
-                updateVolumeTable(equities);
-                await updateDeliveryTable(equities, selectedDate); // Requires historical delivery data
-                updateGapsTable(equities);
-                updatePivotTable(equities);
+                // Populate each strategy table
+                populateFddtTable(results.FDDT);
+                populateZdftTable(results.ZDFT);
+                populateBdgpTable(results.BDGP);
+                populateVar7Table(results.VAR7);
+                populateHba21Table(results.HBA21);
+                populateOimtTable(results.OIMT);
+                populateVssbTable(results.VSSB);
+                populateOoadTable(results.OOAD);
+                populateCaadtTable(results.CAADT);
+
 
             } catch (error) {
                 strategyStatusEl.textContent = 'Failed to analyze Bhavcopy strategies. An error occurred.';
                 strategyStatusEl.style.color = '#F44336';
                 console.error("Error analyzing Bhavcopy strategies:", error);
                 document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
-                    tbody.innerHTML = '<tr><td colspan="'+ tbody.previousElementSibling.querySelector('thead tr').children.length +'">Error during analysis.</td></tr>';
+                    const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
+                    tbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">Error during analysis.</td></tr>`;
                 });
             }
         }
 
-        // Helper function for Breakouts & Volume
-        function updateBreakoutsTable(equities) {
-            const tbody = document.querySelector('#strategy-breakouts-table tbody');
+        // --- Functions to populate individual strategy tables ---
+
+        function populateFddtTable(data) {
+            const tbody = document.querySelector('#strategy-fddt-table tbody');
             tbody.innerHTML = '';
-            const breakouts = equities.filter(s => s['% Change'] > 3 && s.Volume > 1000000); // Example criteria
-            if (breakouts.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5">No significant breakouts/breakdowns found.</td></tr>';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires FII/DII data integration)'}</td></tr>`;
                 return;
             }
-            breakouts.forEach(stock => {
-                const signal = stock['% Change'] > 0 ? 'Bullish Breakout' : 'Bearish Breakdown';
-                const color = stock['% Change'] > 0 ? '#4CAF50' : '#F44336';
+            data.forEach(item => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${stock.Symbol}</td><td>${stock.Close.toFixed(2)}</td><td style="color:${color}">${stock['% Change'].toFixed(2)}%</td><td>${stock.Volume.toLocaleString()}</td><td>${signal}</td>`;
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Signal}</td>`;
                 tbody.appendChild(tr);
             });
         }
 
-        function updateVolumeTable(equities) {
-            const tbody = document.querySelector('#strategy-volume-table tbody');
+        function populateZdftTable(data) {
+            const tbody = document.querySelector('#strategy-zdft-table tbody');
             tbody.innerHTML = '';
-            const highVolume = equities.filter(s => s.Volume > 2000000).sort((a,b) => b.Volume - a.Volume); // Example criteria
-            if (highVolume.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5">No high volume movers found.</td></tr>';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Zero-Delivery"))) {
+                tbody.innerHTML = `<tr><td colspan="4">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
-            highVolume.forEach(stock => {
-                const signal = 'High Volume Activity';
-                const color = stock['% Change'] >= 0 ? '#4CAF50' : '#F44336';
+            data.forEach(item => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${stock.Symbol}</td><td>${stock.Close.toFixed(2)}</td><td style="color:${color}">${stock['% Change'].toFixed(2)}%</td><td>${stock.Volume.toLocaleString()}</td><td>${signal}</td>`;
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item['Near Month Delivery %']}</td><td>${item['Next Month OI Increase %']}</td><td>${item.Signal}</td>`;
                 tbody.appendChild(tr);
             });
         }
 
-        async function updateDeliveryTable(currentEquities, selectedDate) {
-            const tbody = document.querySelector('#strategy-delivery-table tbody');
+        function populateBdgpTable(data) {
+            const tbody = document.querySelector('#strategy-bdgp-table tbody');
             tbody.innerHTML = '';
-
-            const allDeliveryData = {}; // Store delivery data for each stock over multiple days
-
-            for (let i = 0; i < 8; i++) { // Fetch delivery data for last 8 days
-                const date = new Date(selectedDate);
-                date.setDate(date.getDate() - i);
-                const dateStr = date.toISOString().split('T')[0];
-
-                try {
-                    const response = await fetch(`/api/bhavcopy/${dateStr}`);
-                    const data = await response.json();
-
-                    if (!data.error && data.equities && data.equities.length > 0) {
-                        data.equities.forEach(stock => {
-                            if (!allDeliveryData[stock.Symbol]) {
-                                allDeliveryData[stock.Symbol] = [];
-                            }
-                            // Ensure Delivery % is a number for calculations, default to 0 if 'N/A'
-                            const deliveryPct = parseFloat(stock['Delivery %']);
-                            if (!isNaN(deliveryPct)) {
-                                allDeliveryData[stock.Symbol].push(deliveryPct);
-                            }
-                        });
-                    }
-                } catch (error) {
-                    console.warn(`Could not fetch historical bhavcopy for ${dateStr}:`, error);
-                }
-            }
-
-            const deliverySignals = [];
-            currentEquities.forEach(stock => {
-                const symbol = stock.Symbol;
-                const latestClose = stock.Close;
-                const latestDeliveryPct = parseFloat(stock['Delivery %']);
-
-                if (allDeliveryData[symbol] && allDeliveryData[symbol].length > 1) {
-                    const deliveryPcts = allDeliveryData[symbol];
-                    const avgDeliveryPct = deliveryPcts.reduce((sum, val) => sum + val, 0) / deliveryPcts.length;
-
-                    let signal = 'Neutral';
-                    let signalColor = '#fff';
-
-                    if (!isNaN(latestDeliveryPct) && latestDeliveryPct > avgDeliveryPct * 1.2 && stock['% Change'] > 0) {
-                        signal = 'Strong Delivery Buying (Accumulation)';
-                        signalColor = '#4CAF50';
-                    } else if (!isNaN(latestDeliveryPct) && latestDeliveryPct < avgDeliveryPct * 0.8 && stock['% Change'] < 0) {
-                        signal = 'Strong Delivery Selling (Distribution)';
-                        signalColor = '#F44336';
-                    } else if (!isNaN(latestDeliveryPct) && latestDeliveryPct > avgDeliveryPct * 1.1) {
-                        signal = 'Increased Delivery Buying';
-                        signalColor = '#81c784';
-                    } else if (!isNaN(latestDeliveryPct) && latestDeliveryPct < avgDeliveryPct * 0.9) {
-                        signal = 'Decreased Delivery Buying';
-                        signalColor = '#e57373';
-                    }
-
-                    deliverySignals.push({
-                        Symbol: symbol,
-                        LatestClose: latestClose,
-                        LatestDeliveryPct: isNaN(latestDeliveryPct) ? 'N/A' : latestDeliveryPct.toFixed(2) + '%',
-                        AvgDeliveryPct: avgDeliveryPct.toFixed(2) + '%',
-                        Signal: signal,
-                        SignalColor: signalColor
-                    });
-                }
-            });
-
-            if (deliverySignals.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5">No significant delivery trends found or insufficient historical data.</td></tr>';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity or Block Deal"))) {
+                tbody.innerHTML = `<tr><td colspan="7">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
-
-            deliverySignals.forEach(item => {
+            data.forEach(item => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.LatestClose.toFixed(2)}</td><td>${item.LatestDeliveryPct}</td><td>${item.AvgDeliveryPct}</td><td style="color:${item.SignalColor}">${item.Signal}</td>`;
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item['Block Deal Price']}</td><td>${item['Previous Close']}</td><td>${item['Open Price']}</td><td>${item['Block Discount %']}</td><td>${item['Open Gap Up %']}</td><td>${item.Signal}</td>`;
                 tbody.appendChild(tr);
             });
         }
 
-
-        function updateGapsTable(equities) {
-            const tbody = document.querySelector('#strategy-gaps-table tbody');
+        function populateVar7Table(data) {
+            const tbody = document.querySelector('#strategy-var7-table tbody');
             tbody.innerHTML = '';
-            const gaps = [];
-            equities.forEach(stock => {
-                // To calculate gaps accurately, we need previous day's close.
-                // For simplicity here, we'll assume we can get it or use a placeholder.
-                // In a real scenario, you'd fetch yesterday's bhavcopy.
-                const open = stock.Open || stock.Close; // Placeholder if Open is not directly available in this simplified structure
-                const prevClose = stock.Close / (1 + (stock['% Change'] / 100)); // Estimate prev close
-                const gapPct = ((open - prevClose) / prevClose * 100);
-
-                if (Math.abs(gapPct) > 1) { // Significant gap, e.g., > 1%
-                    const signal = gapPct > 0 ? 'Gap Up' : 'Gap Down';
-                    const color = gapPct > 0 ? '#4CAF50' : '#F44336';
-                    gaps.push({
-                        Symbol: stock.Symbol,
-                        Open: open.toFixed(2),
-                        Close: stock.Close.toFixed(2),
-                        PrevClose: prevClose.toFixed(2),
-                        GapPct: gapPct.toFixed(2),
-                        Signal: signal,
-                        SignalColor: color
-                    });
-                }
-            });
-
-            if (gaps.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6">No significant gaps found.</td></tr>';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity data"))) {
+                tbody.innerHTML = `<tr><td colspan="6">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
-
-            gaps.forEach(item => {
+            data.forEach(item => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Open}</td><td>${item.Close}</td><td>${item.PrevClose}</td><td style="color:${item.SignalColor}">${item.GapPct}%</td><td>${item.Signal}</td>`;
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item['Close Price']}</td><td>${item.VWAP}</td><td>${item['Close vs VWAP %']}</td><td>${item['Delivery %']}</td><td>${item.Signal}</td>`;
                 tbody.appendChild(tr);
             });
         }
 
-        function updatePivotTable(equities) {
-            const tbody = document.querySelector('#strategy-pivot-table tbody');
+        function populateHba21Table(data) {
+            const tbody = document.querySelector('#strategy-hba21-table tbody');
             tbody.innerHTML = '';
-
-            const pivots = [];
-            equities.forEach(stock => {
-                // Assuming we have OHLC for the day in Bhavcopy data.
-                // In this simplified structure, we only have Close. For accurate pivots,
-                // you'd need Open, High, Low, Close from the bhavcopy.
-                // For demonstration, let's use Close as a proxy for O,H,L for pivot calculation, which is not ideal for actual trading.
-                // A better approach would be to parse the full bhavcopy CSV which includes OHLC.
-                const H = stock.High || stock.Close * 1.05; // Placeholder
-                const L = stock.Low || stock.Close * 0.95;  // Placeholder
-                const C = stock.Close;
-
-                const P = (H + L + C) / 3;
-                const R1 = (2 * P) - L;
-                const S1 = (2 * P) - H;
-                const R2 = P + (H - L);
-                const S2 = P - (H - L);
-                const R3 = H + (2 * (P - L));
-                const S3 = L - (2 * (H - P));
-
-                pivots.push({
-                    Symbol: stock.Symbol,
-                    Pivot: P.toFixed(2),
-                    R1: R1.toFixed(2),
-                    R2: R2.toFixed(2),
-                    R3: R3.toFixed(2),
-                    S1: S1.toFixed(2),
-                    S2: S2.toFixed(2),
-                    S3: S3.toFixed(2),
-                });
-            });
-
-            if (pivots.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8">No pivot data available. (Requires Open, High, Low, Close data)</td></tr>';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires Corporate Actions"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)'}</td></tr>`;
                 return;
             }
-
-            pivots.forEach(item => {
+            data.forEach(item => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Pivot}</td><td>${item.R1}</td><td>${item.R2}</td><td>${item.R3}</td><td>${item.S1}</td><td>${item.S2}</td><td>${item.S3}</td>`;
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Signal}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function populateOimtTable(data) {
+            const tbody = document.querySelector('#strategy-oimt-table tbody');
+            tbody.innerHTML = '';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity or F&O"))) {
+                tbody.innerHTML = `<tr><td colspan="5">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
+                return;
+            }
+            data.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item['Price Change %']}</td><td>${item['OI Change']}</td><td>${item['Signal Type']}</td><td>${item['Institutional Conviction (Delivery > 60%)']}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function populateVssbTable(data) {
+            const tbody = document.querySelector('#strategy-vssb-table tbody');
+            tbody.innerHTML = '';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity data"))) {
+                tbody.innerHTML = `<tr><td colspan="7">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
+                return;
+            }
+            data.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item["Today's Volume"]}</td><td>${item['10-Day Avg Volume']}</td><td>${item['Volume Multiple']}</td><td>${item['Delivery %']}</td><td>${item['Price Change %']}</td><td>${item.Signal}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function populateOoadTable(data) {
+            const tbody = document.querySelector('#strategy-ooad-table tbody');
+            tbody.innerHTML = '';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires detailed Options"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires detailed Options Bhavcopy parsing and storage)'}</td></tr>`;
+                return;
+            }
+            data.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Signal}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function populateCaadtTable(data) {
+            const tbody = document.querySelector('#strategy-caadt-table tbody');
+            tbody.innerHTML = '';
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires Corporate Actions"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)'}</td></tr>`;
+                return;
+            }
+            data.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Signal}</td>`;
                 tbody.appendChild(tr);
             });
         }
 
 
         socket.on('initial_todays_history', (data) => {
+            console.log("Received initial_todays_history:", data); // Debugging
             if (!data.history) return;
             Object.keys(data.history).forEach(sym => {
                 const historyTbody = document.querySelector(`#${sym.toLowerCase()}-todays-history-table tbody`);
@@ -749,6 +993,7 @@
         });
 
         socket.on('todays_history_append', (data) => {
+            console.log("Received todays_history_append:", data); // Debugging
             if (data.symbol && data.item) {
                 const historyTbody = document.querySelector(`#${data.symbol.toLowerCase()}-todays-history-table tbody`);
                 if (historyTbody) addHistoryItemToTable(historyTbody, data.item, data.symbol, true);
@@ -756,10 +1001,12 @@
         });
 
         socket.on('update_visits', (data) => {
+            console.log("Received update_visits:", data); // Debugging
             document.getElementById('visit-counter').textContent = data.count;
         });
 
         socket.on('top_movers_update', (data) => {
+            console.log("Received top_movers_update:", data); // Debugging
             const strongestTbody = document.querySelector('#top-strongest-table tbody');
             const weakestTbody = document.querySelector('#top-weakest-table tbody');
             const improvingTbody = document.querySelector('#top-improving-table tbody');
@@ -769,32 +1016,34 @@
 
             data.strongest.forEach((stock, index) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${formatNumber(stock.score)}</td><td class="${stock.sentiment.includes('Bullish') ? 'positive' : (stock.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${stock.sentiment}</td><td>${formatNumber(stock.pcr)}</td>`;
                 strongestTbody.appendChild(tr);
             });
             data.weakest.forEach((stock, index) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${formatNumber(stock.score)}</td><td class="${stock.sentiment.includes('Bullish') ? 'positive' : (stock.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${stock.sentiment}</td><td>${formatNumber(stock.pcr)}</td>`;
                 weakestTbody.appendChild(tr);
             });
             data.improving.forEach((stock, index) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${formatNumber(stock.score)}</td><td class="${stock.sentiment.includes('Bullish') ? 'positive' : (stock.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${stock.sentiment}</td><td>${formatNumber(stock.pcr)}</td>`;
                 improvingTbody.appendChild(tr);
             });
             data.worsening.forEach((stock, index) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${stock.score}</td><td>${stock.sentiment}</td><td>${stock.pcr}</td>`;
+                tr.innerHTML = `<td>${index + 1}</td><td>${stock.symbol}</td><td>${formatNumber(stock.score)}</td><td class="${stock.sentiment.includes('Bullish') ? 'positive' : (stock.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${stock.sentiment}</td><td>${formatNumber(stock.pcr)}</td>`;
                 worseningTbody.appendChild(tr);
             });
         });
 
+        // MODIFIED: bhavcopy_update now calls updateBhavcopyTables, which handles both types
         socket.on('bhavcopy_update', (data) => {
-            console.log("Received live Bhavcopy update:", data);
+            console.log("Received live Bhavcopy update via WebSocket:", data); // Debugging
             updateBhavcopyTables(data);
         });
 
         socket.on('update', (data) => {
+            console.log("Received live 'update' data:", data); // Debugging
             document.getElementById('time').textContent = new Date().toLocaleTimeString();
 
             if (data.live_feed_summary) {
@@ -807,15 +1056,21 @@
                     const chgElClone = document.getElementById(`ticker-${lower}-change-clone`);
 
                     if (feed && typeof feed.current_value !== 'undefined' && valEl && chgEl) {
-                        const valText = feed.current_value.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 4});
+                        const valText = formatNumber(feed.current_value, 4);
                         const chgText = `${feed.change >= 0 ? '▲' : '▼'} ${Math.abs(feed.change).toFixed(2)} (${feed.percentage_change.toFixed(2)}%)`;
-                        const color = feed.change >= 0 ? '#4CAF50' : '#F44336';
+                        const colorClass = getChangeColorClass(feed.change); // Use a new variable name for clarity
 
                         valEl.textContent = valText;
                         chgEl.textContent = chgText;
-                        chgEl.style.color = color;
+                        chgEl.classList.remove('positive', 'negative', 'neutral'); // Remove all potential color classes
+                        chgEl.classList.add(colorClass); // Add the new color class
+
                         if(valElClone) valElClone.textContent = valText;
-                        if(chgElClone) { chgElClone.textContent = chgText; chgElClone.style.color = color; }
+                        if(chgElClone) {
+                            chgElClone.textContent = chgText;
+                            chgElClone.classList.remove('positive', 'negative', 'neutral'); // Remove all potential color classes
+                            chgElClone.classList.add(colorClass); // Add the new color class
+                        }
                     }
                 });
             }
@@ -831,15 +1086,15 @@
                     const callOIPct = totalOI > 0 ? (s.total_call_oi / totalOI * 100) : 50;
                     document.getElementById(`${lower}-total-call-oi-bar`).style.width = `${callOIPct}%`;
                     document.getElementById(`${lower}-total-put-oi-bar`).style.width = `${100 - callOIPct}%`;
-                    document.getElementById(`${lower}-total-call-oi-label`).textContent = s.total_call_oi.toLocaleString();
-                    document.getElementById(`${lower}-total-put-oi-label`).textContent = s.total_put_oi.toLocaleString();
+                    document.getElementById(`${lower}-total-call-oi-label`).textContent = formatNumber(s.total_call_oi, 0);
+                    document.getElementById(`${lower}-total-put-oi-label`).textContent = formatNumber(s.total_put_oi, 0);
 
                     const totalCOI = Math.abs(s.total_call_coi) + Math.abs(s.total_put_coi);
                     const callCOIPct = totalCOI > 0 ? (Math.abs(s.total_call_coi) / totalCOI * 100) : 50;
                     document.getElementById(`${lower}-total-call-coi-bar`).style.width = `${callCOIPct}%`;
                     document.getElementById(`${lower}-total-put-coi-bar`).style.width = `${100 - callCOIPct}%`;
-                    document.getElementById(`${lower}-total-call-coi-label`).textContent = s.total_call_coi.toLocaleString();
-                    document.getElementById(`${lower}-total-put-coi-label`).textContent = s.total_put_coi.toLocaleString();
+                    document.getElementById(`${lower}-total-call-coi-label`).textContent = formatNumber(s.total_call_coi, 0);
+                    document.getElementById(`${lower}-total-put-coi-label`).textContent = formatNumber(s.total_put_coi, 0);
                 });
 
                 Object.keys(data.live).forEach(sym => {
@@ -849,15 +1104,30 @@
                     if (liveData.summary) {
                         const summaryCard = document.getElementById(`${sym}_summary`);
                         if (summaryCard) {
-                             if(document.getElementById(`${lower}-sp`)) document.getElementById(`${lower}-sp`).textContent = liveData.summary.sp;
-                             if(summaryCard.querySelector(`#${lower}-value`)) summaryCard.querySelector(`#${lower}-value`).textContent = liveData.summary.value;
-                             if(document.getElementById(`${lower}-call`)) document.getElementById(`${lower}-call`).textContent = liveData.summary.call_oi;
-                             if(document.getElementById(`${lower}-put`)) document.getElementById(`${lower}-put`).textContent = liveData.summary.put_oi;
-                             if(document.getElementById(`${lower}-pcr`)) document.getElementById(`${lower}-pcr`).textContent = liveData.summary.pcr;
-                             if(document.getElementById(`${lower}-sentiment`)) document.getElementById(`${lower}-sentiment`).textContent = liveData.summary.sentiment;
+                             if(document.getElementById(`${lower}-sp`)) document.getElementById(`${lower}-sp`).textContent = formatNumber(liveData.summary.sp, 0);
+                             if(summaryCard.querySelector(`#${lower}-value`)) summaryCard.querySelector(`#${lower}-value`).textContent = formatNumber(liveData.summary.value);
+                             if(document.getElementById(`${lower}-call`)) document.getElementById(`${lower}-call`).textContent = formatNumber(liveData.summary.call_oi, 1);
+                             if(document.getElementById(`${lower}-put`)) document.getElementById(`${lower}-put`).textContent = formatNumber(liveData.summary.put_oi, 1);
+                             if(document.getElementById(`${lower}-pcr`)) document.getElementById(`${lower}-pcr`).textContent = formatNumber(liveData.summary.pcr);
+                             if(document.getElementById(`${lower}-sentiment`)) {
+                                 const sentimentEl = document.getElementById(`${lower}-sentiment`);
+                                 sentimentEl.textContent = liveData.summary.sentiment;
+                                 sentimentEl.classList.remove('positive', 'negative', 'neutral');
+                                 sentimentEl.classList.add(liveData.summary.sentiment.includes('Bullish') ? 'positive' : (liveData.summary.sentiment.includes('Bearish') ? 'negative' : 'neutral'));
+                             }
                              if(document.getElementById(`${lower}-add-exit`)) document.getElementById(`${lower}-add-exit`).textContent = liveData.summary.add_exit;
-                             if(summaryCard.querySelector(`#${lower}-change`)) summaryCard.querySelector(`#${lower}-change`).textContent = liveData.summary.sp >= 0 ? `+${liveData.summary.sp}` : liveData.summary.sp;
-                             if(summaryCard.querySelector(`#${lower}-pct`)) summaryCard.querySelector(`#${lower}-pct`).textContent = liveData.summary.pcr;
+                             if(summaryCard.querySelector(`#${lower}-change`)) {
+                                 const changeEl = summaryCard.querySelector(`#${lower}-change`);
+                                 changeEl.textContent = liveData.summary.sp >= 0 ? `+${formatNumber(liveData.summary.sp)}` : formatNumber(liveData.summary.sp);
+                                 changeEl.classList.remove('positive', 'negative', 'neutral'); // ADDED 'neutral'
+                                 changeEl.classList.add(getChangeColorClass(liveData.summary.sp));
+                             }
+                             if(summaryCard.querySelector(`#${lower}-pct`)) {
+                                 const pctEl = summaryCard.querySelector(`#${lower}-pct`);
+                                 pctEl.textContent = `${formatNumber(liveData.summary.pcr)}%`;
+                                 pctEl.classList.remove('positive', 'negative', 'neutral'); // ADDED 'neutral'
+                                 pctEl.classList.add(getChangeColorClass(liveData.summary.pcr));
+                             }
                         }
                     }
 
@@ -871,11 +1141,11 @@
                                 tr.innerHTML = `
                                     <td class="${getBuildupClass(row.call_buildup)}">${row.call_buildup}</td>
                                     <td>${row.strike}</td>
-                                    <td>${row.call_oi.toLocaleString()}</td>
-                                    <td style="color: ${row.call_coi > 0 ? '#4CAF50' : '#F44336'}">${row.call_coi.toLocaleString()}</td>
+                                    <td>${formatNumber(row.call_oi, 0)}</td>
+                                    <td class="${getChangeColorClass(row.call_coi)}">${formatNumber(row.call_coi, 0)}</td>
                                     <td class="action-cell">${row.call_action}</td>
-                                    <td>${row.put_oi.toLocaleString()}</td>
-                                    <td style="color: ${row.put_coi > 0 ? '#4CAF50' : '#F44336'}">${row.put_coi.toLocaleString()}</td>
+                                    <td>${formatNumber(row.put_oi, 0)}</td>
+                                    <td class="${getChangeColorClass(row.put_coi)}">${formatNumber(row.put_coi, 0)}</td>
                                     <td class="action-cell">${row.put_action}</td>
                                     <td class="${getBuildupClass(row.put_buildup)}">${row.put_buildup}</td>`;
                                 tbody.appendChild(tr);
@@ -893,6 +1163,7 @@
         });
 
         socket.on('equity_data_update', (response) => {
+            console.log("Received equity_data_update:", response); // Debugging
             document.getElementById('equity-loader').classList.add('hidden');
             const dataContainer = document.getElementById('equity-data-container');
             const errorContainer = document.getElementById('equity-error');
@@ -912,6 +1183,7 @@
             document.getElementById('equity-title').textContent = `${symbol} Option Chain Analysis`;
 
             const pulseContainer = document.getElementById('equity-market-pulse-container');
+            // Ensure only one pulse card for equity
             if (!document.getElementById('equity_pulse_card')) {
                 const pulseCard = createPulseCard('EQUITY');
                 pulseCard.id = 'equity_pulse_card';
@@ -923,22 +1195,25 @@
             const callOIPct = totalOI > 0 ? (pulseSummary.total_call_oi / totalOI * 100) : 50;
             document.getElementById('equity-total-call-oi-bar').style.width = `${callOIPct}%`;
             document.getElementById('equity-total-put-oi-bar').style.width = `${100 - callOIPct}%`;
-            document.getElementById('equity-total-call-oi-label').textContent = pulseSummary.total_call_oi.toLocaleString();
-            document.getElementById('equity-total-put-oi-label').textContent = pulseSummary.total_put_oi.toLocaleString();
+            document.getElementById('equity-total-call-oi-label').textContent = formatNumber(pulseSummary.total_call_oi, 0);
+            document.getElementById('equity-total-put-oi-label').textContent = formatNumber(pulseSummary.total_put_oi, 0);
 
             const totalCOI = Math.abs(pulseSummary.total_call_coi) + Math.abs(pulseSummary.total_put_coi);
             const callCOIPct = totalCOI > 0 ? (Math.abs(pulseSummary.total_call_coi) / totalCOI * 100) : 50;
             document.getElementById('equity-total-call-coi-bar').style.width = `${callCOIPct}%`;
             document.getElementById('equity-total-put-coi-bar').style.width = `${100 - callCOIPct}%`;
-            document.getElementById('equity-total-call-coi-label').textContent = pulseSummary.total_call_coi.toLocaleString();
-            document.getElementById('equity-total-put-coi-label').textContent = pulseSummary.total_put_coi.toLocaleString();
+            document.getElementById('equity-total-call-coi-label').textContent = formatNumber(pulseSummary.total_call_coi, 0);
+            document.getElementById('equity-total-put-coi-label').textContent = formatNumber(pulseSummary.total_put_coi, 0);
 
             const summary = equityData.summary;
-            document.getElementById('equity-sp').textContent = summary.sp;
-            document.getElementById('equity-value').textContent = summary.value.toFixed(2);
-            document.getElementById('equity-pcr').textContent = summary.pcr.toFixed(2);
-            document.getElementById('equity-intraday-pcr').textContent = summary.intraday_pcr.toFixed(2);
-            document.getElementById('equity-sentiment').textContent = summary.sentiment;
+            document.getElementById('equity-sp').textContent = formatNumber(summary.sp, 0);
+            document.getElementById('equity-value').textContent = formatNumber(summary.value);
+            document.getElementById('equity-pcr').textContent = formatNumber(summary.pcr);
+            document.getElementById('equity-intraday-pcr').textContent = formatNumber(summary.intraday_pcr);
+            const equitySentimentEl = document.getElementById('equity-sentiment');
+            equitySentimentEl.textContent = summary.sentiment;
+            equitySentimentEl.classList.remove('positive', 'negative', 'neutral');
+            equitySentimentEl.classList.add(summary.sentiment.includes('Bullish') ? 'positive' : (summary.sentiment.includes('Bearish') ? 'negative' : 'neutral'));
 
             const tableBody = document.querySelector('#equity-table tbody');
             tableBody.innerHTML = '';
@@ -948,11 +1223,11 @@
                 tr.innerHTML = `
                     <td class="${getBuildupClass(row.call_buildup)}">${row.call_buildup}</td>
                     <td>${row.strike}</td>
-                    <td>${row.call_oi.toLocaleString()}</td>
-                    <td style="color: ${row.call_coi > 0 ? '#4CAF50' : '#F44336'}">${row.call_coi.toLocaleString()}</td>
+                    <td>${formatNumber(row.call_oi, 0)}</td>
+                    <td class="${getChangeColorClass(row.call_coi)}">${formatNumber(row.call_coi, 0)}</td>
                     <td class="action-cell">${row.call_action}</td>
-                    <td>${row.put_oi.toLocaleString()}</td>
-                    <td style="color: ${row.put_coi > 0 ? '#4CAF50' : '#F44336'}">${row.put_coi.toLocaleString()}</td>
+                    <td>${formatNumber(row.put_oi, 0)}</td>
+                    <td class="${getChangeColorClass(row.put_coi)}">${formatNumber(row.put_coi, 0)}</td>
                     <td class="action-cell">${row.put_action}</td>
                     <td class="${getBuildupClass(row.put_buildup)}">${row.put_buildup}</td>`;
                 tableBody.appendChild(tr);
@@ -960,7 +1235,8 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
-            const today = new Date().toISOString().split('T')[0];
+            console.log("DOMContentLoaded fired."); // Debugging
+            const today = moment().format('YYYY-MM-DD'); // Use moment for today's date
             document.querySelectorAll('.history-date-picker').forEach(input => input.value = today);
 
             const pulseContainer = document.getElementById('market-pulse-container');
@@ -969,6 +1245,7 @@
             });
 
             document.getElementById("NIFTYOpen").click();
+            console.log("NIFTYOpen clicked programmatically."); // Debugging
 
             const equitySelector = $('#equity-symbol-selector');
             equitySelector.select2({
@@ -979,19 +1256,20 @@
             fetch('/api/stocks')
                 .then(response => response.json())
                 .then(stocks => {
+                    console.log("Fetched stock list:", stocks); // Debugging
                     stocks.forEach(stock => {
                         const option = new Option(stock, stock, false, false);
                         equitySelector.append(option);
                     });
                     equitySelector.trigger('change');
+                })
+                .catch(error => { // ADDED CATCH FOR ERROR HANDLING
+                    console.error("Error fetching stock list:", error);
                 });
 
-            fetch('/api/bhavcopy')
-                .then(response => response.json())
-                .then(data => {
-                    console.log("Fetched initial Bhavcopy data:", data);
-                    updateBhavcopyTables(data);
-                });
+            // MODIFIED: Initial Bhavcopy load now uses the new function
+            loadInitialBhavcopyData();
+            console.log("loadInitialBhavcopyData called from DOMContentLoaded."); // Debugging
 
             document.getElementById('fetch-equity-btn').addEventListener('click', () => {
                 const selectedStock = equitySelector.val();
@@ -1006,9 +1284,16 @@
             });
 
             document.getElementById('run-bhavcopy-btn').addEventListener('click', () => {
-                const statusEl = document.getElementById('bhavcopy-status');
-                statusEl.textContent = 'Manual scan triggered... Please wait.';
-                statusEl.style.color = '#FFC107';
+                // This button is in the F&O Bhavcopy tab, but triggers a full scan.
+                // The result will update both F&O and Indices Bhavcopy tables via WebSocket.
+                const equityStatusEl = document.getElementById('bhavcopy-equity-status');
+                const indicesStatusEl = document.getElementById('bhavcopy-indices-status');
+
+                equityStatusEl.textContent = 'Manual scan triggered... Please wait. Updating F&O equities.';
+                equityStatusEl.style.color = '#FFC107';
+                indicesStatusEl.textContent = 'Manual scan triggered... Please wait. Updating indices.';
+                indicesStatusEl.style.color = '#FFC107';
+
                 socket.emit('run_bhavcopy_manually');
             });
         });
