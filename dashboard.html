@@ -199,7 +199,7 @@
         <div id="BHAVCOPY_EQUITIES_tab" class="tabcontent">
             <h3 id="bhavcopy-equity-title">Bhavcopy Daily Scan - F&O Equities (<span id="bhavcopy-equity-date">Loading...</span>)</h3>
             <div class="bhavcopy-controls">
-                <button id="run-bhavcopy-btn">Run Manual Scan</button>
+                <button id="run-bhavcopy-btn">Run Automatic Bhavcopy Scan</button>
                 <div class="history-controls" style="justify-content: center;">
                     <label for="bhavcopy-equity-history-date">View Historical Date:</label>
                     <input type="date" id="bhavcopy-equity-history-date" class="history-date-picker">
@@ -212,13 +212,15 @@
                     <thead>
                         <tr>
                             <th>Symbol</th>
-                            <th>Close</th>
+                            <th>Instrument</th>
+                            <th>Expiry Date</th>
+                            <th>Strike Price</th>
+                            <th>Option Type</th>
+                            <th>Open Interest</th>
+                            <th>Change in OI</th>
                             <th>Volume</th>
-                            <th>% Change</th>
+                            <th>Close</th>
                             <th>Delivery %</th>
-                            <th>Open</th>
-                            <th>High</th>
-                            <th>Low</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -345,7 +347,6 @@
 
             </div>
         </div>
-
 
         <footer>@aditya_nse_bot | Updated: <span id="time">-</span> | Site Visits: <span id="visit-counter">-</span></footer>
     </div>
@@ -510,6 +511,7 @@
             renderChart(`${lower}-pe-oi-chart`, 'bar', peLabels, peData, `${symbol} PE OI`, 'rgba(54, 162, 235, 0.5)', 'rgba(54, 162, 235, 1)');
         }
 
+
         // ADDED: Helper function to format numbers for tables
         function formatNumber(num, decimals = 2) {
             if (num === null || num === undefined || num === 'N/A' || num === '-' || isNaN(num)) return 'N/A';
@@ -522,12 +524,13 @@
             return num; // Return as is if not a number
         }
 
-        // ADDED/MODIFIED: Helper function to get color for percentage change - FIX FOR DOMException
-        function getChangeColorClass(pctChange) {
-            if (pctChange === null || pctChange === undefined || isNaN(pctChange)) return 'neutral'; // Returns 'neutral'
-            if (pctChange > 0) return 'positive';
-            if (pctChange < 0) return 'negative';
-            return 'neutral'; // Returns 'neutral' if pctChange is 0
+        // ADDED/MODIFIED: Helper function to get color for percentage change
+        function getChangeColorClass(value) {
+            if (value === null || value === undefined || isNaN(value)) return 'neutral';
+            const parsedValue = parseFloat(value);
+            if (parsedValue > 0) return 'positive';
+            if (parsedValue < 0) return 'negative';
+            return 'neutral';
         }
 
         function addHistoryItemToTable(tbody, item, symbol, prepend = false) {
@@ -636,32 +639,51 @@
             // If no type specified, update both if data is available
             if (!type || type === 'equities') {
                 console.log("Attempting to update F&O equities table."); // Debugging
-                if (!data || !data.date || !data.equities || data.equities.length === 0) {
+                // Check for fno_data, not equities, for F&O Bhavcopy tab
+                if (!data || !data.date || !data.fno_data || data.fno_data.length === 0) {
                     console.log("No F&O equity data found or error:", data); // Debugging
                     equityTitleEl.innerHTML = `Bhavcopy Daily Scan - F&O Equities (<span id="bhavcopy-equity-date">N/A</span>)`;
                     equityStatusEl.textContent = data && data.error ? data.error : 'No F&O equity Bhavcopy data available for this date.';
                     equityStatusEl.style.color = '#F44336';
                     noEquityDataMessage.style.display = 'block';
                 } else {
-                    console.log("Populating F&O equities table with", data.equities.length, "items."); // Debugging
+                    console.log("Populating F&O equities table with", data.fno_data.length, "items."); // Debugging
                     equityTitleEl.innerHTML = `Bhavcopy Daily Scan - F&O Equities (<span id="bhavcopy-equity-date">${moment(data.date).format('DD MMM YYYY')}</span>)`;
                     equityStatusEl.textContent = 'Latest F&O equity data loaded successfully.';
                     equityStatusEl.style.color = '#4CAF50';
-                    data.equities.forEach(stock => {
+                    data.fno_data.forEach(item => { // Iterate over fno_data
                         const tr = document.createElement('tr');
-                        const changeClass = getChangeColorClass(stock['Pct Change']);
+                        // Assuming F&O data will have different columns than regular equities for this table
+                        // Adjust these columns based on what you want to display from F&O data
+                        // Note: Pct Change for F&O is not directly available in bhavcopy, would need to calculate from previous day's close
                         tr.innerHTML = `
-                            <td>${stock.Symbol}</td>
-                            <td>${formatNumber(stock.Close)}</td>
-                            <td>${formatNumber(stock.Volume, 0)}</td>
-                            <td class="${changeClass}">${formatNumber(stock['Pct Change'])}%</td>
-                            <td>${stock['Delivery %'] !== 'N/A' ? formatNumber(stock['Delivery %'], 2) + '%' : 'N/A'}</td>
-                            <td>${formatNumber(stock.Open)}</td>
-                            <td>${formatNumber(stock.High)}</td>
-                            <td>${formatNumber(stock.Low)}</td>
+                            <td>${item.Symbol}</td>
+                            <td>${item.Instrument}</td>
+                            <td>${item['Expiry Date']}</td>
+                            <td>${item['Strike Price'] !== null ? formatNumber(item['Strike Price']) : 'N/A'}</td>
+                            <td>${item['Option Type'] !== null ? item['Option Type'] : 'N/A'}</td>
+                            <td>${formatNumber(item['Open Interest'], 0)}</td>
+                            <td>${formatNumber(item['Change in OI'], 0)}</td>
+                            <td>${formatNumber(item.Volume, 0)}</td>
+                            <td>${formatNumber(item.Close)}</td>
+                            <td>${item['Delivery %'] !== null ? formatNumber(item['Delivery %'], 2) + '%' : 'N/A'}</td>
                         `;
                         equityTbody.appendChild(tr);
                     });
+                     // Adjust F&O equity table headers dynamically or to a fixed set
+                    const foEquityTableHead = document.querySelector('#bhavcopy-equity-table thead tr');
+                    foEquityTableHead.innerHTML = `
+                        <th>Symbol</th>
+                        <th>Instrument</th>
+                        <th>Expiry Date</th>
+                        <th>Strike Price</th>
+                        <th>Option Type</th>
+                        <th>Open Interest</th>
+                        <th>Change in OI</th>
+                        <th>Volume</th>
+                        <th>Close</th>
+                        <th>Delivery %</th>
+                    `;
                 }
             }
 
@@ -698,7 +720,7 @@
         // ADDED: Function to load historical Bhavcopy data from the new API
         async function loadBhavcopyHistory(typeToLoad) {
             console.log("loadBhavcopyHistory called for type:", typeToLoad); // Debugging
-            let dateInput, statusEl, tbody, noDataMessage, titleEl, dateSpanId;
+            let dateInput, statusEl, tbody, noDataMessage, titleEl, dateSpanId, colCount;
             if (typeToLoad === 'equities') {
                 dateInput = document.getElementById('bhavcopy-equity-history-date');
                 statusEl = document.getElementById('bhavcopy-equity-status');
@@ -706,6 +728,7 @@
                 noDataMessage = document.getElementById('no-bhavcopy-equity-data');
                 titleEl = document.getElementById('bhavcopy-equity-title');
                 dateSpanId = 'bhavcopy-equity-date';
+                colCount = 10; // F&O equity table has 10 columns
             } else if (typeToLoad === 'indices') {
                 dateInput = document.getElementById('bhavcopy-indices-history-date');
                 statusEl = document.getElementById('bhavcopy-indices-status');
@@ -713,6 +736,7 @@
                 noDataMessage = document.getElementById('no-bhavcopy-indices-data');
                 titleEl = document.getElementById('bhavcopy-indices-title');
                 dateSpanId = 'bhavcopy-indices-date';
+                colCount = 6; // Index table has 6 columns
             } else {
                 console.error("Invalid type for loadBhavcopyHistory:", typeToLoad);
                 return;
@@ -726,7 +750,7 @@
 
             statusEl.textContent = `Loading Bhavcopy for ${selectedDate}...`;
             statusEl.style.color = '#FFC107'; // Yellow for loading
-            tbody.innerHTML = '<tr><td colspan="8">Loading...</td></tr>'; // Max colspan for equity table
+            tbody.innerHTML = `<tr><td colspan="${colCount}">Loading...</td></tr>`;
             noDataMessage.style.display = 'none';
 
             try {
@@ -737,7 +761,7 @@
                 if (data.error) {
                     statusEl.textContent = data.error;
                     statusEl.style.color = '#F44336'; // Red for error/not found
-                    tbody.innerHTML = `<tr><td colspan="8" class="negative">${data.error}</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="${colCount}" class="negative">${data.error}</td></tr>`;
                     noDataMessage.style.display = 'block';
                     titleEl.innerHTML = `Bhavcopy Daily Scan - ${typeToLoad === 'equities' ? 'F&O Equities' : 'Indices'} (<span id="${dateSpanId}">N/A</span>)`;
                 } else {
@@ -747,7 +771,7 @@
             } catch (error) {
                 statusEl.textContent = 'Failed to load historical data.';
                 statusEl.style.color = '#F44336';
-                tbody.innerHTML = '<tr><td colspan="8" class="negative">Failed to load data.</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="${colCount}" class="negative">Failed to load data.</td></tr>`;
                 console.error("Error loading historical bhavcopy:", error);
             }
         }
@@ -800,64 +824,57 @@
             }
 
             const strategyStatusEl = document.getElementById('strategy-status');
-            strategyStatusEl.textContent = `Analyzing Bhavcopy strategies for ${selectedDate}...`;
+            strategyStatusEl.textContent = `Initiating Bhavcopy download and strategy analysis for ${selectedDate}...`;
             strategyStatusEl.style.color = '#FFC107';
 
             // Clear previous results and show loading
             document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
                 const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
-                tbody.innerHTML = `<tr><td colspan="${colspan}">Analyzing...</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${colspan}">Initializing...</td></tr>`;
             });
 
-            try {
-                // Fetch strategies results from the new API endpoint
-                const strategyResponse = await fetch(`/api/bhavcopy/strategies/${selectedDate}`);
-                const results = await strategyResponse.json();
-                console.log("Received strategy results:", results); // Debugging
+            // Emit event to backend to download files and then analyze
+            socket.emit('run_bhavcopy_for_date_and_analyze', { date: selectedDate });
+        }
 
-                if (results.error) {
-                    strategyStatusEl.textContent = `Error: ${results.error}`;
-                    strategyStatusEl.style.color = '#F44336';
-                    document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
-                        const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
-                        tbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">Error during analysis.</td></tr>`;
-                    });
-                    return;
-                }
-
-                strategyStatusEl.textContent = `Strategies analyzed for ${selectedDate}.`;
-                strategyStatusEl.style.color = '#4CAF50';
-
-                // Populate each strategy table
-                populateFddtTable(results.FDDT);
-                populateZdftTable(results.ZDFT);
-                populateBdgpTable(results.BDGP);
-                populateVar7Table(results.VAR7);
-                populateHba21Table(results.HBA21);
-                populateOimtTable(results.OIMT);
-                populateVssbTable(results.VSSB);
-                populateOoadTable(results.OOAD);
-                populateCaadtTable(results.CAADT);
-
-
-            } catch (error) {
-                strategyStatusEl.textContent = 'Failed to analyze Bhavcopy strategies. An error occurred.';
-                strategyStatusEl.style.color = '#F44336';
-                console.error("Error analyzing Bhavcopy strategies:", error);
+        // --- SocketIO Listeners for Bhavcopy Strategies ---
+        socket.on('bhavcopy_analysis_status', (data) => {
+            const strategyStatusEl = document.getElementById('strategy-status');
+            strategyStatusEl.textContent = data.message;
+            strategyStatusEl.style.color = data.success ? '#4CAF50' : '#F44336';
+            if (!data.success) {
+                // If there's an error, clear tables or show error message
                 document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
                     const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
-                    tbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">Error during analysis.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">${data.message}</td></tr>`;
                 });
             }
-        }
+        });
+
+        socket.on('bhavcopy_strategy_results', (data) => {
+            console.log("Received bhavcopy_strategy_results:", data); // Debugging
+            const results = data.results;
+            const selectedDate = data.date;
+
+            // Populate each strategy table
+            populateFddtTable(results.FDDT);
+            populateZdftTable(results.ZDFT);
+            populateBdgpTable(results.BDGP);
+            populateVar7Table(results.VAR7);
+            populateHba21Table(results.HBA21);
+            populateOimtTable(results.OIMT);
+            populateVssbTable(results.VSSB);
+            populateOoadTable(results.OOAD);
+            populateCaadtTable(results.CAADT);
+        });
 
         // --- Functions to populate individual strategy tables ---
 
         function populateFddtTable(data) {
             const tbody = document.querySelector('#strategy-fddt-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires"))) {
-                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires FII/DII data integration)'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("Requires"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available. (Requires FII/DII data integration)'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -870,8 +887,8 @@
         function populateZdftTable(data) {
             const tbody = document.querySelector('#strategy-zdft-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Zero-Delivery"))) {
-                tbody.innerHTML = `<tr><td colspan="4">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("No Zero-Delivery"))) {
+                tbody.innerHTML = `<tr><td colspan="4">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -884,8 +901,8 @@
         function populateBdgpTable(data) {
             const tbody = document.querySelector('#strategy-bdgp-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity or Block Deal"))) {
-                tbody.innerHTML = `<tr><td colspan="7">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("No Equity or Block Deal"))) {
+                tbody.innerHTML = `<tr><td colspan="7">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -898,8 +915,8 @@
         function populateVar7Table(data) {
             const tbody = document.querySelector('#strategy-var7-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity data"))) {
-                tbody.innerHTML = `<tr><td colspan="6">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("No Equity data"))) {
+                tbody.innerHTML = `<tr><td colspan="6">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -912,8 +929,8 @@
         function populateHba21Table(data) {
             const tbody = document.querySelector('#strategy-hba21-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires Corporate Actions"))) {
-                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("Requires Corporate Actions"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -926,8 +943,8 @@
         function populateOimtTable(data) {
             const tbody = document.querySelector('#strategy-oimt-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity or F&O"))) {
-                tbody.innerHTML = `<tr><td colspan="5">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("No Equity or F&O"))) {
+                tbody.innerHTML = `<tr><td colspan="5">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -940,8 +957,8 @@
         function populateVssbTable(data) {
             const tbody = document.querySelector('#strategy-vssb-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("No Equity data"))) {
-                tbody.innerHTML = `<tr><td colspan="7">${data && data.length > 0 ? data[0].Signal : 'No data available.'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("No Equity data"))) {
+                tbody.innerHTML = `<tr><td colspan="7">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available.'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -954,8 +971,8 @@
         function populateOoadTable(data) {
             const tbody = document.querySelector('#strategy-ooad-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires detailed Options"))) {
-                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires detailed Options Bhavcopy parsing and storage)'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("Requires detailed Options"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available. (Requires detailed Options Bhavcopy parsing and storage)'}</td></tr>`;
                 return;
             }
             data.forEach(item => {
@@ -968,8 +985,8 @@
         function populateCaadtTable(data) {
             const tbody = document.querySelector('#strategy-caadt-table tbody');
             tbody.innerHTML = '';
-            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal.includes("Requires Corporate Actions"))) {
-                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 ? data[0].Signal : 'No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)'}</td></tr>`;
+            if (!data || data.length === 0 || (data.length === 1 && data[0].Signal && data[0].Signal.includes("Requires Corporate Actions"))) {
+                tbody.innerHTML = `<tr><td colspan="2">${data && data.length > 0 && data[0].Signal ? data[0].Signal : 'No data available. (Requires Corporate Actions data and multi-day delivery trend analysis)'}</td></tr>`;
                 return;
             }
             data.forEach(item => {

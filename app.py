@@ -107,13 +107,13 @@ def get_historical_bhavcopy(date_str: str):
 
 # NEW: API endpoint for strategy analysis
 @app.route('/api/bhavcopy/strategies/<date_str>')
-def get_bhavcopy_strategies(date_str: str):
+def get_bhavcopy_strategies(date_str: str) -> Dict[str, Any]:  # Adjusted return type hint
     if not analyzer.conn:
-        return jsonify({"error": "Database connection not available."}), 500
+        return {"error": "Database connection not available."}  # Return dict for consistency
     try:
         datetime.datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
-        return jsonify({"error": "Invalid date format. Please use YYYY-MM-DD."}), 400
+        return {"error": "Invalid date format. Please use YYYY-MM-DD."}
 
     results = {}
     try:
@@ -146,9 +146,9 @@ def get_bhavcopy_strategies(date_str: str):
 
     except Exception as e:
         print(f"Error running strategies for {date_str}: {e}")
-        return jsonify({"error": f"An internal error occurred while running strategies: {e}"}), 500
+        return {"error": f"An internal error occurred while running strategies: {e}"}
 
-    return jsonify(results)
+    return results
 
 
 @socketio.on('connect')
@@ -186,7 +186,7 @@ def handle_manual_bhavcopy_run():
             if target_day.weekday() >= 5:  # Saturday or Sunday
                 continue
 
-            if analyzer.run_bhavcopy_for_date(target_day):
+            if analyzer.run_bhavcopy_for_date(target_day, trigger_manual=True):
                 print(f"Manual Scan Success: Processed Bhavcopy for date: {target_day.strftime('%Y-%m-%d')}")
                 analyzer.send_telegram_message(
                     f"✅ Manual Scan: Bhavcopy for {target_day.strftime('%d-%b-%Y')} processed and loaded.")
@@ -197,6 +197,24 @@ def handle_manual_bhavcopy_run():
             analyzer.send_telegram_message(f"❌ Manual Scan: Failed to process Bhavcopy for the last few trading days.")
 
     socketio.start_background_task(manual_scan_wrapper)
+
+
+@socketio.on('run_bhavcopy_for_date_and_analyze')
+def handle_run_bhavcopy_for_date_and_analyze(data):
+    date_str = data.get('date')
+    if not date_str:
+        emit('bhavcopy_analysis_status', {'success': False, 'message': 'Date is required for analysis.'})
+        return
+
+    try:
+        date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+        socketio.start_background_task(target=analyzer._run_bhavcopy_and_analyze_wrapper, date_obj=date_obj,
+                                       sid=request.sid)
+    except ValueError:
+        emit('bhavcopy_analysis_status', {'success': False, 'message': 'Invalid date format. Use YYYY-MM-DD.'})
+    except Exception as e:
+        print(f"Error triggering bhavcopy and analysis: {e}")
+        emit('bhavcopy_analysis_status', {'success': False, 'message': f'Error triggering analysis: {e}'})
 
 
 def broadcast_live_update():
@@ -334,7 +352,6 @@ class NseBseAnalyzer:
                 "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, symbol TEXT, sp REAL, value REAL, call_oi REAL, put_oi REAL, pcr REAL, sentiment TEXT, add_exit TEXT, pcr_change REAL, intraday_pcr REAL)")
 
             # Table for Equity Bhavcopy Data (CM Segment)
-            # Added prev_close and trading_type columns
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS bhavcopy_data (
                     date TEXT,
@@ -365,7 +382,7 @@ class NseBseAnalyzer:
                 )"""
             )
             # NEW: Table for F&O Bhavcopy Data (Futures and Options, simplified for strategies)
-            # PRIMARY KEY now explicitly handles NULL for strike_price and option_type
+            # FIX: Removed IFNULL from PRIMARY KEY definition
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS fno_bhavcopy_data (
                     date TEXT,
@@ -379,7 +396,7 @@ class NseBseAnalyzer:
                     volume INTEGER,
                     close REAL,
                     delivery_pct REAL, -- For futures
-                    PRIMARY KEY (date, symbol, instrument, expiry_date, IFNULL(strike_price, -1), IFNULL(option_type, 'N/A'))
+                    PRIMARY KEY (date, symbol, instrument, expiry_date, strike_price, option_type)
                 )"""
             )
             # NEW: Table for Block Deal Data
@@ -614,7 +631,134 @@ class NseBseAnalyzer:
 
             time.sleep(900)  # Check every 15 minutes
 
-    def run_bhavcopy_for_date(self, date_obj):
+    def download_bhavcopy_file_by_name(self, date_obj, file_pattern_or_name, target_folder, is_zip=False):
+        """
+        Attempts to download a bhavcopy file given a date and a file pattern/name.
+        It tries a few common NSE base URLs.
+        """
+        date_dmy = date_obj.strftime('%d%m%Y')
+        date_ymd = date_obj.strftime('%Y-%m-%d')
+        month_upper = date_obj.strftime('%b').upper()
+        year = date_obj.year
+
+        # Base URLs to try - Prioritized nsearchives.nseindia.com as it seems more reliable from your tests
+        possible_base_urls = [
+            # Prioritized nsearchives
+            "https://nsearchives.nseindia.com/products/content/",
+            f"https://nsearchives.nseindia.com/content/historical/DERIVATIVES/{year}/{month_upper}/",
+            "https://nsearchives.nseindia.com/content/indices/",
+            "https://nsearchives.nseindia.com/content/fo/",  # New base for BhavCopy_NSE_FO
+            "https://nsearchives.nseindia.com/content/equities/",  # New base for block.csv, bulk.csv etc.
+            "https://nsearchives.nseindia.com/archives/fo/",  # New base for fo.zip, sec_ban etc.
+            "https://nsearchives.nseindia.com/archives/nsccl/sett/",  # New base for FOSett_prce
+            "https://nsearchives.nseindia.com/archives/cd/bhav/",  # New base for CD bhavcopy
+            "https://nsearchives.nseindia.com/content/com/",  # New base for COM bhavcopy
+            "https://nsearchives.nseindia.com/archives/ird/bhav/",  # New base for IRD bhavcopy
+
+            # Secondary (www1.nseindia.com) - often has TLS issues
+            f"https://www1.nseindia.com/content/historical/DERIVATIVES/{year}/{month_upper}/",
+            "https://www1.nseindia.com/products/content/",
+
+            # Tertiary (archives.nseindia.com) - less common for these specific files
+            "https://archives.nseindia.com/content/fo/bhav/",
+            "https://archives.nseindia.com/content/equities/bulk_block/",
+            "https://archives.nseindia.com/content/historical/equities/",
+            "https://archives.nseindia.com/content/nsccl/fao_bhav/",
+        ]
+
+        # Generate specific filenames based on pattern and date formats
+        file_candidates = []
+        # Standard replacements
+        if "DDMMYYYY" in file_pattern_or_name:
+            file_candidates.append(file_pattern_or_name.replace("DDMMYYYY", date_dmy))
+        if "YYYY-MM-DD" in file_pattern_or_name:
+            file_candidates.append(file_pattern_or_name.replace("YYYY-MM-DD", date_ymd))
+        if "DDMMYY" in file_pattern_or_name:
+            file_candidates.append(file_pattern_or_name.replace("DDMMYY", date_obj.strftime('%d%m%y')))
+        if "YYYYMMDD" in file_pattern_or_name:  # For nsccl.YYYYMMDD.s.zip, BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip
+            file_candidates.append(file_pattern_or_name.replace("YYYYMMDD", date_obj.strftime('%Y%m%d')))
+
+        # Add the original pattern/name itself, in case it's a fixed name like "block.csv" or "fo.zip"
+        if file_pattern_or_name not in file_candidates:
+            file_candidates.append(file_pattern_or_name)
+
+        # Ensure correct suffix if not already present
+        final_file_candidates = []
+        for fn in file_candidates:
+            # Handle cases where the pattern already includes .zip or .csv
+            if is_zip and not fn.endswith(".zip"):
+                final_file_candidates.append(f"{fn}.zip")
+            elif not is_zip and not (fn.endswith(".csv") or fn.endswith(".DAT") or fn.endswith(".xls")):  # Added .xls
+                final_file_candidates.append(f"{fn}.csv")  # Default to .csv if not specified
+            else:
+                final_file_candidates.append(fn)
+
+        for base_url in possible_base_urls:
+            # Use .format() only if the base_url contains placeholders
+            formatted_base_url = base_url
+            if '{year}' in base_url or '{month_upper}' in base_url:
+                formatted_base_url = base_url.format(year=year, month_upper=month_upper)
+
+            for filename in final_file_candidates:
+                full_url = formatted_base_url + filename
+                print(f"Trying to download: {full_url}")
+                try:
+                    response = self.session.get(full_url, headers=self.nse_headers, timeout=40)
+                    if response.status_code == 200:
+                        path = os.path.join(target_folder, filename)
+                        os.makedirs(target_folder, exist_ok=True)
+                        with open(path, "wb") as f:
+                            f.write(response.content)
+                        print(f"Successfully downloaded {filename} from {full_url}")
+                        return path
+                    elif response.status_code == 404:
+                        continue  # File not found, try next candidate
+                    else:
+                        print(f"Download failed for {full_url} with status {response.status_code}")
+                except requests.exceptions.RequestException as e:
+                    print(f"Error downloading {full_url}: {e}")
+        return None
+
+    def _run_bhavcopy_and_analyze_wrapper(self, date_obj, sid):
+        date_str = date_obj.strftime('%Y-%m-%d')
+        socketio.emit('bhavcopy_analysis_status',
+                      {'success': True, 'message': f'Attempting to download and process Bhavcopy for {date_str}...'},
+                      to=sid)
+
+        # Step 1: Download and Process Bhavcopy Files
+        download_success = self.run_bhavcopy_for_date(date_obj, trigger_manual=True)
+
+        if download_success:
+            socketio.emit('bhavcopy_analysis_status',
+                          {'success': True, 'message': f'Bhavcopy for {date_str} processed. Analyzing strategies...'},
+                          to=sid)
+            # Step 2: Trigger Strategy Analysis (via API call, which will then emit results)
+            try:
+                # Direct call to strategy analysis logic
+                results = {}
+                results['FDDT'] = self.analyze_fii_dii_delivery_divergence(date_str)
+                results['ZDFT'] = self.analyze_zero_delivery_future_roll(date_str)
+                results['BDGP'] = self.analyze_block_deal_ghost_pump(date_str)
+                results['VAR7'] = self.analyze_vwap_anchor_reversion(date_str)
+                results['HBA21'] = self.analyze_hidden_bonus_arbitrage(date_str)
+                results['OIMT'] = self.analyze_oi_momentum_trap(date_str)
+                results['VSSB'] = self.analyze_volume_surge_scanner(date_str)
+                results['OOAD'] = self.analyze_options_oi_anomaly(date_str)
+                results['CAADT'] = self.analyze_corporate_action_arbitrage(date_str)
+
+                socketio.emit('bhavcopy_strategy_results', {'date': date_str, 'results': results}, to=sid)
+                socketio.emit('bhavcopy_analysis_status',
+                              {'success': True, 'message': f'Strategies for {date_str} analyzed successfully.'}, to=sid)
+            except Exception as e:
+                print(f"Error analyzing strategies for {date_str}: {e}")
+                socketio.emit('bhavcopy_analysis_status',
+                              {'success': False, 'message': f'Error analyzing strategies: {e}'}, to=sid)
+        else:
+            socketio.emit('bhavcopy_analysis_status',
+                          {'success': False, 'message': f'Failed to download or process Bhavcopy for {date_str}.'},
+                          to=sid)
+
+    def run_bhavcopy_for_date(self, date_obj, trigger_manual=False):
         global latest_bhavcopy_data
         target_date_str_dmy = date_obj.strftime('%d%m%Y')
         target_date_str_ymd = date_obj.strftime('%Y-%m-%d')
@@ -622,76 +766,79 @@ class NseBseAnalyzer:
 
         self.bhavcopy_running.set()
         try:
-            # Refresh cookies before trying to download Bhavcopy files
             self._set_nse_session_cookies()
 
-            cm_success = False  # Cash Market (Equity)
-            fno_success = False  # Futures & Options
-            index_success = False
+            cm_path = None
+            fno_path = None
+            index_path = None
+            block_path = None
+            bulk_path = None
 
-            # --- CASH MARKET BHAVCOPY (sec_bhavdata_full) ---
-            url_cm = f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{target_date_str_dmy}.csv"
-            try:
-                print(f"Trying CM Bhavcopy: {url_cm}")
-                r_cm = self.session.get(url_cm, headers=self.nse_headers, timeout=40)
-                if r_cm.status_code == 200:
-                    path_cm = f"Bhavcopy_Downloads/NSE/sec_bhavdata_full_{target_date_str_dmy}.csv"
-                    os.makedirs(os.path.dirname(path_cm), exist_ok=True)
-                    with open(path_cm, "wb") as f:
-                        f.write(r_cm.content)
-                    print(f"CM Bhavcopy for {target_date_str_dmy} downloaded.")
-                    cm_success = True
-                else:
-                    print(f"CM Bhavcopy not found (status {r_cm.status_code}) for {target_date_str_dmy}")
-            except Exception as e:
-                print(f"CM download failed for {target_date_str_dmy}: {e}")
+            # --- CM Bhavcopy ---
+            print(f"Trying to find CM Bhavcopy for {target_date_str_dmy}...")
+            cm_path = self.download_bhavcopy_file_by_name(date_obj, f"sec_bhavdata_full_{target_date_str_dmy}.csv",
+                                                          "Bhavcopy_Downloads/NSE")
+            if not cm_path:  # Try alternative name if standard fails
+                cm_path = self.download_bhavcopy_file_by_name(date_obj,
+                                                              f"BhavCopy_NSE_CM_0_0_0_{date_obj.strftime('%Y%m%d')}_F_0000.csv.zip",
+                                                              "Bhavcopy_Downloads/NSE", is_zip=True)
+                if cm_path: print(f"Found alternative CM Bhavcopy: {os.path.basename(cm_path)}")
 
-            # --- F&O BHAVCOPY (fo_bhavdata) ---
-            url_fo = f"https://nsearchives.nseindia.com/content/historical/DERIVATIVES/{date_obj.year}/{date_obj.strftime('%b').upper()}/fo{target_date_str_dmy}bhav.csv.zip"
-            try:
-                print(f"Trying F&O Bhavcopy: {url_fo}")
-                r_fo = self.session.get(url_fo, headers=self.nse_headers, timeout=40)
-                if r_fo.status_code == 200:
-                    path_fo_zip = f"Bhavcopy_Downloads/NSE/fo{target_date_str_dmy}bhav.csv.zip"
-                    os.makedirs(os.path.dirname(path_fo_zip), exist_ok=True)
-                    with open(path_fo_zip, "wb") as f:
-                        f.write(r_fo.content)
-                    print(f"F&O Bhavcopy for {target_date_str_dmy} downloaded.")
-                    fno_success = True
-                else:
-                    print(f"F&O Bhavcopy not found (status {r_fo.status_code}) for {target_date_str_dmy}")
-            except Exception as e:
-                print(f"F&O download failed for {target_date_str_dmy}: {e}")
+            # --- F&O Bhavcopy ---
+            print(f"Trying to find F&O Bhavcopy for {target_date_str_dmy}...")
+            # Try standard name first (foDDMMYYYYbhav.csv.zip)
+            fno_path = self.download_bhavcopy_file_by_name(date_obj, f"fo{target_date_str_dmy}bhav.csv.zip",
+                                                           "Bhavcopy_Downloads/NSE", is_zip=True)
+            if not fno_path:  # Try foDDMMYYYY.zip (from your new list)
+                fno_path = self.download_bhavcopy_file_by_name(date_obj, f"fo{target_date_str_dmy}.zip",
+                                                               "Bhavcopy_Downloads/NSE", is_zip=True)
+            if not fno_path:  # Try PRDDMMYY.zip (your previous example)
+                fno_path = self.download_bhavcopy_file_by_name(date_obj, f"PR{date_obj.strftime('%d%m%y')}.zip",
+                                                               "Bhavcopy_Downloads/NSE", is_zip=True)
+            if not fno_path:  # Try BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip (from your new list, exact match)
+                fno_path = self.download_bhavcopy_file_by_name(date_obj,
+                                                               f"BhavCopy_NSE_FO_0_0_0_{date_obj.strftime('%Y%m%d')}_F_0000.csv.zip",
+                                                               "Bhavcopy_Downloads/NSE", is_zip=True)
+            if not fno_path:  # Try nsccl.YYYYMMDD.s.zip (from your new list, general NSCCL FO)
+                fno_path = self.download_bhavcopy_file_by_name(date_obj, f"nsccl.{date_obj.strftime('%Y%m%d')}.s.zip",
+                                                               "Bhavcopy_Downloads/NSE", is_zip=True)
+            if fno_path: print(f"Found F&O Bhavcopy: {os.path.basename(fno_path)}")
 
-            # --- INDEX BHAVCOPY (ind_close_all) ---
-            url_idx = f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{target_date_str_dmy}.csv"
-            try:
-                print(f"Trying Index Bhavcopy: {url_idx}")
-                r_idx = self.session.get(url_idx, headers=self.nse_headers, timeout=40)
-                if r_idx.status_code == 200:
-                    path_idx = f"Bhavcopy_Downloads/NSE/ind_close_all_{target_date_str_dmy}.csv"
-                    os.makedirs(os.path.dirname(path_idx), exist_ok=True)
-                    with open(path_idx, "wb") as f:
-                        f.write(r_idx.content)
-                    print(f"Index Bhavcopy for {target_date_str_dmy} downloaded.")
-                    index_success = True
-                else:
-                    print(f"Index Bhavcopy not found (status {r_idx.status_code}) for {target_date_str_dmy}")
-            except Exception as e:
-                print(f"Index download failed for {target_date_str_dmy}: {e}")
-
-            if cm_success or fno_success or index_success:
+            # --- Index Bhavcopy ---
+            print(f"Trying to find Index Bhavcopy for {target_date_str_dmy}...")
+            index_path = self.download_bhavcopy_file_by_name(date_obj, f"ind_close_all_{target_date_str_dmy}.csv",
+                                                             "Bhavcopy_Downloads/NSE")
+            if not index_path:
                 print(
-                    f"Bhavcopy files for {target_date_str_dmy} downloaded ({'CM ' if cm_success else ''}{'F&O ' if fno_success else ''}{'Index ' if index_success else ''}).")
+                    f"Standard Index Bhavcopy not found. Relying on process_and_save_bhavcopy_files to potentially extract from other files.")
+                # For now, if ind_close_all.csv not found, we rely on the process_and_save_bhavcopy_files
+                # to potentially extract index info from other files if it's present or just skip.
+                pass
+
+                # --- Block Deals (separate file) ---
+            print(f"Trying to find Block Deals file for {target_date_str_dmy}...")
+            block_path = self.download_bhavcopy_file_by_name(date_obj, "block.csv", "Bhavcopy_Downloads/NSE")
+            if block_path: print(f"Found Block Deals file: {os.path.basename(block_path)}")
+
+            # --- Bulk Deals (separate file) ---
+            print(f"Trying to find Bulk Deals file for {target_date_str_dmy}...")
+            bulk_path = self.download_bhavcopy_file_by_name(date_obj, "bulk.csv", "Bhavcopy_Downloads/NSE")
+            if bulk_path: print(f"Found Bulk Deals file: {os.path.basename(bulk_path)}")
+
+            if cm_path or fno_path or index_path or block_path or bulk_path:  # Changed to OR any path is found
+                downloaded_files_str = f"{'CM ' if cm_path else ''}{'F&O ' if fno_path else ''}{'Index ' if index_path else ''}{'Block ' if block_path else ''}{'Bulk ' if bulk_path else ''}"
+                print(f"Bhavcopy files for {target_date_str_dmy} downloaded ({downloaded_files_str.strip()}).")
+
+                # Pass file paths to processing function, so it knows which files to read
                 extracted_data = self.process_and_save_bhavcopy_files(
-                    target_date_str_dmy, cm_success, fno_success, index_success
+                    target_date_str_dmy, cm_path, fno_path, index_path, block_path, bulk_path  # Pass bulk_path
                 )
 
                 if extracted_data and (
                         extracted_data.get("equities") or extracted_data.get("indices") or extracted_data.get(
-                        "fno_data")):
+                        "fno_data") or extracted_data.get("block_deals")):
                     print(
-                        f"Successfully extracted {len(extracted_data.get('equities', []))} equity, {len(extracted_data.get('fno_data', []))} F&O, and {len(extracted_data.get('indices', []))} index records from Bhavcopy.")
+                        f"Successfully extracted {len(extracted_data.get('equities', []))} equity, {len(extracted_data.get('fno_data', []))} F&O, {len(extracted_data.get('indices', []))} index, and {len(extracted_data.get('block_deals', []))} block deal records from Bhavcopy.")
                     latest_bhavcopy_data = extracted_data  # Update global cache
                     print("Bhavcopy data extracted, stored in memory, and saved to DB.")
                     socketio.emit('bhavcopy_update', latest_bhavcopy_data)
@@ -704,180 +851,229 @@ class NseBseAnalyzer:
         finally:
             self.bhavcopy_running.clear()
 
-    def process_and_save_bhavcopy_files(self, target_date_str_dmy, cm_file_downloaded, fno_file_downloaded,
-                                        index_file_downloaded):
+    def process_and_save_bhavcopy_files(self, target_date_str_dmy, cm_file_path=None, fno_file_path=None,
+                                        index_file_path=None, block_file_path=None, bulk_file_path=None):
         date_obj = datetime.datetime.strptime(target_date_str_dmy, '%d%m%Y')
         db_date_str = date_obj.strftime('%Y-%m-%d')
 
         all_equities_for_date = []
         all_indices_for_date = []
         all_fno_data_for_date = []
-        all_block_deals_for_date = []
+        all_block_deals_for_date = []  # This will now be populated from block.csv or bulk.csv
 
         # --- Process CM Bhavcopy ---
-        if cm_file_downloaded:
-            cm_file_path = f"Bhavcopy_Downloads/NSE/sec_bhavdata_full_{target_date_str_dmy}.csv"
-            if os.path.exists(cm_file_path):
-                try:
+        # Read from cm_file_path if available
+        if cm_file_path and os.path.exists(cm_file_path):
+            try:
+                # If it's a ZIP, extract first
+                if cm_file_path.endswith('.zip'):
+                    with ZipFile(cm_file_path, 'r') as zip_ref:
+                        csv_name = zip_ref.namelist()[0]
+                        with zip_ref.open(csv_name) as csv_file:
+                            df = pd.read_csv(csv_file, skipinitialspace=True)
+                else:
                     df = pd.read_csv(cm_file_path, skipinitialspace=True)
-                    df.columns = [col.strip().upper() for col in df.columns]
 
-                    df['SYMBOL'] = df['SYMBOL'].str.strip()
-                    df['SERIES'] = df['SERIES'].str.strip()
-                    # Ensure TRADING_TYPE column exists, default to 'EQ' if not for non-block deals
-                    if 'TRADING_TYPE' not in df.columns:
-                        df['TRADING_TYPE'] = 'EQ'
-                    df['TRADING_TYPE'] = df['TRADING_TYPE'].fillna('EQ').str.strip()
-                    df['DELIV_PER'] = df['DELIV_PER'].replace('-', 'N/A')  # Handle missing delivery data
+                df.columns = [col.strip().upper() for col in df.columns]
 
-                    # Process EQ series for main equity table
-                    eq_df = df[df['SERIES'] == 'EQ'].copy()
-                    # Filter for F&O stocks only for dashboard display (or all EQ if you want)
-                    fno_eq_df = eq_df[eq_df['SYMBOL'].isin(fno_stocks_list)].copy()
+                print(f"--- CM Bhavcopy for {db_date_str} loaded ---")
+                df['SYMBOL'] = df['SYMBOL'].str.strip()
+                df['SERIES'] = df['SERIES'].str.strip()
 
-                    for index, r in fno_eq_df.iterrows():
-                        sym = r['SYMBOL']
-                        prev_close = r.get('PREV_CLOSE', None)
-                        close_price = r.get('CLOSE_PRICE', None)
-                        volume = r.get('TTL_TRD_QNTY', None)
-                        open_price = r.get('OPEN_PRICE', None)
-                        high_price = r.get('HIGH_PRICE', None)
-                        low_price = r.get('LOW_PRICE', None)
-                        trading_type = r.get('TRADING_TYPE', 'EQ')  # Default to EQ if not specified
+                if 'TRADING_TYPE' not in df.columns:
+                    print("WARNING: 'TRADING_TYPE' column not found in CM Bhavcopy. Defaulting to 'EQ'.")
+                    df['TRADING_TYPE'] = 'EQ'
+                df['TRADING_TYPE'] = df['TRADING_TYPE'].fillna('EQ').str.strip()
+                df['DELIV_PER'] = df['DELIV_PER'].replace('-', 'N/A')
 
-                        chg = ((
-                                           close_price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 and close_price is not None else 0
-                        delivery_str = str(r.get('DELIV_PER', 'N/A')).strip()
-                        delivery = delivery_str if delivery_str != 'N/A' else 'N/A'
+                eq_df = df[df['SERIES'] == 'EQ'].copy()
 
-                        all_equities_for_date.append({
-                            "Symbol": sym,
-                            "Close": round(close_price, 2) if close_price is not None else None,
-                            "Volume": int(volume) if volume is not None else None,
-                            "Pct Change": round(chg, 2),
-                            "Delivery %": delivery,
-                            "Open": round(open_price, 2) if open_price is not None else None,
-                            "High": round(high_price, 2) if high_price is not None else None,
-                            "Low": round(low_price, 2) if low_price is not None else None,
-                            "Prev Close": round(prev_close, 2) if prev_close is not None else None,
-                            "Trading Type": trading_type
-                        })
+                print(f"CM EQ (all) count: {len(eq_df)}")
+                for index, r in eq_df.iterrows():
+                    sym = r['SYMBOL']
+                    prev_close = r.get('PREV_CLOSE', None)
+                    close_price = r.get('CLOSE_PRICE', None)
+                    volume = r.get('TTL_TRD_QNTY', None)
+                    open_price = r.get('OPEN_PRICE', None)
+                    high_price = r.get('HIGH_PRICE', None)
+                    low_price = r.get('LOW_PRICE', None)
+                    trading_type = r.get('TRADING_TYPE', 'EQ')
 
-                    # Extract Block Deals (TRADING_TYPE == 'B')
-                    # Use the original df before filtering for SERIES='EQ'
-                    block_deal_df = df[df['TRADING_TYPE'] == 'B'].copy()
-                    for index, r in block_deal_df.iterrows():
-                        all_block_deals_for_date.append({
-                            "Symbol": r['SYMBOL'],
-                            "Trade Type": r['TRADING_TYPE'],
-                            "Quantity": int(r['TTL_TRD_QNTY']),
-                            "Price": round(r['CLOSE_PRICE'], 2)
-                            # Block deal price is usually in CLOSE_PRICE for 'B' type
-                        })
+                    chg = ((
+                                       close_price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 and close_price is not None else 0
+                    delivery_str = str(r.get('DELIV_PER', 'N/A')).strip()
+                    delivery = delivery_str if delivery_str != 'N/A' else 'N/A'
 
-                except KeyError as e:
-                    print(
-                        f"CRITICAL ERROR: A required column is missing in the CM Bhavcopy CSV: {e}. Data extraction failed. (This might be due to missing TRADING_TYPE column in older Bhavcopy files)")
-                except Exception as e:
-                    print(f"Error reading CM Bhavcopy file: {e}")
+                    all_equities_for_date.append({
+                        "Symbol": sym,
+                        "Close": round(close_price, 2) if close_price is not None else None,
+                        "Volume": int(volume) if volume is not None else None,
+                        "Pct Change": round(chg, 2),
+                        "Delivery %": delivery,
+                        "Open": round(open_price, 2) if open_price is not None else None,
+                        "High": round(high_price, 2) if high_price is not None else None,
+                        "Low": round(low_price, 2) if low_price is not None else None,
+                        "Prev Close": round(prev_close, 2) if prev_close is not None else None,
+                        "Trading Type": trading_type
+                    })
+            except KeyError as e:
+                print(
+                    f"CRITICAL ERROR: A required column is missing in the CM Bhavcopy CSV: {e}. Data extraction failed.")
+            except Exception as e:
+                print(f"Error reading CM Bhavcopy file: {e}")
 
         # --- Process F&O Bhavcopy ---
-        if fno_file_downloaded:
-            fo_file_path_zip = f"Bhavcopy_Downloads/NSE/fo{target_date_str_dmy}bhav.csv.zip"
-            if os.path.exists(fo_file_path_zip):
-                try:
-                    with ZipFile(fo_file_path_zip, 'r') as zip_ref:
-                        csv_name = zip_ref.namelist()[0]  # Assuming one CSV in the zip
-                        with zip_ref.open(csv_name) as csv_file:
-                            df_fo = pd.read_csv(csv_file, skipinitialspace=True)
-                            df_fo.columns = [col.strip().upper() for col in df_fo.columns]
+        if fno_file_path and os.path.exists(fno_file_path):
+            try:
+                # Assuming F&O files are always ZIPs
+                with ZipFile(fno_file_path, 'r') as zip_ref:
+                    csv_name = zip_ref.namelist()[0]
+                    with zip_ref.open(csv_name) as csv_file:
+                        df_fo = pd.read_csv(csv_file, skipinitialspace=True)
+                        df_fo.columns = [col.strip().upper() for col in df_fo.columns]
 
-                            # Ensure proper data types and handle missing values
-                            df_fo['OPEN_INT'] = pd.to_numeric(df_fo['OPEN_INT'], errors='coerce').fillna(0).astype(int)
-                            df_fo['CHG_IN_OI'] = pd.to_numeric(df_fo['CHG_IN_OI'], errors='coerce').fillna(0).astype(
-                                int)
-                            df_fo['CONTRACTS'] = pd.to_numeric(df_fo['CONTRACTS'], errors='coerce').fillna(0).astype(
-                                int)
-                            df_fo['CLOSE'] = pd.to_numeric(df_fo['CLOSE'], errors='coerce').fillna(0).round(2)
-                            df_fo['STRIKE_PR'] = pd.to_numeric(df_fo['STRIKE_PR'],
-                                                               errors='coerce')  # Can be NaN for futures
-                            df_fo['OPTION_TYP'] = df_fo['OPTION_TYP'].fillna('N/A')  # Fill for futures
+                        print(f"--- F&O Bhavcopy for {db_date_str} loaded ---")
+                        # Adjusted column names based on common NSE F&O bhavcopy format
+                        df_fo['OPEN_INTEREST'] = pd.to_numeric(df_fo.get('OPEN_INT', df_fo.get('OPEN_INTEREST')),
+                                                               errors='coerce').fillna(0).astype(int)
+                        df_fo['CHG_IN_OI'] = pd.to_numeric(df_fo.get('CHG_IN_OI', df_fo.get('CHANGE_IN_OI')),
+                                                           errors='coerce').fillna(0).astype(int)
+                        df_fo['CONTRACTS'] = pd.to_numeric(df_fo.get('CONTRACTS', df_fo.get('TRADED_QTY')),
+                                                           errors='coerce').fillna(0).astype(int)
+                        df_fo['CLOSE'] = pd.to_numeric(df_fo.get('CLOSE', df_fo.get('LAST_PRICE')),
+                                                       errors='coerce').fillna(0).round(2)
+                        df_fo['STRIKE_PR'] = pd.to_numeric(df_fo.get('STRIKE_PR', df_fo.get('STRIKE_PRICE')),
+                                                           errors='coerce')
+                        df_fo['OPTION_TYP'] = df_fo.get('OPTION_TYP', df_fo.get('OPTION_TYPE')).fillna('N/A')
 
-                            # DELIV_PER is usually for FUTSTK, convert to numeric if present, else None
-                            # If it's not present, it will be NaN.
-                            df_fo['DELIV_PER'] = pd.to_numeric(
-                                df_fo.get('DELIV_PER', pd.Series(np.nan, index=df_fo.index)), errors='coerce').fillna(
-                                np.nan)
+                        df_fo['DELIV_PER'] = pd.to_numeric(df_fo.get('DELIV_PER', pd.Series(np.nan, index=df_fo.index)),
+                                                           errors='coerce').fillna(np.nan)
 
-                            # Filter for relevant F&O instruments and symbols
-                            relevant_fo_df = df_fo[
-                                (df_fo['INSTRUMENT'].isin(['FUTSTK', 'FUTIDX', 'OPTSTK', 'OPTIDX'])) &
-                                (df_fo['SYMBOL'].isin(fno_stocks_list + list(self.BHAVCOPY_INDICES_MAP.keys())))
-                                ].copy()
-
-                            for index, r in relevant_fo_df.iterrows():
-                                all_fno_data_for_date.append({
-                                    "Symbol": r['SYMBOL'],
-                                    "Instrument": r['INSTRUMENT'],
-                                    "Expiry Date": r.get('EXPIRY_DT', None),
-                                    "Strike Price": r['STRIKE_PR'] if not pd.isna(r['STRIKE_PR']) else None,
-                                    "Option Type": r['OPTION_TYP'] if r['OPTION_TYP'] != 'N/A' else None,
-                                    "Open Interest": r['OPEN_INT'],
-                                    "Change in OI": r['CHG_IN_OI'],
-                                    "Volume": r['CONTRACTS'],
-                                    "Close": r['CLOSE'],
-                                    "Delivery %": r['DELIV_PER'] if not pd.isna(r['DELIV_PER']) else None
-                                })
-                except KeyError as e:
-                    print(
-                        f"CRITICAL ERROR: A required column is missing in the F&O Bhavcopy CSV: {e}. Data extraction failed.")
-                except Exception as e:
-                    print(f"Error reading F&O Bhavcopy file: {e}")
+                        relevant_fo_df = df_fo[
+                            (df_fo['INSTRUMENT'].isin(['FUTSTK', 'FUTIDX', 'OPTSTK', 'OPTIDX']))
+                        ].copy()
+                        print(f"F&O relevant entries count: {len(relevant_fo_df)}")
+                        for index, r in relevant_fo_df.iterrows():
+                            all_fno_data_for_date.append({
+                                "Symbol": r['SYMBOL'],
+                                "Instrument": r['INSTRUMENT'],
+                                "Expiry Date": r.get('EXPIRY_DT', r.get('EXPIRY_DATE', None)),
+                                "Strike Price": r['STRIKE_PR'] if not pd.isna(r['STRIKE_PR']) else None,
+                                "Option Type": r['OPTION_TYP'] if r['OPTION_TYP'] != 'N/A' else None,
+                                "Open Interest": r['OPEN_INTEREST'],
+                                "Change in OI": r['CHG_IN_OI'],
+                                "Volume": r['CONTRACTS'],
+                                "Close": r['CLOSE'],
+                                "Delivery %": r['DELIV_PER'] if not pd.isna(r['DELIV_PER']) else None
+                            })
+            except KeyError as e:
+                print(
+                    f"CRITICAL ERROR: A required column is missing in the F&O Bhavcopy CSV: {e}. Data extraction failed.")
+            except Exception as e:
+                print(f"Error reading F&O Bhavcopy file: {e}")
 
         # --- Process Index Bhavcopy ---
-        if index_file_downloaded:
-            index_file_path = f"Bhavcopy_Downloads/NSE/ind_close_all_{target_date_str_dmy}.csv"
-            if os.path.exists(index_file_path):
-                try:
-                    df_idx = pd.read_csv(index_file_path, skipinitialspace=True)
-                    df_idx.columns = [col.strip().upper() for col in df_idx.columns]
+        if index_file_path and os.path.exists(index_file_path):
+            try:
+                df_idx = pd.read_csv(index_file_path, skipinitialspace=True)
+                df_idx.columns = [col.strip().upper() for col in df_idx.columns]
 
-                    for index, r_idx in df_idx.iterrows():
-                        index_name = r_idx.get('INDEX_NAME', r_idx.get('INDEX', '')).strip().replace(' ', '_').upper()
+                print(f"--- Index Bhavcopy for {db_date_str} loaded ---")
+                for index, r_idx in df_idx.iterrows():
+                    index_name_raw = r_idx.get('INDEX NAME', r_idx.get('INDEX', '')).strip()
+                    index_name_processed = index_name_raw.replace(' ', '_').upper()
 
-                        mapped_symbol = None
-                        # Map index names to our internal symbols
-                        for sym, name in self.BHAVCOPY_INDICES_MAP.items():
-                            if name.replace(' ', '_').upper() in index_name:
-                                mapped_symbol = sym
-                                break
+                    mapped_symbol = None
+                    for sym_key, map_value in self.BHAVCOPY_INDICES_MAP.items():
+                        if map_value.replace(' ', '_').upper() == index_name_processed:
+                            mapped_symbol = sym_key
+                            break
 
-                        if mapped_symbol and mapped_symbol in NSE_INDEX_BHAVCOPY_SYMBOLS:
-                            close_price = r_idx.get('CLOSE', None)
-                            open_price = r_idx.get('OPEN', None)
-                            high_price = r_idx.get('HIGH', None)
-                            low_price = r_idx.get('LOW', None)
-                            pct_change = r_idx.get('PCT_CHG', None)
+                    if mapped_symbol and mapped_symbol in NSE_INDEX_BHAVCOPY_SYMBOLS:
+                        close_price = r_idx.get('CLOSING INDEX VALUE', None)
+                        open_price = r_idx.get('OPEN INDEX VALUE', None)
+                        high_price = r_idx.get('HIGH INDEX VALUE', None)
+                        low_price = r_idx.get('LOW INDEX VALUE', None)
+                        pct_change = r_idx.get('CHANGE(%)', None)
 
-                            if close_price is not None:
-                                all_indices_for_date.append({
-                                    "Symbol": mapped_symbol,
-                                    "Close": round(float(close_price), 2),
-                                    "Pct Change": round(float(pct_change), 2) if pct_change is not None else 0.0,
-                                    "Open": round(float(open_price), 2) if open_price is not None else None,
-                                    "High": round(float(high_price), 2) if high_price is not None else None,
-                                    "Low": round(float(low_price), 2) if low_price is not None else None
-                                })
-                except KeyError as e:
-                    print(
-                        f"CRITICAL ERROR: A required column is missing in the Index Bhavcopy CSV: {e}. Data extraction failed.")
-                except Exception as e:
-                    print(f"Error reading Index Bhavcopy file: {e}")
+                        try:
+                            close_price = float(str(close_price).replace(',', '')) if close_price is not None else None
+                            open_price = float(str(open_price).replace(',', '')) if open_price is not None else None
+                            high_price = float(str(high_price).replace(',', '')) if high_price is not None else None
+                            low_price = float(str(low_price).replace(',', '')) if low_price is not None else None
+                            pct_change = float(str(pct_change).replace(',', '')) if pct_change is not None else None
+                        except ValueError:
+                            print(f"WARNING: Could not convert numeric index value for {index_name_raw}. Skipping.")
+                            continue
+
+                        if close_price is not None:
+                            all_indices_for_date.append({
+                                "Symbol": mapped_symbol,
+                                "Close": round(float(close_price), 2),
+                                "Pct Change": round(float(pct_change), 2) if pct_change is not None else 0.0,
+                                "Open": round(float(open_price), 2) if open_price is not None else None,
+                                "High": round(float(high_price), 2) if high_price is not None else None,
+                                "Low": round(float(low_price), 2) if low_price is not None else None
+                            })
+            except KeyError as e:
+                print(
+                    f"CRITICAL ERROR: A required column is missing in the Index Bhavcopy CSV: {e}. Data extraction failed.")
+            except Exception as e:
+                print(f"Error reading Index Bhavcopy file: {e}")
+
+        # --- Process Block Deal (block.csv) ---
+        if block_file_path and os.path.exists(block_file_path):
+            try:
+                df_block = pd.read_csv(block_file_path, skipinitialspace=True)
+                df_block.columns = [col.strip().upper() for col in df_block.columns]
+
+                print(f"--- Block Deals (block.csv) for {db_date_str} loaded ---")
+                for index, r in df_block.iterrows():
+                    # Assuming columns like 'SYMBOL', 'NO_OF_SHARES', 'TRADE_PRICE' (common for block/bulk)
+                    all_block_deals_for_date.append({
+                        "Symbol": r['SYMBOL'],
+                        "Trade Type": r.get('TRADE_TYPE', 'B'),  # Default to 'B' if not specified
+                        "Quantity": int(r['NO_OF_SHARES']),  # Corrected column name
+                        "Price": round(float(r['TRADE_PRICE']), 2)  # Corrected column name
+                    })
+                print(f"Block Deals count from block.csv: {len(all_block_deals_for_date)}")
+
+            except KeyError as e:
+                print(
+                    f"CRITICAL ERROR: A required column is missing in the Block Deal CSV (block.csv): {e}. Data extraction failed.")
+            except Exception as e:
+                print(f"Error reading Block Deal file (block.csv): {e}")
+
+        # --- Process Bulk Deal (bulk.csv) ---
+        if bulk_file_path and os.path.exists(bulk_file_path):
+            try:
+                df_bulk = pd.read_csv(bulk_file_path, skipinitialspace=True)
+                df_bulk.columns = [col.strip().upper() for col in df_bulk.columns]
+
+                print(f"--- Bulk Deals (bulk.csv) for {db_date_str} loaded ---")
+                for index, r in df_bulk.iterrows():
+                    # Assuming columns like 'SYMBOL', 'NO_OF_SHARES', 'TRADE_PRICE'
+                    all_block_deals_for_date.append({  # Append to the same list for BDGP strategy
+                        "Symbol": r['SYMBOL'],
+                        "Trade Type": r.get('TRADE_TYPE', 'K'),  # Use a different type for Bulk deals, e.g., 'K'
+                        "Quantity": int(r['NO_OF_SHARES']),  # Corrected column name
+                        "Price": round(float(r['TRADE_PRICE']), 2)  # Corrected column name
+                    })
+                print(
+                    f"Bulk Deals count from bulk.csv: {len(df_bulk)}. Total block/bulk deals: {len(all_block_deals_for_date)}")
+
+            except KeyError as e:
+                print(
+                    f"CRITICAL ERROR: A required column is missing in the Bulk Deal CSV (bulk.csv): {e}. Data extraction failed.")
+            except Exception as e:
+                print(f"Error reading Bulk Deal file (bulk.csv): {e}")
 
         if self.conn:
             cur = self.conn.cursor()
             # Save Equity Data
             if all_equities_for_date:
+                # Clear previous EQ data for this date to avoid duplicates on re-processing
+                cur.execute("DELETE FROM bhavcopy_data WHERE date = ? AND trading_type = 'EQ'", (db_date_str,))
                 for stock in all_equities_for_date:
                     cur.execute(
                         "INSERT OR REPLACE INTO bhavcopy_data (date, symbol, close, volume, pct_change, delivery_pct, open, high, low, prev_close, trading_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -899,6 +1095,7 @@ class NseBseAnalyzer:
 
             # Save Index Data
             if all_indices_for_date:
+                cur.execute("DELETE FROM index_bhavcopy_data WHERE date = ?", (db_date_str,))
                 for index_data in all_indices_for_date:
                     cur.execute(
                         "INSERT OR REPLACE INTO index_bhavcopy_data (date, symbol, close, pct_change, open, high, low) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -916,6 +1113,7 @@ class NseBseAnalyzer:
 
             # Save F&O Data
             if all_fno_data_for_date:
+                cur.execute("DELETE FROM fno_bhavcopy_data WHERE date = ?", (db_date_str,))
                 for fno_item in all_fno_data_for_date:
                     cur.execute(
                         "INSERT OR REPLACE INTO fno_bhavcopy_data (date, symbol, instrument, expiry_date, strike_price, option_type, open_interest, change_in_oi, volume, close, delivery_pct) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -935,8 +1133,9 @@ class NseBseAnalyzer:
                     )
                 print(f"Saved {len(all_fno_data_for_date)} F&O bhavcopy records for {db_date_str} to the database.")
 
-            # Save Block Deal Data
+            # Save Block Deal Data (from either block.csv or bulk.csv)
             if all_block_deals_for_date:
+                cur.execute("DELETE FROM block_deal_data WHERE date = ?", (db_date_str,))
                 for block_deal in all_block_deals_for_date:
                     cur.execute(
                         "INSERT OR REPLACE INTO block_deal_data (date, symbol, trade_type, quantity, price) VALUES (?, ?, ?, ?, ?)",
@@ -948,7 +1147,8 @@ class NseBseAnalyzer:
                             block_deal['Price']
                         )
                     )
-                print(f"Saved {len(all_block_deals_for_date)} block deal records for {db_date_str} to the database.")
+                print(
+                    f"Saved {len(all_block_deals_for_date)} block/bulk deal records for {db_date_str} to the database.")
 
             self.conn.commit()
 
@@ -957,56 +1157,54 @@ class NseBseAnalyzer:
 
     def _get_bhavcopy_for_date(self, date_str: str) -> Dict[str, Any]:
         """Helper to fetch all relevant bhavcopy data for a given date."""
+        print(f"DEBUG: _get_bhavcopy_for_date called for date: {date_str}")
         cur = self.conn.cursor()
-        equities = []
-        indices = []
-        fno_data = []
-        block_deals = []
 
-        # Fetch equity data (only 'EQ' trading type)
+        # Fetch ALL equity data (only 'EQ' trading type) for the date
         cur.execute(
             "SELECT symbol, close, volume, pct_change, delivery_pct, open, high, low, prev_close, trading_type FROM bhavcopy_data WHERE date = ? AND trading_type = 'EQ'",
             (date_str,)
         )
-        for row in cur.fetchall():
-            equities.append({
-                "Symbol": row[0], "Close": row[1], "Volume": row[2], "Pct Change": row[3],
-                "Delivery %": float(row[4].replace('%', '')) if isinstance(row[4], str) and row[4] != 'N/A' else None,
-                "Open": row[5], "High": row[6], "Low": row[7], "Prev Close": row[8], "Trading Type": row[9]
-            })
+        equities = [{
+            "Symbol": row[0], "Close": row[1], "Volume": row[2], "Pct Change": row[3],
+            "Delivery %": float(str(row[4]).replace('%', '')) if isinstance(row[4], str) and str(
+                row[4]).strip() != 'N/A' else None,  # Ensure float conversion
+            "Open": row[5], "High": row[6], "Low": row[7], "Prev Close": row[8], "Trading Type": row[9]
+        } for row in cur.fetchall()]
+        print(f"DEBUG: _get_bhavcopy_for_date - Found {len(equities)} EQ records for {date_str}")
 
         # Fetch index data
         cur.execute(
             "SELECT symbol, close, pct_change, open, high, low FROM index_bhavcopy_data WHERE date = ?",
             (date_str,)
         )
-        for row in cur.fetchall():
-            indices.append({
-                "Symbol": row[0], "Close": row[1], "Pct Change": row[2],
-                "Open": row[3], "High": row[4], "Low": row[5]
-            })
+        indices = [{
+            "Symbol": row[0], "Close": row[1], "Pct Change": row[2],
+            "Open": row[3], "High": row[4], "Low": row[5]
+        } for row in cur.fetchall()]
+        print(f"DEBUG: _get_bhavcopy_for_date - Found {len(indices)} Index records for {date_str}")
 
         # Fetch F&O data (futures and options)
         cur.execute(
             "SELECT symbol, instrument, expiry_date, strike_price, option_type, open_interest, change_in_oi, volume, close, delivery_pct FROM fno_bhavcopy_data WHERE date = ?",
             (date_str,)
         )
-        for row in cur.fetchall():
-            fno_data.append({
-                "Symbol": row[0], "Instrument": row[1], "Expiry Date": row[2], "Strike Price": row[3],
-                "Option Type": row[4], "Open Interest": row[5], "Change in OI": row[6], "Volume": row[7],
-                "Close": row[8], "Delivery %": row[9]
-            })
+        fno_data = [{
+            "Symbol": row[0], "Instrument": row[1], "Expiry Date": row[2], "Strike Price": row[3],
+            "Option Type": row[4], "Open Interest": row[5], "Change in OI": row[6], "Volume": row[7],
+            "Close": row[8], "Delivery %": row[9]
+        } for row in cur.fetchall()]
+        print(f"DEBUG: _get_bhavcopy_for_date - Found {len(fno_data)} F&O records for {date_str}")
 
         # Fetch block deal data
         cur.execute(
             "SELECT symbol, trade_type, quantity, price FROM block_deal_data WHERE date = ?",
             (date_str,)
         )
-        for row in cur.fetchall():
-            block_deals.append({
-                "Symbol": row[0], "Trade Type": row[1], "Quantity": row[2], "Price": row[3]
-            })
+        block_deals = [{
+            "Symbol": row[0], "Trade Type": row[1], "Quantity": row[2], "Price": row[3]
+        } for row in cur.fetchall()]
+        print(f"DEBUG: _get_bhavcopy_for_date - Found {len(block_deals)} Block Deal records for {date_str}")
 
         return {"equities": equities, "indices": indices, "fno_data": fno_data, "block_deals": block_deals}
 
@@ -1027,7 +1225,8 @@ class NseBseAnalyzer:
                 "date": row[0],
                 "Close": row[1],
                 "Volume": row[2],
-                "Delivery %": float(row[3].replace('%', '')) if isinstance(row[3], str) and row[3] != 'N/A' else None,
+                "Delivery %": float(str(row[3]).replace('%', '')) if isinstance(row[3], str) and str(
+                    row[3]).strip() != 'N/A' else None,
                 "Open": row[4],
                 "High": row[5],
                 "Low": row[6],
@@ -1061,6 +1260,7 @@ class NseBseAnalyzer:
             current_fno_df = pd.DataFrame(current_day_data['fno_data'])
 
             if current_fno_df.empty:
+                print(f"DEBUG: ZDFT for {date_str} - No F&O data available.")
                 return [{"Symbol": "N/A", "Near Month Delivery %": "N/A", "Next Month OI Increase %": "N/A",
                          "Signal": "No F&O data for " + date_str}]
 
@@ -1068,6 +1268,7 @@ class NseBseAnalyzer:
             futures_df = current_fno_df[current_fno_df['Instrument'] == 'FUTSTK'].copy()
 
             if futures_df.empty:
+                print(f"DEBUG: ZDFT for {date_str} - No FUTSTK data available.")
                 return [{"Symbol": "N/A", "Near Month Delivery %": "N/A", "Next Month OI Increase %": "N/A",
                          "Signal": "No Futures (FUTSTK) data for " + date_str}]
 
@@ -1077,6 +1278,7 @@ class NseBseAnalyzer:
             prev_trading_day_str_2 = self._get_previous_trading_day(current_date_obj, 2)  # 2 days ago
 
             if not prev_trading_day_str_1 or not prev_trading_day_str_2:
+                print(f"DEBUG: ZDFT for {date_str} - Not enough previous trading days for OI comparison.")
                 return [{"Symbol": "N/A", "Near Month Delivery %": "N/A", "Next Month OI Increase %": "N/A",
                          "Signal": "Not enough previous trading days for OI comparison."}]
 
@@ -1084,6 +1286,7 @@ class NseBseAnalyzer:
             prev_fno_df_2 = pd.DataFrame(prev_day_data_2['fno_data'])
 
             if prev_fno_df_2.empty:
+                print(f"DEBUG: ZDFT for {date_str} - No F&O data from 2 days ago for OI comparison.")
                 return [{"Symbol": "N/A", "Near Month Delivery %": "N/A", "Next Month OI Increase %": "N/A",
                          "Signal": "No F&O data from 2 days ago for OI comparison."}]
 
@@ -1107,7 +1310,9 @@ class NseBseAnalyzer:
 
                     prev_next_month_future_2_days_ago = prev_futures_df_2[
                         (prev_futures_df_2['Symbol'] == symbol) &
-                        (prev_futures_df_2['Expiry Date'] == next_month_future['Expiry Date'].strftime('%Y-%m-%d'))
+                        (prev_futures_df_2['Instrument'] == 'FUTSTK') &
+                        (pd.to_datetime(prev_futures_df_2['Expiry Date']) == next_month_future['Expiry Date'])
+                        # Compare datetime objects
                         ]
 
                     if not prev_next_month_future_2_days_ago.empty:
@@ -1147,10 +1352,20 @@ class NseBseAnalyzer:
             equities_df = pd.DataFrame(current_day_data['equities'])
             block_deals_df = pd.DataFrame(current_day_data['block_deals'])
 
-            if equities_df.empty or block_deals_df.empty:
+            print(
+                f"DEBUG: BDGP for {date_str} - equities_df count: {len(equities_df)}, block_deals_df count: {len(block_deals_df)}")
+
+            if equities_df.empty and block_deals_df.empty:  # Only return error if BOTH are empty
                 return [{"Symbol": "N/A", "Block Deal Price": "N/A", "Previous Close": "N/A", "Open Price": "N/A",
                          "Block Discount %": "N/A", "Open Gap Up %": "N/A",
                          "Signal": "No Equity or Block Deal data for " + date_str}]
+            elif equities_df.empty:
+                return [{"Symbol": "N/A", "Block Deal Price": "N/A", "Previous Close": "N/A", "Open Price": "N/A",
+                         "Block Discount %": "N/A", "Open Gap Up %": "N/A", "Signal": "No Equity data for " + date_str}]
+            elif block_deals_df.empty:
+                return [{"Symbol": "N/A", "Block Deal Price": "N/A", "Previous Close": "N/A", "Open Price": "N/A",
+                         "Block Discount %": "N/A", "Open Gap Up %": "N/A",
+                         "Signal": "No Block Deal data for " + date_str}]
 
             for index, bd in block_deals_df.iterrows():
                 symbol = bd['Symbol']
@@ -1199,6 +1414,7 @@ class NseBseAnalyzer:
         try:
             current_day_data = self._get_bhavcopy_for_date(date_str)
             equities_df = pd.DataFrame(current_day_data['equities'])
+            print(f"DEBUG: VAR-7 for {date_str} - equities_df count: {len(equities_df)}")
 
             if equities_df.empty:
                 return [{"Symbol": "N/A", "Close Price": "N/A", "VWAP": "N/A", "Close vs VWAP %": "N/A",
@@ -1221,7 +1437,7 @@ class NseBseAnalyzer:
                     if vwap > 0:
                         close_vs_vwap_pct = ((close_price - vwap) / vwap * 100)
 
-                        if close_vs_vwap_pct > 7 and delivery_pct < 12:  # Close > +7% from VWAP and delivery < 12%
+                        if close_vs_vwap_pct > 7 and delivery_pct is not None and delivery_pct < 12:  # Close > +7% from VWAP and delivery < 12%
                             signals.append({
                                 "Symbol": symbol,
                                 "Close Price": f"{close_price:.2f}",
@@ -1259,6 +1475,9 @@ class NseBseAnalyzer:
             current_equities_df = pd.DataFrame(current_day_data['equities'])
             current_fno_df = pd.DataFrame(current_day_data['fno_data'])
 
+            print(
+                f"DEBUG: OIMT for {date_str} - current_equities_df count: {len(current_equities_df)}, current_fno_df count: {len(current_fno_df)}")
+
             if current_equities_df.empty or current_fno_df.empty:
                 return [{"Symbol": "N/A", "Price Change %": "N/A", "OI Change": "N/A", "Signal Type": "N/A",
                          "Institutional Conviction (Delivery > 60%)": "N/A",
@@ -1268,6 +1487,7 @@ class NseBseAnalyzer:
             current_date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
             prev_trading_day_str = self._get_previous_trading_day(current_date_obj, 1)
             if not prev_trading_day_str:
+                print(f"DEBUG: OIMT for {date_str} - Not enough previous trading days for OI Momentum Trap.")
                 return [{"Symbol": "N/A", "Price Change %": "N/A", "OI Change": "N/A", "Signal Type": "N/A",
                          "Institutional Conviction (Delivery > 60%)": "N/A",
                          "Signal": "Not enough previous trading days for OI Momentum Trap."}]
@@ -1275,8 +1495,11 @@ class NseBseAnalyzer:
             prev_day_data = self._get_bhavcopy_for_date(prev_trading_day_str)
             prev_equities_df = pd.DataFrame(prev_day_data['equities'])
             prev_fno_df = pd.DataFrame(prev_day_data['fno_data'])
+            print(
+                f"DEBUG: OIMT for {date_str} - prev_equities_df count: {len(prev_equities_df)}, prev_fno_df count: {len(prev_fno_df)}")
 
             if prev_equities_df.empty or prev_fno_df.empty:
+                print(f"DEBUG: OIMT for {date_str} - No previous day Equity or F&O data for OI Momentum Trap.")
                 return [{"Symbol": "N/A", "Price Change %": "N/A", "OI Change": "N/A", "Signal Type": "N/A",
                          "Institutional Conviction (Delivery > 60%)": "N/A",
                          "Signal": "No previous day Equity or F&O data for OI Momentum Trap."}]
@@ -1286,16 +1509,17 @@ class NseBseAnalyzer:
             prev_futures_df = prev_fno_df[prev_fno_df['Instrument'] == 'FUTSTK'].copy()
 
             for symbol in current_futures_df['Symbol'].unique():
-                current_fut = current_futures_df[current_futures_df['Symbol'] == symbol]
-                prev_fut = prev_futures_df[prev_futures_df['Symbol'] == symbol]
+                stock_futures = current_futures_df[current_futures_df['Symbol'] == symbol]
+                prev_stock_futures = prev_futures_df[prev_futures_df['Symbol'] == symbol]
 
                 current_eq = current_equities_df[current_equities_df['Symbol'] == symbol]
                 prev_eq = prev_equities_df[prev_equities_df['Symbol'] == symbol]
 
-                if not current_fut.empty and not prev_fut.empty and not current_eq.empty and not prev_eq.empty:
+                if not stock_futures.empty and not prev_stock_futures.empty and not current_eq.empty and not prev_eq.empty:
                     # Get near-month futures (simplification: just take the first one if multiple expiries)
-                    current_fut_near = current_fut.sort_values(by='Expiry Date').iloc[0]
-                    prev_fut_near = prev_fut.sort_values(by='Expiry Date').iloc[0]
+                    current_fut_near = stock_futures.sort_values(by='Expiry Date').iloc[0]
+                    prev_fut_near = prev_stock_futures.sort_values(by='Expiry Date').iloc[
+                        0]  # Use prev_stock_futures here
 
                     current_eq_row = current_eq.iloc[0]
                     prev_eq_row = prev_eq.iloc[0]
@@ -1351,6 +1575,8 @@ class NseBseAnalyzer:
             current_day_data = self._get_bhavcopy_for_date(date_str)
             current_equities_df = pd.DataFrame(current_day_data['equities'])
 
+            print(f"DEBUG: VSSB for {date_str} - current_equities_df count: {len(current_equities_df)}")
+
             if current_equities_df.empty:
                 return [{"Symbol": "N/A", "Today's Volume": "N/A", "10-Day Avg Volume": "N/A", "Volume Multiple": "N/A",
                          "Delivery %": "N/A", "Price Change %": "N/A", "Signal": "No Equity data for " + date_str}]
@@ -1363,7 +1589,8 @@ class NseBseAnalyzer:
                 today_delivery_pct = eq['Delivery %']
                 today_pct_change = eq['Pct Change']
 
-                if today_volume is None or today_volume == 0 or today_delivery_pct is None or today_delivery_pct == 'N/A':
+                if today_volume is None or today_volume == 0 or today_delivery_pct is None or str(
+                        today_delivery_pct).strip() == 'N/A':
                     continue
 
                 # Convert delivery_pct to float
@@ -1423,7 +1650,7 @@ class NseBseAnalyzer:
         return [{"Symbol": "N/A", "Signal": "Requires Corporate Actions data and multi-day delivery trend analysis."}]
 
     def _get_previous_trading_day(self, current_date: datetime.date, num_days_back: int) -> Optional[str]:
-        """Helper to find the previous N trading day(s) by checking DB dates."""
+        """Helper to find the Nth previous trading day(s) by checking DB dates."""
         if not self.conn:
             return None
 
@@ -1442,6 +1669,8 @@ class NseBseAnalyzer:
 
         if len(rows) < num_days_back:
             # Not enough historical data
+            print(
+                f"DEBUG: _get_previous_trading_day for {current_date} (back {num_days_back}) - Only found {len(rows)} previous trading days.")
             return None
 
         # Return the oldest date among the fetched 'num_days_back' previous dates
@@ -1580,6 +1809,7 @@ class NseBseAnalyzer:
                                                          'change': round(change, 4),
                                                          'percentage_change': round(pct_change, 2)}
                 if sym not in self.TICKER_ONLY_SYMBOLS:
+                    # Original complex summary for non-ticker-only symbols (like SENSEX, INDIAVIX)
                     sentiment = "Mild Bearish" if change < 0 else "Mild Bullish" if change > 0 else "Neutral"
                     summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': round(change, 2),
                                'value': round(current_price, 2), 'pcr': round(pct_change, 2), 'sentiment': sentiment,
@@ -1589,22 +1819,35 @@ class NseBseAnalyzer:
                     shared_data[sym]['strikes'], shared_data[sym]['max_pain_chart_data'], shared_data[sym][
                         'ce_oi_chart_data'], shared_data[sym]['pe_oi_chart_data'], shared_data[sym][
                         'pcr_chart_data'] = [], [], [], [], []
+                else:  # Simplified summary for TICKER_ONLY_SYMBOLS
+                    sentiment = "Mild Bearish" if change < 0 else "Mild Bullish" if change > 0 else "Neutral"
+                    summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': round(change, 2),
+                               'value': round(current_price, 2), 'pcr': round(pct_change, 2), 'sentiment': sentiment,
+                               'call_oi': 0, 'put_oi': 0, 'add_exit': "Live Price", 'pcr_change': 0, 'intraday_pcr': 0,
+                               'expiry': 'N/A'}
+                    # Store this simplified summary
+                    shared_data[sym]['summary'] = summary
+                    # Ensure chart data lists are initialized even if empty
+                    shared_data[sym]['strikes'] = []
+                    shared_data[sym]['max_pain_chart_data'] = []
+                    shared_data[sym]['ce_oi_chart_data'] = []
+                    shared_data[sym]['pe_oi_chart_data'] = []
+                    shared_data[sym]['pcr_chart_data'] = []
 
             print(f"{sym} YFINANCE DATA UPDATED | Value: {current_price:.2f}")
             broadcast_live_update()
 
-            if sym not in self.TICKER_ONLY_SYMBOLS:
-                now = time.time()
-                if now - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
-                    with data_lock:
-                        if sym not in todays_history: todays_history[sym] = []
-                        todays_history[sym].insert(0, summary)
-                    broadcast_history_append(sym, summary)
-                    last_history_update[sym] = now
-                    self._save_db(sym, summary)
-                if now - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
-                    self.send_alert(sym, summary)
-                    last_alert[sym] = now
+            now = time.time()
+            if now - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
+                with data_lock:
+                    if sym not in todays_history: todays_history[sym] = []
+                    todays_history[sym].insert(0, summary)
+                broadcast_history_append(sym, summary)
+                last_history_update[sym] = now
+                self._save_db(sym, summary)
+            if now - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
+                self.send_alert(sym, summary)
+                last_alert[sym] = now
         except Exception as e:
             print(f"{sym} yfinance processing error: {e}")
 
@@ -1686,7 +1929,7 @@ class NseBseAnalyzer:
                 call_buildup = self._get_oi_buildup(price_change, call_coi)
                 put_buildup = self._get_oi_buildup(price_change, put_coi)
                 call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
-                put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
+                put_action = "ADD" if put_oi > 0 else "EXIT" if put_coi < 0 else ""
                 if call_action == "ADD":
                     ce_add_strikes.append(str(strike))
                 elif call_action == "EXIT":
@@ -1767,9 +2010,8 @@ class NseBseAnalyzer:
                 self.send_alert(sym, summary)
                 last_alert[sym] = now
         except requests.exceptions.RequestException as e:
-            print(f"{sym} processing error: {e}")
-            # If a 403 occurs here, it means the retry with fresh cookies also failed or it's another type of block
-            # No need to retry again immediately as it will likely fail.
+            print(f"{sym} processing error (RequestException): {e}")
+            # This will be caught by the outer try-except in fetch_and_process_symbol
         except Exception as e:
             import traceback
             print(f"{sym} processing error: {e}\n{traceback.format_exc()}")
@@ -1808,7 +2050,7 @@ class NseBseAnalyzer:
                 else:
                     response.raise_for_status()  # Raise for other HTTP errors
 
-            response.raise_for_status()  # Ensure success after retries
+            response.raise_for_status()  # Ensure success after retries <-- FIX: Changed from raise_status to raise_for_status
             data = response.json()
 
             if not data.get('records') or not data['records'].get('data'):
@@ -1863,7 +2105,7 @@ class NseBseAnalyzer:
                 call_buildup = self._get_oi_buildup(price_change, call_coi)
                 put_buildup = self._get_oi_buildup(price_change, put_coi)
                 call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
-                put_action = "ADD" if put_coi > 0 else "EXIT" if put_coi < 0 else ""
+                put_action = "ADD" if put_oi > 0 else "EXIT" if put_coi < 0 else ""
                 strikes_data.append(
                     {'strike': strike, 'call_oi': call_oi, 'call_coi': call_coi, 'call_action': call_action,
                      'put_oi': put_oi, 'put_coi': put_coi, 'put_action': put_action, 'is_atm': i == 0,
@@ -1890,8 +2132,7 @@ class NseBseAnalyzer:
 
             return {'summary': summary, 'strikes': strikes_data, 'pulse_summary': pulse_summary}
         except requests.exceptions.RequestException as e:
-            print(f"Error processing equity data for {sym}: {e}")
-            # If a 403 occurs here, it means the retry with fresh cookies also failed or it's another type of block
+            print(f"Error processing equity data for {sym} (RequestException): {e}")
             return None
         except Exception as e:
             print(f"Error processing equity data for {sym}: {e}")
