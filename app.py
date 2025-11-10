@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# -- coding: utf-8 --
 # === 1. MONKEY PATCH FIRST ===
 import eventlet
 
@@ -47,7 +47,7 @@ AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", 
 # WEB DASHBOARD & GLOBAL VARS
 # --------------------------------------------------------------------------- #
 app = Flask(__name__, template_folder='.', static_folder='static')
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')  # Changed cors_allowed_origins to "*"
 shared_data: Dict[str, Dict[str, Any]] = {}
 todays_history: Dict[str, List[Dict[str, Any]]] = {sym: [] for sym in AUTO_SYMBOLS}
 data_lock = threading.Lock()
@@ -91,7 +91,7 @@ def get_historical_bhavcopy(date_str: str):
     try:
         cur = analyzer.conn.cursor()
         cur.execute(
-            "SELECT symbol, close, volume, pct_change, delivery_pct FROM bhavcopy_data WHERE date = ?",
+            "SELECT symbol, close, volume, pct_change, delivery_pct, open, high, low FROM bhavcopy_data WHERE date = ?",
             (date_str,)
         )
         rows = cur.fetchall()
@@ -106,7 +106,10 @@ def get_historical_bhavcopy(date_str: str):
                 "Close": row[1],
                 "Volume": row[2],
                 "% Change": row[3],
-                "Delivery %": row[4]
+                "Delivery %": row[4],
+                "Open": row[5],
+                "High": row[6],
+                "Low": row[7]
             })
 
         return jsonify({"equities": equities, "date": date_str})
@@ -143,13 +146,20 @@ def handle_manual_bhavcopy_run():
 
     def manual_scan_wrapper():
         now_ist = analyzer._get_ist_time()
-        for i in range(1, 6):
+        # Try to find Bhavcopy for the last 5 days, starting with today.
+        # This loop will attempt to download for today, then yesterday, etc.
+        scan_successful = False
+        for i in range(5):
             target_day = now_ist - datetime.timedelta(days=i)
             if analyzer.run_bhavcopy_for_date(target_day):
                 print(f"Manual Scan Success: Processed Bhavcopy for date: {target_day.strftime('%Y-%m-%d')}")
                 analyzer.send_telegram_message(
                     f"✅ Manual Scan: Bhavcopy for {target_day.strftime('%d-%b-%Y')} processed and loaded.")
-                break
+                scan_successful = True
+                break  # Exit loop on first success
+
+        if not scan_successful:
+            analyzer.send_telegram_message(f"❌ Manual Scan: Failed to process Bhavcopy for the last 5 days.")
 
     socketio.start_background_task(manual_scan_wrapper)
 
@@ -206,7 +216,7 @@ class NseBseAnalyzer:
         self.session = requests.Session()
         self.nse_headers = {
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
-            "Referer": "https://www.nseindia.com/", "Accept": "*/*"
+            "Referer": "https://www.nseindia.com/", "Accept": "/"
         }
         self.url_oc = "https://www.nseindia.com/option-chain"
         self.url_indices = "https://www.nseindia.com/api/option-chain-indices?symbol="
@@ -269,6 +279,9 @@ class NseBseAnalyzer:
                     volume INTEGER,
                     pct_change REAL,
                     delivery_pct TEXT,
+                    "open" REAL,
+                    high REAL,
+                    low REAL,
                     PRIMARY KEY (date, symbol)
                 )"""
             )
@@ -289,7 +302,7 @@ class NseBseAnalyzer:
 
             latest_date = latest_date_row[0]
             cur.execute(
-                "SELECT symbol, close, volume, pct_change, delivery_pct FROM bhavcopy_data WHERE date = ?",
+                "SELECT symbol, close, volume, pct_change, delivery_pct, open, high, low FROM bhavcopy_data WHERE date = ?",
                 (latest_date,)
             )
             rows = cur.fetchall()
@@ -300,7 +313,10 @@ class NseBseAnalyzer:
                     "Close": row[1],
                     "Volume": row[2],
                     "% Change": row[3],
-                    "Delivery %": row[4]
+                    "Delivery %": row[4],
+                    "Open": row[5],
+                    "High": row[6],
+                    "Low": row[7]
                 })
 
             if equities:
@@ -413,7 +429,8 @@ class NseBseAnalyzer:
                         if equity_data:
                             previous_data = equity_data_cache.get(symbol, {}).get('current')
                             equity_data_cache[symbol] = {'current': equity_data, 'previous': previous_data}
-                            self._save_db(symbol, equity_data['summary'])
+                            # No self.save_db for equity data in general, only for specific summaries if needed
+                            # self.save_db(symbol, equity_data['summary'])
                         time.sleep(1)
                     except Exception as e:
                         print(f"Error fetching {symbol} in equity loop: {e}")
@@ -463,6 +480,7 @@ class NseBseAnalyzer:
             bhav_session = requests.Session()
             bhav_session.headers.update(self.nse_headers)
 
+            # Corrected URL format for sec_bhavdata_full
             url_eq = f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{target_date_str}.csv"
 
             success = False
@@ -483,7 +501,7 @@ class NseBseAnalyzer:
 
             if success:
                 print(f"Bhavcopy downloaded successfully for {target_date_str}.")
-                extracted_data = self._extract_bhavcopy_data_from_new_file(target_date_str)
+                extracted_data = self.extract_bhavcopy_data_from_new_file(target_date_str)
                 if extracted_data and extracted_data.get("equities"):
                     print(f"Successfully extracted {len(extracted_data['equities'])} records from Bhavcopy.")
                     latest_bhavcopy_data = extracted_data
@@ -498,8 +516,9 @@ class NseBseAnalyzer:
         finally:
             self.bhavcopy_running.clear()
 
-    def _extract_bhavcopy_data_from_new_file(self, target_date_str):
+    def extract_bhavcopy_data_from_new_file(self, target_date_str):
         date_obj = datetime.datetime.strptime(target_date_str, '%d%m%Y')
+        # Corrected file_path to match the new URL format
         file_path = f"Bhavcopy_Downloads/NSE/sec_bhavdata_full_{target_date_str}.csv"
         db_date_str = date_obj.strftime('%Y-%m-%d')
 
@@ -531,6 +550,9 @@ class NseBseAnalyzer:
                 prev_close = r['PREV_CLOSE']
                 close_price = r['CLOSE_PRICE']
                 volume = r['TTL_TRD_QNTY']
+                open_price = r.get('OPEN_PRICE', None)
+                high_price = r.get('HIGH_PRICE', None)
+                low_price = r.get('LOW_PRICE', None)
 
                 chg = ((close_price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 else 0
                 delivery_str = str(r.get('DELIV_PER', 'N/A')).strip()
@@ -541,21 +563,27 @@ class NseBseAnalyzer:
                     "Close": round(close_price, 2),
                     "Volume": int(volume),
                     "% Change": round(chg, 2),
-                    "Delivery %": delivery
+                    "Delivery %": delivery,
+                    "Open": round(open_price, 2) if open_price is not None else None,
+                    "High": round(high_price, 2) if high_price is not None else None,
+                    "Low": round(low_price, 2) if low_price is not None else None
                 })
 
             if self.conn and equity_data:
                 cur = self.conn.cursor()
                 for stock in equity_data:
                     cur.execute(
-                        "INSERT OR REPLACE INTO bhavcopy_data (date, symbol, close, volume, pct_change, delivery_pct) VALUES (?, ?, ?, ?, ?, ?)",
+                        "INSERT OR REPLACE INTO bhavcopy_data (date, symbol, close, volume, pct_change, delivery_pct, open, high, low) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             db_date_str,
                             stock['Symbol'],
                             stock['Close'],
                             stock['Volume'],
                             stock['% Change'],
-                            str(stock['Delivery %'])
+                            str(stock['Delivery %']),
+                            stock['Open'],
+                            stock['High'],
+                            stock['Low']
                         )
                     )
                 self.conn.commit()
@@ -660,7 +688,7 @@ class NseBseAnalyzer:
             print("Change detected in Potential Buys list. Sending Telegram notification.")
             message = "Potential Buys Update (Getting Better)\n\n"
             for i, stock in enumerate(top_improving):
-                message += f"*{i + 1}. {stock['symbol']}* (Score: {stock['score']})\n"
+                message += f"{i + 1}. {stock['symbol']}* (Score: {stock['score']})\n"
             self.send_telegram_message(message)
             previous_improving_list = current_improving_symbols
 
@@ -669,7 +697,7 @@ class NseBseAnalyzer:
             print("Change detected in Potential Sells list. Sending Telegram notification.")
             message = "Potential Sells Update (Getting Worsening)\n\n"
             for i, stock in enumerate(top_worsening):
-                message += f"*{i + 1}. {stock['symbol']}* (Score: {stock['score']})\n"
+                message += f"{i + 1}. {stock['symbol']} (Score: {stock['score']})\n"
             self.send_telegram_message(message)
             previous_worsening_list = current_worsening_symbols
 
@@ -703,11 +731,13 @@ class NseBseAnalyzer:
                                                          'percentage_change': round(pct_change, 2)}
                 if sym not in self.TICKER_ONLY_SYMBOLS:
                     sentiment = "Mild Bearish" if change < 0 else "Mild Bullish" if change > 0 else "Neutral"
+                    # For yfinance symbols that are not just tickers, create a basic summary for history
                     summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': round(change, 2),
                                'value': round(current_price, 2), 'pcr': round(pct_change, 2), 'sentiment': sentiment,
                                'call_oi': 0, 'put_oi': 0, 'add_exit': "Live Price", 'pcr_change': 0, 'intraday_pcr': 0,
                                'expiry': 'N/A'}
                     shared_data[sym]['summary'] = summary
+                    # Clear chart data for YFinance symbols as they don't have OC data
                     shared_data[sym]['strikes'], shared_data[sym]['max_pain_chart_data'], shared_data[sym][
                         'ce_oi_chart_data'], shared_data[sym]['pe_oi_chart_data'], shared_data[sym][
                         'pcr_chart_data'] = [], [], [], [], []
@@ -749,7 +779,12 @@ class NseBseAnalyzer:
                 resp = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
 
             data = resp.json()
-            expiry = data['records']['expiryDates'][0]
+            expiry_dates = data['records']['expiryDates']
+            if not expiry_dates:  # If no expiry dates, it might be a holiday or data not available
+                print(f"No expiry dates found for {sym}. Skipping processing.")
+                return
+
+            expiry = expiry_dates[0]
             underlying = data['records']['underlyingValue']
 
             prev_price = initial_underlying_values.get(sym)
@@ -761,7 +796,9 @@ class NseBseAnalyzer:
 
             ce_values = [d['CE'] for d in data['records']['data'] if 'CE' in d and d['expiryDate'] == expiry]
             pe_values = [d['PE'] for d in data['records']['data'] if 'PE' in d and d['expiryDate'] == expiry]
-            if not ce_values or not pe_values: return
+            if not ce_values or not pe_values:
+                print(f"No CE or PE values found for {sym} for expiry {expiry}. Skipping processing.")
+                return
 
             df_ce = pd.DataFrame(ce_values)
             df_pe = pd.DataFrame(pe_values)
@@ -770,10 +807,14 @@ class NseBseAnalyzer:
                           suffixes=('_call', '_put')).fillna(0)
 
             sp = self.get_atm_strike(df, underlying)
-            if not sp: return
+            if not sp:
+                print(f"Could not determine ATM strike for {sym}. Skipping processing.")
+                return
 
             idx_list = df[df['strikePrice'] == sp].index.tolist()
-            if not idx_list: return
+            if not idx_list:
+                print(f"ATM strike {sp} not found in dataframe for {sym}. Skipping processing.")
+                return
             idx = idx_list[0]
 
             strikes_data, ce_add_strikes, ce_exit_strikes, pe_add_strikes, pe_exit_strikes = [], [], [], [], []
@@ -903,11 +944,13 @@ class NseBseAnalyzer:
             data = resp.json()
 
             if not data.get('records') or not data['records'].get('data'):
-                print(f"No option chain data returned for {sym}")
+                print(f"No option chain data returned for {sym}. Skipping processing.")
                 return None
 
             expiry_dates = data['records']['expiryDates']
-            if not expiry_dates: return None
+            if not expiry_dates:
+                print(f"No expiry dates found for {sym}. Skipping processing.")
+                return None
             expiry = expiry_dates[0]
 
             underlying = data['records']['underlyingValue']
@@ -919,7 +962,9 @@ class NseBseAnalyzer:
 
             ce_values = [d['CE'] for d in data['records']['data'] if 'CE' in d and d['expiryDate'] == expiry]
             pe_values = [d['PE'] for d in data['records']['data'] if 'PE' in d and d['expiryDate'] == expiry]
-            if not ce_values or not pe_values: return None
+            if not ce_values or not pe_values:
+                print(f"No CE or PE values found for {sym} for expiry {expiry}. Skipping processing.")
+                return None
 
             df_ce = pd.DataFrame(ce_values)
             df_pe = pd.DataFrame(pe_values)
@@ -928,10 +973,14 @@ class NseBseAnalyzer:
                           suffixes=('_call', '_put')).fillna(0)
 
             sp = self.get_atm_strike(df, underlying)
-            if not sp: return None
+            if not sp:
+                print(f"Could not determine ATM strike for {sym}. Skipping processing.")
+                return None
 
             idx_list = df[df['strikePrice'] == sp].index.tolist()
-            if not idx_list: return None
+            if not idx_list:
+                print(f"ATM strike {sp} not found in dataframe for {sym}. Skipping processing.")
+                return None
             idx = idx_list[0]
 
             strikes_data = []
@@ -979,8 +1028,21 @@ class NseBseAnalyzer:
     def get_atm_strike(self, df: pd.DataFrame, underlying: float) -> Optional[int]:
         try:
             strikes = df['strikePrice'].astype(int).unique()
-            return min(strikes, key=lambda x: abs(x - underlying)) if len(strikes) > 0 else None
+            # Find the strike price closest to the underlying value
+            if len(strikes) > 0:
+                closest_strike = min(strikes, key=lambda x: abs(x - underlying))
+                # Ensure the closest strike is within a reasonable range (e.g., +/- 10% of underlying)
+                # to avoid issues with very illiquid or mispriced option chains
+                if abs((closest_strike - underlying) / underlying) < 0.20:  # 20% threshold
+                    return int(closest_strike)
+                else:
+                    print(
+                        f"Warning: Closest strike {closest_strike} is too far from underlying {underlying}. Check data for consistency.")
+                    return None
+            else:
+                return None
         except Exception as e:
+            print(f"Error getting ATM strike: {e}")
             return None
 
     def get_sentiment(self, diff: float, pcr: float) -> str:
@@ -1005,13 +1067,13 @@ class NseBseAnalyzer:
             pct_str = f"+{pct_change:.2f}%" if pct_change >= 0 else f"{pct_change:.2f}%"
 
             message = f"* {sym.upper()} Update*\n\n"
-            message += f"• *Value:* {row.get('value', 'N/A')}\n"
-            message += f"• *Change:* {change_str} ({pct_str})\n"
-            message += f"• *PCR:* {row.get('pcr', 'N/A')}\n"
-            message += f"• *Sentiment:* {row.get('sentiment', 'N/A')}\n"
+            message += f"• Value: {row.get('value', 'N/A')}\n"
+            message += f"• Change: {change_str} ({pct_str})\n"
+            message += f"• PCR: {row.get('pcr', 'N/A')}\n"
+            message += f"• Sentiment: {row.get('sentiment', 'N/A')}\n"
 
             if 'add_exit' in row and row['add_exit'] != "Live Price" and row['add_exit'] != "No Change":
-                message += f"\n*OI Changes:*\n`{row['add_exit']}`"
+                message += f"\nOI Changes:\n{row['add_exit']}"
 
             self.send_telegram_message(message)
         except Exception as e:

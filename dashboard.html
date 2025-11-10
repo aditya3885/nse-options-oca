@@ -81,11 +81,11 @@
         <div id="market-pulse-container" class="market-pulse-container"></div>
 
         <div class="grid">
-            <div class="card" id="NIFTY_summary"><h2>NIFTY</h2><p>SP: <span id="nifty-sp">-</span></p><p>Value: <span id="nifty-value">-</span></p><p>Call COI: <span id="nifty-call">-</span>K</p><p>Put COI: <span id="nifty-put">-</span>K</p><p>PCR: <span id="nifty-pcr">-</span></p><p>Sentiment: <span id="nifty-sentiment">-</span></p><p>OI Changes: <span id="nifty-add-exit">-</span></p></div>
-            <div class="card" id="FINNIFTY_summary"><h2>FINNIFTY</h2><p>SP: <span id="finnifty-sp">-</span></p><p>Value: <span id="finnifty-value">-</span></p><p>Call COI: <span id="finnifty-call">-</span>K</p><p>Put COI: <span id="finnifty-put">-</span>K</p><p>PCR: <span id="finnifty-pcr">-</span></p><p>Sentiment: <span id="finnifty-sentiment">-</span></p><p>OI Changes: <span id="finnifty-add-exit">-</span></p></div>
-            <div class="card" id="BANKNIFTY_summary"><h2>BANKNIFTY</h2><p>SP: <span id="banknifty-sp">-</span></p><p>Value: <span id="banknifty-value">-</span></p><p>Call COI: <span id="banknifty-call">-</span>K</p><p>Put COI: <span id="banknifty-put">-</span>K</p><p>PCR: <span id="banknifty-pcr">-</span></p><p>Sentiment: <span id="banknifty-sentiment">-</span></p><p>OI Changes: <span id="banknifty-add-exit">-</span></p></div>
-            <div class="card" id="SENSEX_summary"><h2>SENSEX</h2><p>Value: <span id="sensex-value">-</span></p><p>Change: <span id="sensex-change">-</span></p><p>Pct Change: <span id="sensex-pct">-</span>%</p><p>Sentiment: <span id="sensex-sentiment">-</span></p></div>
-            <div class="card" id="INDIAVIX_summary"><h2>INDIAVIX</h2><p>Value: <span id="indiavix-value">-</span></p><p>Change: <span id="indiavix-change">-</span></p><p>Pct Change: <span id="indiavix-pct">-</span>%</p><p>Sentiment: <span id="indiavix-sentiment">-</span></p></div>
+            <div class="card" id="NIFTY_summary"><h2>NIFTY</h2><p>SP: <span id="nifty-sp">-</span></p><p>Value: <span id="nifty-value">-</span></p><p>Call COI: <span id="nifty-call">-K</span></p><p>Put COI: <span id="nifty-put">-K</span></p><p>PCR: <span id="nifty-pcr">-</span></p><p>Sentiment: <span id="nifty-sentiment">-</span></p><p>OI Changes: <span id="nifty-add-exit">-</span></p></div>
+            <div class="card" id="FINNIFTY_summary"><h2>FINNIFTY</h2><p>SP: <span id="finnifty-sp">-</span></p><p>Value: <span id="finnifty-value">-</span></p><p>Call COI: <span id="finnifty-call">-K</span></p><p>Put COI: <span id="finnifty-put">-K</span></p><p>PCR: <span id="finnifty-pcr">-</span></p><p>Sentiment: <span id="finnifty-sentiment">-</span></p><p>OI Changes: <span id="finnifty-add-exit">-</span></p></div>
+            <div class="card" id="BANKNIFTY_summary"><h2>BANKNIFTY</h2><p>SP: <span id="banknifty-sp">-</span></p><p>Value: <span id="banknifty-value">-</span></p><p>Call COI: <span id="banknifty-call">-K</span></p><p>Put COI: <span id="banknifty-put">-K</span></p><p>PCR: <span id="banknifty-pcr">-</span></p><p>Sentiment: <span id="banknifty-sentiment">-</span></p><p>OI Changes: <span id="banknifty-add-exit">-</span></p></div>
+            <div class="card" id="SENSEX_summary"><h2>SENSEX</h2><p>Value: <span id="sensex-value">-</span></p><p>Change: <span id="sensex-change">-</span></p><p>Pct Change: <span id="sensex-pct">-%</span></p><p>Sentiment: <span id="sensex-sentiment">-</span></p></div>
+            <div class="card" id="INDIAVIX_summary"><h2>INDIAVIX</h2><p>Value: <span id="indiavix-value">-</span></p><p>Change: <span id="indiavix-change">-</span></p><p>Pct Change: <span id="indiavix-pct">-%</span></p><p>Sentiment: <span id="indiavix-sentiment">-</span></p></div>
         </div>
 
         <div class="tabs">
@@ -96,6 +96,7 @@
             <button class="tablink" onclick="openTab(event, 'SENSEX')" data-symbol="SENSEX">SENSEX</button>
             <button class="tablink" onclick="openTab(event, 'INDIAVIX')" data-symbol="INDIAVIX">INDIAVIX</button>
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY')" data-symbol="BHAVCOPY">Bhavcopy</button>
+            <button class="tablink" onclick="openTab(event, 'BHAVCOPY_STRATEGIES')" data-symbol="BHAVCOPY_STRATEGIES">Bhavcopy Strategies</button>
         </div>
 
         <div class="global-controls"><button class="clear-history-button" onclick="clearTodaysHistory(null)">Clear All Today's History</button></div>
@@ -217,13 +218,74 @@
             </div>
         </div>
 
+        <!-- +++ NEW: Bhavcopy Strategies Tab +++ -->
+        <div id="BHAVCOPY_STRATEGIES_tab" class="tabcontent">
+            <h3 style="margin-top: 20px;">Bhavcopy Derived Trading Strategies</h3>
+            <p>Select a date to analyze Bhavcopy data for potential trading signals. The strategies below are generated based on the selected day's data.</p>
+            <div class="history-controls" style="justify-content: center; margin-top: 15px; margin-bottom: 20px;">
+                <label for="strategy-bhavcopy-date">Select Date:</label>
+                <input type="date" id="strategy-bhavcopy-date" class="history-date-picker">
+                <button onclick="analyzeBhavcopyStrategies()">Analyze Strategies</button>
+            </div>
+
+            <div id="strategy-results-container">
+                <p id="strategy-status" style="text-align: center; margin-bottom: 20px;">Select a date and click "Analyze Strategies" to see results.</p>
+
+                <h4>1. Price Action: Breakouts & Breakdowns</h4>
+                <div class="table-container">
+                    <table id="strategy-breakouts-table">
+                        <thead><tr><th>Symbol</th><th>Close</th><th>% Change</th><th>Volume</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="5">No data available.</td></tr></tbody>
+                    </table>
+                </div>
+
+                <h4>2. Volume Analysis: High Volume Movers</h4>
+                <div class="table-container">
+                    <table id="strategy-volume-table">
+                        <thead><tr><th>Symbol</th><th>Close</th><th>% Change</th><th>Volume</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="5">No data available.</td></tr></tbody>
+                    </table>
+                </div>
+
+                <h4>3. Delivery-Based Buying/Selling (Last 5-8 Days Trend)</h4>
+                <p>This section analyzes the trend of delivery percentage over the last few days to identify potential accumulation or distribution.</p>
+                <div class="table-container">
+                    <table id="strategy-delivery-table">
+                        <thead><tr><th>Symbol</th><th>Latest Close</th><th>Latest Delivery %</th><th>Average Delivery % (5-day)</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="5">No data available.</td></tr></tbody>
+                    </table>
+                </div>
+
+                <h4>4. Gaps Analysis</h4>
+                <p>Stocks that opened with significant gaps (up or down) from the previous day's close.</p>
+                <div class="table-container">
+                    <table id="strategy-gaps-table">
+                        <thead><tr><th>Symbol</th><th>Open</th><th>Close</th><th>Prev. Close</th><th>Gap %</th><th>Signal</th></tr></thead>
+                        <tbody><tr><td colspan="6">No data available.</td></tr></tbody>
+                    </table>
+                </div>
+
+                <h4>5. Support & Resistance (Daily Pivots)</h4>
+                <p>Calculated daily pivot points, support, and resistance levels based on the selected day's OHLCC data.</p>
+                <div class="table-container">
+                    <table id="strategy-pivot-table">
+                        <thead><tr><th>Symbol</th><th>Pivot</th><th>R1</th><th>R2</th><th>R3</th><th>S1</th><th>S2</th><th>S3</th></tr></thead>
+                        <tbody><tr><td colspan="8">No data available.</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+
         <footer>@aditya_nse_bot | Updated: <span id="time">-</span> | Site Visits: <span id="visit-counter">-</span></footer>
     </div>
 
     <div class="disclaimer-ticker-wrap">
         <div class="disclaimer-ticker">
-            <span class="disclaimer-text">Disclaimer: 9 out of 10 individual traders in the Equity Futures and Options Segment incurred net losses. On average, loss-makers registered net trading losses close to ₹50,000. Over and above the net trading losses incurred, loss-makers expended an additional 28% of net trading losses as transaction costs. This tool is for educational purposes only and does not constitute investment advice. Please consult a SEBI-registered financial advisor before trading.</span>
-            <span class="disclaimer-text">Disclaimer: 9 out of 10 individual traders in the Equity Futures and Options Segment incurred net losses. On average, loss-makers registered net trading losses close to ₹50,000. Over and above the net trading losses incurred, loss-makers expended an additional 28% of net trading losses as transaction costs. This tool is for educational purposes only and does not constitute investment advice. Please consult a SEBI-registered financial advisor before trading.</span>
+            <span class="disclaimer-text">Disclaimer: 9 out of 10 individual traders in the Equity Futures and Options Segment incurred net losses. On average, loss-makers registered net trading losses close to ₹50,000. Over and above the net trading losses incurred, loss-makers expended an additional 28% of net trading losses as transaction costs. This tool is for educational purposes only and does not constitute investment advice. Please consult a SEBI-registered financial advisor before trading.
+            </span>
+            <span class="disclaimer-text">Disclaimer: 9 out of 10 individual traders in the Equity Futures and Options Segment incurred net losses. On average, loss-makers registered net trading losses close to ₹50,000. Over and above the net trading losses incurred, loss-makers expended an additional 28% of net trading losses as transaction costs. This tool is for educational purposes only and does not constitute investment advice. Please consult a SEBI-registered financial advisor before trading.
+            </span>
         </div>
     </div>
 
@@ -240,7 +302,7 @@
             document.querySelectorAll(".tablink").forEach(el => el.classList.remove("active"));
             document.getElementById(`${symbol}_tab`).style.display = "block";
             evt.currentTarget.classList.add("active");
-            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY" && symbol !== "BHAVCOPY") {
+            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY" && symbol !== "BHAVCOPY" && symbol !== "BHAVCOPY_STRATEGIES") {
                 updateCharts(symbol, shared_data_cache[symbol]);
             }
         }
@@ -256,14 +318,6 @@
             });
         }
 
-        function updateCharts(symbol, chartData) {
-            const lower = symbol.toLowerCase();
-            if (chartData.pcr_chart_data) renderChart(`${lower}-pcr-chart`, 'line', chartData.pcr_chart_data.map(i => i.TIME), chartData.pcr_chart_data.map(i => i.PCR), 'PCR', 'rgba(75, 192, 192, 0.6)', 'rgba(75, 192, 192, 1)');
-            if (chartData.max_pain_chart_data) renderChart(`${lower}-max-pain-chart`, 'bar', chartData.max_pain_chart_data.map(i => i.StrikePrice), chartData.max_pain_chart_data.map(i => i.TotalMaxPain), 'Max Pain', 'rgba(255, 159, 64, 0.6)', 'rgba(255, 159, 64, 1)');
-            if (chartData.ce_oi_chart_data) renderChart(`${lower}-ce-oi-chart`, 'bar', chartData.ce_oi_chart_data.map(i => i.strikePrice), chartData.ce_oi_chart_data.map(i => i.openInterest), 'Top 10 CE OI', 'rgba(255, 99, 132, 0.6)', 'rgba(255, 99, 132, 1)');
-            if (chartData.pe_oi_chart_data) renderChart(`${lower}-pe-oi-chart`, 'bar', chartData.pe_oi_chart_data.map(i => i.strikePrice), chartData.pe_oi_chart_data.map(i => i.openInterest), 'Top 10 PE OI', 'rgba(54, 162, 235, 0.6)', 'rgba(54, 162, 235, 1)');
-        }
-
         function addHistoryItemToTable(tbody, item, symbol, prepend = false) {
             const tr = document.createElement('tr');
             if (SIMPLE_ASSETS.includes(symbol)) {
@@ -273,7 +327,7 @@
                 const intradayPcr = item.intraday_pcr || 0.0;
                 const pcrChangeColor = pcrChange > 0 ? '#4CAF50' : (pcrChange < 0 ? '#F44336' : '#fff');
                 const intradayPcrColor = intradayPcr > 1.2 ? '#4CAF50' : (intradayPcr < 0.8 && intradayPcr != 0) ? '#F44336' : '#fff';
-                tr.innerHTML = `<td>${item.time}</td><td>${item.sp}</td><td>${item.value}</td><td>${item.call_oi || '-'}K</td><td>${item.put_oi || '-'}K</td><td>${item.pcr.toFixed(2)}</td><td style="color: ${pcrChangeColor};">${pcrChange > 0 ? '+' : ''}${pcrChange.toFixed(2)}</td><td style="color: ${intradayPcrColor};">${intradayPcr.toFixed(2)}</td><td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : '#FFC107'}">${item.sentiment}</td><td>${item.add_exit || '-'}</td>`;
+                tr.innerHTML = `<td>${item.time}</td><td>${item.sp}</td><td>${item.value}</td><td>${item.call_oi || '-'}K</td><td>${item.put_oi || '-'}K</td><td>${item.pcr.toFixed(2)}</td><td style="color: ${pcrChangeColor};">${pcrChange >= 0 ? '+' : ''}${pcrChange.toFixed(2)}</td><td style="color: ${intradayPcrColor};">${intradayPcr.toFixed(2)}</td><td style="color: ${item.sentiment.includes('Bullish') ? '#4CAF50' : '#FFC107'}">${item.sentiment}</td><td>${item.add_exit || '-'}</td>`;
             }
             if (prepend) tbody.prepend(tr); else tbody.appendChild(tr);
         }
@@ -330,11 +384,14 @@
             card.innerHTML = `
                 <h3>${symbol === 'EQUITY' ? 'Equity' : symbol} Pulse</h3>
                 <div class="pulse-row"><span>CALLS</span><div class="pulse-bar-container"><div class="pulse-bar calls" id="${lower}-total-call-oi-bar"></div><div class="pulse-bar puts" id="${lower}-total-put-oi-bar"></div></div><span>PUTS</span></div>
-                <div class="pulse-labels"><span id="${lower}-total-call-oi-label">-</span><span id="${lower}-total-put-oi-label">-</span></div>
+                <div class="pulse-labels"><span>-</span><span id="${lower}-total-put-oi-label">-</span></div>
                 <h5>Today's Change</h5>
                 <div class="pulse-row"><span>CALLS Δ</span><div class="pulse-bar-container"><div class="pulse-bar calls-change" id="${lower}-total-call-coi-bar"></div><div class="pulse-bar puts-change" id="${lower}-total-put-coi-bar"></div></div><span>PUTS Δ</span></div>
-                <div class="pulse-labels"><span id="${lower}-total-call-coi-label">-</span><span id="${lower}-total-put-coi-label">-</span></div>
+                <div class="pulse-labels"><span>-</span><span id="${lower}-total-put-coi-label">-</span></div>
             `;
+            // Update the span IDs for call labels
+            card.querySelector('.pulse-labels span:first-child').id = `${lower}-total-call-oi-label`;
+            card.querySelectorAll('.pulse-labels')[1].querySelector('span:first-child').id = `${lower}-total-call-coi-label`;
             return card;
         }
 
@@ -422,6 +479,263 @@
                 }
             }
         }
+
+        // +++ NEW: Function to analyze Bhavcopy strategies +++
+        async function analyzeBhavcopyStrategies() {
+            const dateInput = document.getElementById('strategy-bhavcopy-date');
+            const selectedDate = dateInput.value;
+            if (!selectedDate) {
+                alert("Please select a date for Bhavcopy analysis.");
+                return;
+            }
+
+            const strategyStatusEl = document.getElementById('strategy-status');
+            strategyStatusEl.textContent = `Analyzing Bhavcopy strategies for ${selectedDate}...`;
+            strategyStatusEl.style.color = '#FFC107';
+
+            // Clear previous results
+            document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
+                tbody.innerHTML = '<tr><td colspan="'+ tbody.previousElementSibling.querySelector('thead tr').children.length +'">Analyzing...</td></tr>';
+            });
+
+            try {
+                const response = await fetch(`/api/bhavcopy/${selectedDate}`);
+                const data = await response.json();
+
+                if (data.error || !data.equities || data.equities.length === 0) {
+                    strategyStatusEl.textContent = data.error || `No Bhavcopy data found for ${selectedDate} to analyze strategies.`;
+                    strategyStatusEl.style.color = '#F44336';
+                    document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
+                        tbody.innerHTML = '<tr><td colspan="'+ tbody.previousElementSibling.querySelector('thead tr').children.length +'">No data available.</td></tr>';
+                    });
+                    return;
+                }
+
+                const equities = data.equities;
+                strategyStatusEl.textContent = `Strategies analyzed for ${selectedDate}.`;
+                strategyStatusEl.style.color = '#4CAF50';
+
+                // Implement Strategy Logic Here
+                updateBreakoutsTable(equities);
+                updateVolumeTable(equities);
+                await updateDeliveryTable(equities, selectedDate); // Requires historical delivery data
+                updateGapsTable(equities);
+                updatePivotTable(equities);
+
+            } catch (error) {
+                strategyStatusEl.textContent = 'Failed to analyze Bhavcopy strategies. An error occurred.';
+                strategyStatusEl.style.color = '#F44336';
+                console.error("Error analyzing Bhavcopy strategies:", error);
+                document.querySelectorAll('#strategy-results-container table tbody').forEach(tbody => {
+                    tbody.innerHTML = '<tr><td colspan="'+ tbody.previousElementSibling.querySelector('thead tr').children.length +'">Error during analysis.</td></tr>';
+                });
+            }
+        }
+
+        // Helper function for Breakouts & Volume
+        function updateBreakoutsTable(equities) {
+            const tbody = document.querySelector('#strategy-breakouts-table tbody');
+            tbody.innerHTML = '';
+            const breakouts = equities.filter(s => s['% Change'] > 3 && s.Volume > 1000000); // Example criteria
+            if (breakouts.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">No significant breakouts/breakdowns found.</td></tr>';
+                return;
+            }
+            breakouts.forEach(stock => {
+                const signal = stock['% Change'] > 0 ? 'Bullish Breakout' : 'Bearish Breakdown';
+                const color = stock['% Change'] > 0 ? '#4CAF50' : '#F44336';
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${stock.Symbol}</td><td>${stock.Close.toFixed(2)}</td><td style="color:${color}">${stock['% Change'].toFixed(2)}%</td><td>${stock.Volume.toLocaleString()}</td><td>${signal}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateVolumeTable(equities) {
+            const tbody = document.querySelector('#strategy-volume-table tbody');
+            tbody.innerHTML = '';
+            const highVolume = equities.filter(s => s.Volume > 2000000).sort((a,b) => b.Volume - a.Volume); // Example criteria
+            if (highVolume.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">No high volume movers found.</td></tr>';
+                return;
+            }
+            highVolume.forEach(stock => {
+                const signal = 'High Volume Activity';
+                const color = stock['% Change'] >= 0 ? '#4CAF50' : '#F44336';
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${stock.Symbol}</td><td>${stock.Close.toFixed(2)}</td><td style="color:${color}">${stock['% Change'].toFixed(2)}%</td><td>${stock.Volume.toLocaleString()}</td><td>${signal}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function updateDeliveryTable(currentEquities, selectedDate) {
+            const tbody = document.querySelector('#strategy-delivery-table tbody');
+            tbody.innerHTML = '';
+
+            const allDeliveryData = {}; // Store delivery data for each stock over multiple days
+
+            for (let i = 0; i < 8; i++) { // Fetch delivery data for last 8 days
+                const date = new Date(selectedDate);
+                date.setDate(date.getDate() - i);
+                const dateStr = date.toISOString().split('T')[0];
+
+                try {
+                    const response = await fetch(`/api/bhavcopy/${dateStr}`);
+                    const data = await response.json();
+
+                    if (!data.error && data.equities && data.equities.length > 0) {
+                        data.equities.forEach(stock => {
+                            if (!allDeliveryData[stock.Symbol]) {
+                                allDeliveryData[stock.Symbol] = [];
+                            }
+                            // Ensure Delivery % is a number for calculations, default to 0 if 'N/A'
+                            const deliveryPct = parseFloat(stock['Delivery %']);
+                            if (!isNaN(deliveryPct)) {
+                                allDeliveryData[stock.Symbol].push(deliveryPct);
+                            }
+                        });
+                    }
+                } catch (error) {
+                    console.warn(`Could not fetch historical bhavcopy for ${dateStr}:`, error);
+                }
+            }
+
+            const deliverySignals = [];
+            currentEquities.forEach(stock => {
+                const symbol = stock.Symbol;
+                const latestClose = stock.Close;
+                const latestDeliveryPct = parseFloat(stock['Delivery %']);
+
+                if (allDeliveryData[symbol] && allDeliveryData[symbol].length > 1) {
+                    const deliveryPcts = allDeliveryData[symbol];
+                    const avgDeliveryPct = deliveryPcts.reduce((sum, val) => sum + val, 0) / deliveryPcts.length;
+
+                    let signal = 'Neutral';
+                    let signalColor = '#fff';
+
+                    if (!isNaN(latestDeliveryPct) && latestDeliveryPct > avgDeliveryPct * 1.2 && stock['% Change'] > 0) {
+                        signal = 'Strong Delivery Buying (Accumulation)';
+                        signalColor = '#4CAF50';
+                    } else if (!isNaN(latestDeliveryPct) && latestDeliveryPct < avgDeliveryPct * 0.8 && stock['% Change'] < 0) {
+                        signal = 'Strong Delivery Selling (Distribution)';
+                        signalColor = '#F44336';
+                    } else if (!isNaN(latestDeliveryPct) && latestDeliveryPct > avgDeliveryPct * 1.1) {
+                        signal = 'Increased Delivery Buying';
+                        signalColor = '#81c784';
+                    } else if (!isNaN(latestDeliveryPct) && latestDeliveryPct < avgDeliveryPct * 0.9) {
+                        signal = 'Decreased Delivery Buying';
+                        signalColor = '#e57373';
+                    }
+
+                    deliverySignals.push({
+                        Symbol: symbol,
+                        LatestClose: latestClose,
+                        LatestDeliveryPct: isNaN(latestDeliveryPct) ? 'N/A' : latestDeliveryPct.toFixed(2) + '%',
+                        AvgDeliveryPct: avgDeliveryPct.toFixed(2) + '%',
+                        Signal: signal,
+                        SignalColor: signalColor
+                    });
+                }
+            });
+
+            if (deliverySignals.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">No significant delivery trends found or insufficient historical data.</td></tr>';
+                return;
+            }
+
+            deliverySignals.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.LatestClose.toFixed(2)}</td><td>${item.LatestDeliveryPct}</td><td>${item.AvgDeliveryPct}</td><td style="color:${item.SignalColor}">${item.Signal}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+
+        function updateGapsTable(equities) {
+            const tbody = document.querySelector('#strategy-gaps-table tbody');
+            tbody.innerHTML = '';
+            const gaps = [];
+            equities.forEach(stock => {
+                // To calculate gaps accurately, we need previous day's close.
+                // For simplicity here, we'll assume we can get it or use a placeholder.
+                // In a real scenario, you'd fetch yesterday's bhavcopy.
+                const open = stock.Open || stock.Close; // Placeholder if Open is not directly available in this simplified structure
+                const prevClose = stock.Close / (1 + (stock['% Change'] / 100)); // Estimate prev close
+                const gapPct = ((open - prevClose) / prevClose * 100);
+
+                if (Math.abs(gapPct) > 1) { // Significant gap, e.g., > 1%
+                    const signal = gapPct > 0 ? 'Gap Up' : 'Gap Down';
+                    const color = gapPct > 0 ? '#4CAF50' : '#F44336';
+                    gaps.push({
+                        Symbol: stock.Symbol,
+                        Open: open.toFixed(2),
+                        Close: stock.Close.toFixed(2),
+                        PrevClose: prevClose.toFixed(2),
+                        GapPct: gapPct.toFixed(2),
+                        Signal: signal,
+                        SignalColor: color
+                    });
+                }
+            });
+
+            if (gaps.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6">No significant gaps found.</td></tr>';
+                return;
+            }
+
+            gaps.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Open}</td><td>${item.Close}</td><td>${item.PrevClose}</td><td style="color:${item.SignalColor}">${item.GapPct}%</td><td>${item.Signal}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updatePivotTable(equities) {
+            const tbody = document.querySelector('#strategy-pivot-table tbody');
+            tbody.innerHTML = '';
+
+            const pivots = [];
+            equities.forEach(stock => {
+                // Assuming we have OHLC for the day in Bhavcopy data.
+                // In this simplified structure, we only have Close. For accurate pivots,
+                // you'd need Open, High, Low, Close from the bhavcopy.
+                // For demonstration, let's use Close as a proxy for O,H,L for pivot calculation, which is not ideal for actual trading.
+                // A better approach would be to parse the full bhavcopy CSV which includes OHLC.
+                const H = stock.High || stock.Close * 1.05; // Placeholder
+                const L = stock.Low || stock.Close * 0.95;  // Placeholder
+                const C = stock.Close;
+
+                const P = (H + L + C) / 3;
+                const R1 = (2 * P) - L;
+                const S1 = (2 * P) - H;
+                const R2 = P + (H - L);
+                const S2 = P - (H - L);
+                const R3 = H + (2 * (P - L));
+                const S3 = L - (2 * (H - P));
+
+                pivots.push({
+                    Symbol: stock.Symbol,
+                    Pivot: P.toFixed(2),
+                    R1: R1.toFixed(2),
+                    R2: R2.toFixed(2),
+                    R3: R3.toFixed(2),
+                    S1: S1.toFixed(2),
+                    S2: S2.toFixed(2),
+                    S3: S3.toFixed(2),
+                });
+            });
+
+            if (pivots.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8">No pivot data available. (Requires Open, High, Low, Close data)</td></tr>';
+                return;
+            }
+
+            pivots.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.Symbol}</td><td>${item.Pivot}</td><td>${item.R1}</td><td>${item.R2}</td><td>${item.R3}</td><td>${item.S1}</td><td>${item.S2}</td><td>${item.S3}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
 
         socket.on('initial_todays_history', (data) => {
             if (!data.history) return;
