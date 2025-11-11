@@ -836,7 +836,7 @@ class NseBseAnalyzer:
 
                 if extracted_data and (
                         extracted_data.get("equities") or extracted_data.get("indices") or extracted_data.get(
-                        "fno_data") or extracted_data.get("block_deals")):
+                    "fno_data") or extracted_data.get("block_deals")):
                     print(
                         f"Successfully extracted {len(extracted_data.get('equities', []))} equity, {len(extracted_data.get('fno_data', []))} F&O, {len(extracted_data.get('indices', []))} index, and {len(extracted_data.get('block_deals', []))} block deal records from Bhavcopy.")
                     latest_bhavcopy_data = extracted_data  # Update global cache
@@ -900,7 +900,7 @@ class NseBseAnalyzer:
                     trading_type = r.get('TRADING_TYPE', 'EQ')
 
                     chg = ((
-                                       close_price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 and close_price is not None else 0
+                                   close_price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 and close_price is not None else 0
                     delivery_str = str(r.get('DELIV_PER', 'N/A')).strip()
                     delivery = delivery_str if delivery_str != 'N/A' else 'N/A'
 
@@ -1209,7 +1209,7 @@ class NseBseAnalyzer:
         return {"equities": equities, "indices": indices, "fno_data": fno_data, "block_deals": block_deals}
 
     def _get_historical_bhavcopy_for_stock(self, symbol: str, start_date_str: str, end_date_str: str, limit: int) -> \
-    List[Dict[str, Any]]:
+            List[Dict[str, Any]]:
         """
         Fetches historical equity bhavcopy data for a specific stock over a period.
         `limit` is the maximum number of records to return.
@@ -1318,7 +1318,7 @@ class NseBseAnalyzer:
                     if not prev_next_month_future_2_days_ago.empty:
                         next_month_oi_2_days_ago = prev_next_month_future_2_days_ago.iloc[0]['Open Interest']
                         oi_increase_pct = ((
-                                                       next_month_oi_current - next_month_oi_2_days_ago) / next_month_oi_2_days_ago * 100) if next_month_oi_2_days_ago > 0 else float(
+                                                   next_month_oi_current - next_month_oi_2_days_ago) / next_month_oi_2_days_ago * 100) if next_month_oi_2_days_ago > 0 else float(
                             'inf')
 
                         # Condition: near-month delivery < 0.8% AND next-month OI increased > 40% in 2 days
@@ -1380,7 +1380,7 @@ class NseBseAnalyzer:
                     if prev_close is not None and current_open is not None and bd_price is not None:
                         # Block price < previous close * 0.92 (-8% discount)
                         is_discount_block_deal = (
-                                    bd_price < prev_close * 0.92) if prev_close and prev_close > 0 else False
+                                bd_price < prev_close * 0.92) if prev_close and prev_close > 0 else False
                         # Today open > previous close * 1.04 (+4% open gap)
                         is_open_gap_up = (current_open > prev_close * 1.04) if prev_close and prev_close > 0 else False
 
@@ -1525,8 +1525,8 @@ class NseBseAnalyzer:
                     prev_eq_row = prev_eq.iloc[0]
 
                     price_change_pct = (
-                                (current_eq_row['Close'] - prev_eq_row['Close']) / prev_eq_row['Close'] * 100) if \
-                    prev_eq_row['Close'] > 0 else 0
+                            (current_eq_row['Close'] - prev_eq_row['Close']) / prev_eq_row['Close'] * 100) if \
+                        prev_eq_row['Close'] > 0 else 0
                     oi_change = current_fut_near['Open Interest'] - prev_fut_near['Open Interest']
 
                     signal_type = "N/A"
@@ -1698,7 +1698,9 @@ class NseBseAnalyzer:
 
     def calculate_strength_score(self, data: Dict) -> float:
         summary = data.get('summary', {})
-        sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2}
+        sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2,
+                         "Weakening": -0.5, "Strengthening": 0.5, "Bullish Reversal": 1.5,
+                         "Bearish Reversal": -1.5}  # Added new sentiments
         sentiment_score = sentiment_map.get(summary.get('sentiment', 'Neutral'), 0)
         pcr = summary.get('pcr', 1.0)
         intraday_pcr = summary.get('intraday_pcr', 1.0)
@@ -1714,7 +1716,9 @@ class NseBseAnalyzer:
         current_intraday_pcr = current_summary.get('intraday_pcr', 1.0)
         previous_intraday_pcr = previous_summary.get('intraday_pcr', 1.0)
 
-        sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2}
+        sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2,
+                         "Weakening": -0.5, "Strengthening": 0.5, "Bullish Reversal": 1.5,
+                         "Bearish Reversal": -1.5}  # Added new sentiments
         sentiment_score = sentiment_map.get(current_summary.get('sentiment', 'Neutral'), 0)
 
         intraday_pcr_change = current_intraday_pcr - previous_intraday_pcr
@@ -1955,8 +1959,14 @@ class NseBseAnalyzer:
             atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
             atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
             diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
-            base_sentiment = self.get_sentiment(diff, pcr)
-            enhanced_sentiment = self._get_enhanced_sentiment(sym, base_sentiment)
+
+            # --- MODIFICATION START ---
+            # Line 1: Call get_sentiment with intraday_pcr, symbol and history
+            current_history_for_sym = todays_history.get(sym, [])
+            sentiment = self.get_sentiment(pcr, intraday_pcr, total_call_coi, total_put_coi, sym,
+                                           current_history_for_sym)
+            # --- MODIFICATION END ---
+
             add_exit_str = " | ".join(filter(None,
                                              [f"CE Add: {', '.join(sorted(ce_add_strikes))}" if ce_add_strikes else "",
                                               f"PE Add: {', '.join(sorted(pe_add_strikes))}" if pe_add_strikes else "",
@@ -1964,8 +1974,10 @@ class NseBseAnalyzer:
                                               f"PE Exit: {', '.join(sorted(pe_exit_strikes))}" if pe_exit_strikes else ""])) or "No Change"
             summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': int(sp), 'value': int(round(underlying)),
                        'call_oi': round(atm_call_coi / 1000, 1), 'put_oi': round(atm_put_coi / 1000, 1), 'pcr': pcr,
-                       'sentiment': enhanced_sentiment, 'expiry': expiry, 'add_exit': add_exit_str,
-                       'pcr_change': pcr_change, 'intraday_pcr': intraday_pcr}
+                       'sentiment': sentiment, 'expiry': expiry, 'add_exit': add_exit_str,
+                       'pcr_change': pcr_change, 'intraday_pcr': intraday_pcr,
+                       'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi  # Added for history analysis
+                       }
             pulse_summary = {'total_call_oi': total_call_oi, 'total_put_oi': total_put_oi,
                              'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi}
             max_pain_df = self._calculate_max_pain(df_ce, df_pe)
@@ -2123,10 +2135,18 @@ class NseBseAnalyzer:
             atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
             atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
             diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
-            sentiment = self.get_sentiment(diff, pcr)
+
+            # --- MODIFICATION START ---
+            # Line 3: Call get_sentiment with intraday_pcr, symbol and history
+            current_history_for_sym = todays_history.get(sym, [])
+            sentiment = self.get_sentiment(pcr, intraday_pcr, total_call_coi, total_put_coi, sym,
+                                           current_history_for_sym)
+            # --- MODIFICATION END ---
 
             summary = {'sp': int(sp), 'value': float(underlying), 'pcr': pcr, 'sentiment': sentiment,
-                       'intraday_pcr': intraday_pcr}
+                       'intraday_pcr': intraday_pcr,
+                       'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi  # Added for history analysis
+                       }
             pulse_summary = {'total_call_oi': total_call_oi, 'total_put_oi': total_put_oi,
                              'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi}
 
@@ -2158,15 +2178,107 @@ class NseBseAnalyzer:
             print(f"Error getting ATM strike: {e}")
             return None
 
-    def get_sentiment(self, diff: float, pcr: float) -> str:
-        if diff > 10 or pcr < 0.7: return "Strong Bearish"
-        if diff < -10 or pcr > 1.3: return "Strong Bullish"
-        if diff > 2 or (0.7 <= pcr < 0.9): return "Mild Bearish"
-        if diff < -2 or (1.1 < pcr <= 1.3): return "Mild Bullish"
+    # --- MODIFICATION START ---
+    # Line 4: Updated get_sentiment signature and logic
+    def get_sentiment(self, pcr: float, intraday_pcr: float, total_call_coi: int, total_put_coi: int, sym: str,
+                      history: List[Dict[str, Any]]) -> str:
+        """
+        Calculates sentiment based on PCR, Intraday PCR (PE OI Delta), and recent trends in OI.
+        """
+        # Define thresholds for PCR
+        PCR_BULLISH_THRESHOLD = 1.2
+        PCR_BEARISH_THRESHOLD = 0.8
+        PCR_STABLE_THRESHOLD = 0.05  # Max change for PCR to be considered "stable" over history
+        OI_CHANGE_THRESHOLD_FOR_TREND = 50000  # Minimum cumulative OI change to consider an "add" or "exit" significant
+
+        # --- 1. Determine PE OI Delta direction based on intraday_pcr ---
+        # Using the sign of total_put_coi directly for PE OI Delta (more accurate to your table's implication)
+        pe_oi_delta_positive = total_put_coi > 0
+        pe_oi_delta_negative = total_put_coi < 0
+
+        # Using the sign of total_call_coi directly for CE OI Delta
+        ce_oi_delta_positive = total_call_coi > 0
+        ce_oi_delta_negative = total_call_coi < 0
+
+        # --- 2. Apply the Writer-Aware PCR logic (Strong Sentiments) ---
+        if pcr > PCR_BULLISH_THRESHOLD:  # PCR > 1.2
+            if pe_oi_delta_positive:
+                return "Strong Bullish"  # Bullish – Put Writers in control
+            elif pe_oi_delta_negative:
+                return "Strong Bearish"  # Bearish – Put Buying fear
+        elif pcr < PCR_BEARISH_THRESHOLD:  # PCR < 0.8
+            if pe_oi_delta_positive:
+                return "Strong Bearish"  # Bearish – Call Writers capping
+            elif pe_oi_delta_negative:
+                return "Strong Bullish"  # Bullish – Call Buying FOMO
+
+        # --- 3. Analyze trends from history for "Weakening" / "Strengthening" / "Reversal" ---
+        TREND_LOOKBACK = 5  # Number of recent updates to analyze
+
+        # Ensure we have enough history to analyze trends
+        if len(history) >= TREND_LOOKBACK:
+            recent_history = history[:TREND_LOOKBACK]  # Get the most recent N updates
+
+            # Calculate PCR trend
+            first_pcr = recent_history[-1]['pcr']  # Oldest PCR in the lookback
+            last_pcr = recent_history[0]['pcr']  # Newest PCR in the lookback (current pcr)
+
+            pcr_trend_change = last_pcr - first_pcr
+            pcr_is_stable = abs(pcr_trend_change) < PCR_STABLE_THRESHOLD
+            pcr_is_rising = pcr_trend_change > PCR_STABLE_THRESHOLD
+            pcr_is_falling = pcr_trend_change < -PCR_STABLE_THRESHOLD
+
+            # Calculate cumulative OI changes over the lookback period
+            cumulative_call_coi_history = sum(h.get('total_call_coi', 0) for h in recent_history)
+            cumulative_put_coi_history = sum(h.get('total_put_coi', 0) for h in recent_history)
+
+            ce_oi_adding_trend = cumulative_call_coi_history > OI_CHANGE_THRESHOLD_FOR_TREND
+            ce_oi_exiting_trend = cumulative_call_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND
+            pe_oi_adding_trend = cumulative_put_coi_history > OI_CHANGE_THRESHOLD_FOR_TREND
+            pe_oi_exiting_trend = cumulative_put_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND
+
+            # Apply trend-based rules
+            # Weakening: PCR stable/falling AND CE OI adding
+            if (pcr_is_stable or pcr_is_falling) and ce_oi_adding_trend:
+                return "Weakening"
+
+            # Strengthening: PCR stable/rising AND PE OI adding
+            if (pcr_is_stable or pcr_is_rising) and pe_oi_adding_trend:
+                return "Strengthening"
+
+            # Bullish Reversal: PCR falling AND PE OI exiting
+            if pcr_is_falling and pe_oi_exiting_trend:
+                return "Bullish Reversal"
+
+            # Bearish Reversal: PCR rising AND CE OI exiting
+            if pcr_is_rising and ce_oi_exiting_trend:
+                return "Bearish Reversal"
+
+        # --- 4. Apply intraday_pcr influence for Mild Sentiments (when pcr is between 0.8 and 1.2) ---
+        # This block only executes if no "Strong" or "Trend-based" sentiment was returned.
+        # It handles cases where pcr is in the middle range, using intraday_pcr for direction.
+
+        if pcr >= 1.0:  # Generally bullish or neutral PCR
+            if pe_oi_delta_positive:  # Intraday action is also bullish (put writers active)
+                return "Mild Bullish"
+            elif ce_oi_delta_positive:  # Intraday action is bearish (call writers active)
+                return "Mild Bearish"  # If CE OI adds when PCR is somewhat bullish, it's a bearish sign
+
+        elif pcr < 1.0:  # Generally bearish or neutral PCR
+            if ce_oi_delta_negative:  # Intraday action is bullish (call writers unwinding or call buyers active)
+                return "Mild Bullish"
+            elif pe_oi_delta_negative:  # Intraday action is bearish (put buyers active)
+                return "Mild Bearish"
+
+        # --- 5. Fallback to general PCR-based sentiment if other specific conditions not met ---
+        if pcr >= 1.1:  # Changed from > 1.1 to >= 1.1 as discussed
+            return "Mild Bullish"
+        elif pcr < 0.9:
+            return "Mild Bearish"
+
         return "Neutral"
 
-    def _get_enhanced_sentiment(self, sym: str, base_sentiment: str) -> str:
-        return base_sentiment
+    # --- MODIFICATION END ---
 
     def send_alert(self, sym: str, row: Dict[str, Any]):
         try:
@@ -2242,3 +2354,4 @@ if __name__ == '__main__':
     analyzer = NseBseAnalyzer()
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     socketio.run(app, host='0.0.0.0', port=5000)
+
