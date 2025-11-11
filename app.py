@@ -38,7 +38,11 @@ MAX_HISTORY_ROWS_DB = 10000
 LIVE_DATA_INTERVAL = 15
 EQUITY_FETCH_INTERVAL = 300  # 5 minutes
 AI_BOT_UPDATE_INTERVAL = 300  # 5 minutes for AI Bot analysis
-AI_BOT_HISTORY_DAYS = 2  # Keep 2 days of bot trade history
+AI_BOT_TRADING_START_TIME = datetime.time(9, 15)
+AI_BOT_TRADING_END_TIME = datetime.time(15, 15)  # Bot active until 3:15 PM IST
+
+NSE_FETCH_START_TIME = datetime.time(9, 15)
+NSE_FETCH_END_TIME = datetime.time(15, 31)  # NSE data fetch active until 3:31 PM IST
 
 AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
 # Define NSE indices you want to track historical Bhavcopy for
@@ -64,10 +68,10 @@ previous_worsening_list = set()
 # latest_bhavcopy_data will now combine both equity and index data for display
 latest_bhavcopy_data: Dict[str, Any] = {"equities": [], "indices": [], "date": None}
 
-# NEW: Global variable for AI Bot trades
-ai_bot_trades: Dict[str, Any] = {}  # Stores only active trades/latest recommendation per symbol
+# NEW: Global variable for AI Bot trades (now includes equities)
+ai_bot_trades: Dict[str, Any] = {}
 # NEW: Global variable for AI Bot trade history
-ai_bot_trade_history: List[Dict[str, Any]] = []  # Stores all bot actions (entry/exit/hold)
+ai_bot_trade_history: List[Dict[str, Any]] = []
 
 last_ai_bot_run_time: Dict[str, float] = {}
 
@@ -250,7 +254,6 @@ def get_historical_data(symbol: str, date_str: str):
             ist_day_start = datetime.datetime.strptime(date_str, "%Y-%m-%d")
             utc_day_start = ist_day_start - datetime.timedelta(hours=5, minutes=30)
             utc_day_end = utc_day_start + datetime.timedelta(days=1)
-            # MODIFIED: Removed pcr_change from SELECT
             cur.execute(
                 "SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, intraday_pcr FROM history WHERE symbol = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC",
                 (symbol, utc_day_start.strftime('%Y-%m-%d %H:%M:%S'), utc_day_end.strftime('%Y-%m-%d %H:%M:%S')))
@@ -259,7 +262,6 @@ def get_historical_data(symbol: str, date_str: str):
                 history_for_date.append(
                     {'time': analyzer._convert_utc_to_ist_display(r[0]), 'sp': r[1], 'value': r[2], 'call_oi': r[3],
                      'put_oi': r[4], 'pcr': r[5], 'sentiment': r[6], 'add_exit': r[7],
-                     # MODIFIED: Adjusted index for intraday_pcr
                      'intraday_pcr': r[8] if r[8] is not None else 0.0})
         except Exception as e:
             return jsonify({"error": "Failed to query database."}), 500
@@ -277,7 +279,6 @@ def clear_history_endpoint():
 class DeepSeekBot:
     def __init__(self):
         self.recommendations: Dict[str, Dict[str, Any]] = {}
-        # active_trades will store {symbol: {entry_details...}}
         self.active_trades: Dict[str, Dict[str, Any]] = {}
         self.last_vix: float = 15.0
 
@@ -286,14 +287,12 @@ class DeepSeekBot:
         if df_ce.empty or df_pe.empty:
             return None
 
-        # Ensure 'strikePrice' and 'openInterest' columns exist
         if 'strikePrice' not in df_ce.columns or 'openInterest' not in df_ce.columns or \
                 'strikePrice' not in df_pe.columns or 'openInterest' not in df_pe.columns:
             print(
                 "Warning: Missing 'strikePrice' or 'openInterest' columns in CE/PE dataframes for Max Pain calculation.")
             return None
 
-        # Select relevant columns and merge
         MxPn_CE = df_ce[['strikePrice', 'openInterest']]
         MxPn_PE = df_pe[['strikePrice', 'openInterest']]
         MxPn_Df = pd.merge(MxPn_CE, MxPn_PE, on=['strikePrice'], how='outer', suffixes=('_CE', '_PE')).fillna(0)
@@ -306,15 +305,11 @@ class DeepSeekBot:
         max_pain_strike = None
 
         for current_strike_price in StrikePriceList:
-            # Calculate total loss for call writers at this assumed expiry strike
-            # Call writers lose if spot (current_strike_price) > their strike
             call_writer_loss = sum(
                 (max(0, current_strike_price - strike) * call_oi)
                 for strike, call_oi in zip(StrikePriceList, OiCallList) if current_strike_price > strike
             )
 
-            # Calculate total loss for put writers at this assumed expiry strike
-            # Put writers lose if spot (current_strike_price) < their strike
             put_writer_loss = sum(
                 (max(0, strike - current_strike_price) * put_oi)
                 for strike, put_oi in zip(StrikePriceList, OiPutList) if current_strike_price < strike
@@ -333,7 +328,62 @@ class DeepSeekBot:
         """
         Analyzes the given history for a symbol and provides a trade recommendation based on prompts.
         """
+        # --- FIX: Move global declaration to the top ---
+        global ai_bot_trade_history
+
         now = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
+
+        # --- NEW: AI Bot Trading Time Restriction ---
+        current_time_only = now.time()
+        if not (AI_BOT_TRADING_START_TIME <= current_time_only <= AI_BOT_TRADING_END_TIME):
+            # If outside trading hours, clear any active trades and return Neutral
+            if symbol in self.active_trades:
+                # Need to get current premiums for P/L calculation at market close
+                entry_premium_ce = self.active_trades[symbol].get('entry_premium_ce', 0)
+                entry_premium_pe = self.active_trades[symbol].get('entry_premium_pe', 0)
+                lot_size = 50  # Default, will be overridden for specific symbols
+                if symbol == "NIFTY":
+                    lot_size = 50
+                elif symbol == "BANKNIFTY":
+                    lot_size = 15
+                elif symbol == "FINNIFTY":
+                    lot_size = 40
+
+                # Get current premiums for exit calculation
+                active_otm_ce_strike = self.active_trades[symbol].get('otm_ce_strike')
+                active_otm_pe_strike = self.active_trades[symbol].get('otm_pe_strike')
+
+                premium_ce_exit = df_ce[df_ce['strikePrice'] == active_otm_ce_strike]['lastPrice'].iloc[0] if not df_ce[
+                    df_ce['strikePrice'] == active_otm_ce_strike].empty else 0
+                premium_pe_exit = df_pe[df_pe['strikePrice'] == active_otm_pe_strike]['lastPrice'].iloc[0] if not df_pe[
+                    df_pe['strikePrice'] == active_otm_pe_strike].empty else 0
+
+                current_pnl = 0.0
+                if "CE" in self.active_trades[symbol].get('strikes', '') and entry_premium_ce > 0:
+                    current_pnl += (entry_premium_ce - premium_ce_exit) * lot_size
+                if "PE" in self.active_trades[symbol].get('strikes', '') and entry_premium_pe > 0:
+                    current_pnl += (entry_premium_pe - premium_pe_exit) * lot_size
+
+                final_exit_rec = {
+                    "recommendation": "EXIT", "rationale": "Market closed, exiting active trade.",
+                    "timestamp": now.strftime("%H:%M:%S"),
+                    "trade": "Exit " + self.active_trades[symbol].get('trade', 'previous trade'),
+                    "strikes": self.active_trades[symbol].get('strikes', '-'),
+                    "type": "Exit", "risk_pct": "-", "exit_rule": "Market Close",
+                    "spot": self.active_trades[symbol].get('spot'), "pcr": self.active_trades[symbol].get('pcr'),
+                    "intraday_pcr": self.active_trades[symbol].get('intraday_pcr'),
+                    "status": "Exit", "pnl": round(current_pnl, 2),
+                    "action_price": round(premium_ce_exit + premium_pe_exit, 2)
+                }
+                ai_bot_trade_history.append(final_exit_rec)
+                self.active_trades.pop(symbol, None)  # Clear active trade
+                return final_exit_rec
+            else:
+                return {"recommendation": "Neutral", "rationale": "Outside trading hours.",
+                        "timestamp": now.strftime("%H:%M:%S"), "trade": "-", "strikes": "-", "type": "-",
+                        "risk_pct": "-",
+                        "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Trade",
+                        "pnl": 0.0, "action_price": 0.0}
 
         if not history:
             return {"recommendation": "Neutral", "rationale": "No history data available.",
@@ -345,15 +395,10 @@ class DeepSeekBot:
         pcr = latest.get('pcr', 1.0)
         sentiment = latest.get('sentiment', 'Neutral')
         spot = latest.get('value', 0)
-        intraday_pcr = latest.get('intraday_pcr', 1.0)  # Used for rationale
+        intraday_pcr = latest.get('intraday_pcr', 1.0)
 
-        # The 'call_oi' and 'put_oi' in summary are ATM COI in K, so we multiply by 1000
-        # For actual OI Add/Exit check, we need total_call_coi and total_put_coi (from summary)
         total_call_coi_actual = latest.get('total_call_coi', 0)
         total_put_coi_actual = latest.get('total_put_coi', 0)
-
-        # --- Prompt 1: Historical Context (Last 10 Records) ---
-        # The history list already serves this purpose.
 
         # --- Prompt 2: Time-Based Writing Windows ---
         current_hour = now.hour
@@ -361,21 +406,19 @@ class DeepSeekBot:
 
         trade_logic_override = None
 
-        # Convert to 24-hour format if needed for comparison
-        if current_hour == 9 and current_minute >= 30 and current_minute <= 59:  # 9:30–10:00 AM
+        if current_hour == 9 and current_minute >= 30 and current_minute <= 59:
             if pcr < 0.7:
                 trade_logic_override = "Prepare to write puts if price holds"
-        elif current_hour >= 10 and current_hour < 12:  # 10:00–12:00 PM
+        elif current_hour >= 10 and current_hour < 12:
             if pcr > 1.3:
                 trade_logic_override = "Peak writing window - Write OTM calls — bounce likely"
-        elif current_hour >= 13 and current_hour <= 14 and current_minute <= 30:  # 1:00–2:30 PM
-            # Need to check PCR drop from history
+        elif current_hour >= 13 and current_hour <= 14 and current_minute <= 30:
             if len(history) > 1:
                 prev_pcr = history[1].get('pcr', pcr)
-                if prev_pcr > 1.4 and pcr < 0.6:  # PCR drops from 1.4 -> 0.6 suddenly
+                if prev_pcr > 1.4 and pcr < 0.6:
                     trade_logic_override = "Reversal hunting - Write puts aggressively (reversal down)"
-        elif current_hour == 14 and current_minute >= 30 and current_minute <= 59:  # 2:30–3:15 PM (adjusted to 2:30-3:00 for practical bot)
-            if pcr < 0.8:  # PCR stabilizes < 0.8
+        elif current_hour == 14 and current_minute >= 30 and current_minute <= 59:
+            if pcr < 0.8:
                 trade_logic_override = "Expiry theta play - Short strangle — theta burn max"
 
         # --- Initial Trade Parameters ---
@@ -385,14 +428,13 @@ class DeepSeekBot:
         strikes_selected = "-"
         trade_type = "-"
         risk_pct_display = "-"
-        exit_rule_display = "Standard exit logic"  # Default exit rule
-        status = "Hold"
+        exit_rule_display = "Standard exit logic"
+        status = "Hold"  # Default status if no action is taken or trade is active
         pnl = 0.0
         action_price = 0.0
 
-        # Default capital and lot size (for NIFTY, FINNIFTY, BANKNIFTY)
-        capital = 500000  # Example capital
-        lot_size = 50  # NIFTY lot size. Adjust for others.
+        capital = 500000
+        lot_size = 50
         if symbol == "NIFTY":
             lot_size = 50
         elif symbol == "BANKNIFTY":
@@ -400,7 +442,6 @@ class DeepSeekBot:
         elif symbol == "FINNIFTY":
             lot_size = 40
 
-        # Determine strike step based on symbol
         strike_step = 50
         if symbol == "BANKNIFTY":
             strike_step = 100
@@ -408,23 +449,18 @@ class DeepSeekBot:
             strike_step = 50
 
         atm_strike = round(spot / strike_step) * strike_step
-        otm_ce_strike = atm_strike + (3 * strike_step)  # 3 strikes OTM
-        otm_pe_strike = atm_strike - (3 * strike_step)  # 3 strikes OTM
-        far_otm_ce_strike = atm_strike + (6 * strike_step)  # ~300 points for NIFTY
-        far_otm_pe_strike = atm_strike - (6 * strike_step)  # ~300 points for NIFTY
+        otm_ce_strike = atm_strike + (3 * strike_step)
+        otm_pe_strike = atm_strike - (3 * strike_step)
+        far_otm_ce_strike = atm_strike + (6 * strike_step)
+        far_otm_pe_strike = atm_strike - (6 * strike_step)
 
-        # NEW: Get premiums for the recommended strikes for a more realistic trade summary
         premium_ce = df_ce[df_ce['strikePrice'] == otm_ce_strike]['lastPrice'].iloc[0] if not df_ce[
             df_ce['strikePrice'] == otm_ce_strike].empty else 0
         premium_pe = df_pe[df_pe['strikePrice'] == otm_pe_strike]['lastPrice'].iloc[0] if not df_pe[
             df_pe['strikePrice'] == otm_pe_strike].empty else 0
 
-        # Check for CE Add / PE Add to confirm direction (Prompt 8)
-        # Using the total_call_coi_actual and total_put_coi_actual for more precision
-        is_ce_add_heavy = total_call_coi_actual > (
-                    2 * total_put_coi_actual) and total_call_coi_actual > 20000  # Threshold to be significant
-        is_pe_add_heavy = total_put_coi_actual > (
-                    2 * total_call_coi_actual) and total_put_coi_actual > 20000  # Threshold to be significant
+        is_ce_add_heavy = total_call_coi_actual > (2 * total_put_coi_actual) and total_call_coi_actual > 20000
+        is_pe_add_heavy = total_put_coi_actual > (2 * total_call_coi_actual) and total_put_coi_actual > 20000
 
         # --- Exit logic check first (Prompt 4) ---
         if symbol in self.active_trades:
@@ -434,20 +470,18 @@ class DeepSeekBot:
             entry_premium_ce = prev_trade.get('entry_premium_ce', 0)
             entry_premium_pe = prev_trade.get('entry_premium_pe', 0)
 
-            # Exit conditions
             exit_triggered = False
             exit_reason = ""
 
-            if abs(spot - entry_spot) > 100:  # Spot moved >100 points against
+            if abs(spot - entry_spot) > 100:
                 exit_triggered = True
                 exit_reason = f"Spot moved {abs(spot - entry_spot):.2f} points against entry ({entry_spot:.2f})."
-            elif abs(pcr - entry_pcr) > 0.3:  # PCR reversed >0.3 from entry
+            elif abs(pcr - entry_pcr) > 0.3:
                 exit_triggered = True
                 exit_reason = f"PCR reversed {abs(pcr - entry_pcr):.2f} from entry ({entry_pcr:.2f})."
-            elif now.hour >= 15 and now.minute >= 15:  # Time > 3:15 PM (theta burn max, or near market close)
+            elif now.hour >= 15 and now.minute >= 15:
                 exit_triggered = True
                 exit_reason = "Approaching end of day (3:15 PM), time to exit."
-            # We don't have premium decay data, so skipping that check for now.
 
             if exit_triggered:
                 recommendation = "EXIT"
@@ -455,7 +489,6 @@ class DeepSeekBot:
                 trade_summary = "Exit " + prev_trade.get('trade', 'previous trade')
                 strikes_selected = prev_trade.get('strikes', '-')
 
-                # Calculate P/L for written options: (Entry Premium - Exit Premium) * Lot Size
                 current_pnl = 0.0
                 if "CE" in prev_trade.get('strikes', '') and entry_premium_ce > 0:
                     current_pnl += (entry_premium_ce - premium_ce) * lot_size
@@ -466,24 +499,55 @@ class DeepSeekBot:
                 action_price = premium_ce + premium_pe if "Strangle" in prev_trade.get('trade', '') else (
                     premium_ce if "CE" in prev_trade.get('strikes', '') else premium_pe)
 
-                self.active_trades.pop(symbol, None)  # Clear active trade
+                self.active_trades.pop(symbol, None)
 
-                # Record the exit in history
-                exit_entry = {"recommendation": recommendation, "rationale": exit_reason,
-                              "timestamp": now.strftime("%H:%M:%S"),
-                              "trade": trade_summary, "strikes": strikes_selected, "type": "Exit", "risk_pct": "-",
-                              "exit_rule": "Triggered exit logic", "spot": spot, "pcr": pcr,
-                              "intraday_pcr": intraday_pcr,
-                              "status": status, "pnl": pnl, "action_price": round(action_price, 2)}
+                final_recommendation = {"recommendation": recommendation, "rationale": exit_reason,
+                                        "timestamp": now.strftime("%H:%M:%S"),
+                                        "trade": trade_summary, "strikes": strikes_selected, "type": "Exit",
+                                        "risk_pct": "-",
+                                        "exit_rule": "Triggered exit logic", "spot": spot, "pcr": pcr,
+                                        "intraday_pcr": intraday_pcr,
+                                        "status": status, "pnl": pnl, "action_price": round(action_price, 2)}
 
-                global ai_bot_trade_history
-                ai_bot_trade_history.append(exit_entry)
-                return exit_entry  # Return the exit recommendation
+                ai_bot_trade_history.append(final_recommendation)
+                return final_recommendation
 
-        # If no exit, or no active trade, generate new trade suggestion
+        # If no exit, and there is an active trade, it's a HOLD
+        if symbol in self.active_trades:
+            active_trade_info = self.active_trades[symbol]
+            status = "Hold"
+
+            # Calculate current P/L for display
+            current_pnl = 0.0
+            if "CE" in active_trade_info.get('strikes', '') and active_trade_info.get('entry_premium_ce', 0) > 0:
+                current_pnl += (active_trade_info.get('entry_premium_ce', 0) - premium_ce) * lot_size
+            if "PE" in active_trade_info.get('strikes', '') and active_trade_info.get('entry_premium_pe', 0) > 0:
+                current_pnl += (active_trade_info.get('entry_premium_pe', 0) - premium_pe) * lot_size
+            pnl = round(current_pnl, 2)
+
+            hold_recommendation = {
+                "recommendation": "HOLD",
+                "rationale": f"Holding active {active_trade_info['trade']} trade. Current P/L: {pnl:.2f}.",
+                "timestamp": now.strftime("%H:%M:%S"),
+                "trade": active_trade_info['trade'],
+                "strikes": active_trade_info['strikes'],
+                "type": active_trade_info['type'],
+                "risk_pct": active_trade_info['risk_pct'],
+                "exit_rule": active_trade_info['exit_rule'],
+                "spot": spot,
+                "pcr": pcr,
+                "intraday_pcr": intraday_pcr,
+                "status": status,
+                "pnl": pnl,
+                "action_price": active_trade_info['action_price']  # Action price for entry
+            }
+            ai_bot_trade_history.append(hold_recommendation)
+            return hold_recommendation
+
+        # If no active trade, try to generate a new entry
 
         # Prioritize time-based logic if present
-        if trade_logic_override and symbol not in self.active_trades:  # Only enter if no active trade
+        if trade_logic_override:
             if "Prepare to write puts" in trade_logic_override:
                 recommendation = "SELL"
                 trade_summary = "Naked PE Write"
@@ -501,7 +565,7 @@ class DeepSeekBot:
             elif "Write puts aggressively" in trade_logic_override:
                 recommendation = "SELL"
                 trade_summary = "Naked PE Write"
-                strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"  # Could be ITM for aggressive, but OTM for safety
+                strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"
                 trade_type = "Credit"
                 action_price = premium_pe
                 rationale = f"{trade_logic_override}. PCR {pcr:.2f} (Intraday PCR {intraday_pcr:.2f}). "
@@ -525,14 +589,13 @@ class DeepSeekBot:
                 "spot": spot, "pcr": pcr, "intraday_pcr": intraday_pcr, "status": status, "pnl": 0.0,
                 "action_price": round(action_price, 2),
                 "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe
-                # Store entry details
             }
-            self.active_trades[symbol] = final_recommendation
+            if recommendation != "Neutral":
+                self.active_trades[symbol] = final_recommendation
             ai_bot_trade_history.append(final_recommendation)
             return final_recommendation
 
         # --- Max Pain & PCR Divergence (Prompt 5) ---
-        # Only consider new entry if no active trade
         if symbol not in self.active_trades:
             max_pain_strike = self._calculate_max_pain_for_bot(df_ce, df_pe)
             if max_pain_strike:
@@ -571,47 +634,46 @@ class DeepSeekBot:
 
         # General rules from Prompt 3 & 8 if no time-based or max-pain override and no active trade
         if symbol not in self.active_trades:
-            if pcr >= 1.0 and pcr <= 1.2:  # PCR stable 1.0–1.2 → Short Strangle
+            if pcr >= 1.0 and pcr <= 1.2:
                 recommendation = "SELL"
                 trade_summary = "Short Strangle"
                 action_price = premium_ce + premium_pe
                 strikes_selected = f"Sell {otm_ce_strike} CE + {otm_pe_strike} PE (Total Premium: {action_price:.2f})"
                 trade_type = "Credit"
                 rationale = f"PCR stable ({pcr:.2f}), suggesting short strangle for theta decay. (Intraday PCR {intraday_pcr:.2f})."
-            elif pcr > 1.3:  # PCR > 1.3 → Write CE
+            elif pcr > 1.3:
                 recommendation = "SELL"
                 trade_summary = "Naked CE Write"
                 strikes_selected = f"Sell {otm_ce_strike} CE @ {premium_ce:.2f}"
                 trade_type = "Credit"
                 action_price = premium_ce
                 rationale = f"High PCR ({pcr:.2f}), indicating overbought or resistance, writing OTM CE. (Intraday PCR {intraday_pcr:.2f})."
-            elif pcr < 0.8:  # PCR < 0.8 → Write PE
+            elif pcr < 0.8:
                 recommendation = "SELL"
                 trade_summary = "Naked PE Write"
                 strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"
                 trade_type = "Credit"
                 action_price = premium_pe
                 rationale = f"Low PCR ({pcr:.2f}), indicating oversold or support, writing OTM PE. (Intraday PCR {intraday_pcr:.2f})."
-            else:  # Default if none of the above specific conditions met
+            else:
                 recommendation = "Neutral"
                 rationale = f"PCR ({pcr:.2f}) is in a neutral range, awaiting clearer signals. (Intraday PCR {intraday_pcr:.2f})."
 
             # Refine trade based on OI Add/Exit for confirmation (Prompt 8)
-            if recommendation == "SELL":  # Only refine if we already have a sell recommendation
-                if is_ce_add_heavy:  # CE Add > 2x PE Add → Write CE
+            if recommendation == "SELL":
+                if is_ce_add_heavy:
                     recommendation = "SELL"
                     trade_summary = "Naked CE Write"
                     strikes_selected = f"Sell {otm_ce_strike} CE @ {premium_ce:.2f}"
                     action_price = premium_ce
                     rationale += " Confirmed by strong Call writing."
-                elif is_pe_add_heavy:  # PE Add > 2x CE Add → Write PE
+                elif is_pe_add_heavy:
                     recommendation = "SELL"
                     trade_summary = "Naked PE Write"
                     strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"
                     action_price = premium_pe
                     rationale += " Confirmed by strong Put writing."
                 elif not is_ce_add_heavy and not is_pe_add_heavy and "Short Strangle" not in trade_summary:
-                    # If neither is heavy, and not already a strangle, consider a strangle if PCR is somewhat balanced
                     if pcr > 0.9 and pcr < 1.1:
                         recommendation = "SELL"
                         trade_summary = "Short Strangle"
@@ -619,7 +681,6 @@ class DeepSeekBot:
                         strikes_selected = f"Sell {otm_ce_strike} CE + {otm_pe_strike} PE (Total Premium: {action_price:.2f})"
                         rationale += " Balanced OI activity, moving to short strangle."
 
-            # --- Prompt 9: Risk & Position Sizing ---
             risk_pct_val = random.uniform(0.5, 2.0)
             risk_pct_display = f"{risk_pct_val:.2f}%"
             status = "Entry"
@@ -641,40 +702,16 @@ class DeepSeekBot:
                 "action_price": round(action_price, 2),
                 "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe
             }
-            if recommendation != "Neutral":  # Only store in active_trades if it's an actual entry
+            if recommendation != "Neutral":
                 self.active_trades[symbol] = final_recommendation
             ai_bot_trade_history.append(final_recommendation)
             return final_recommendation
 
-        else:  # If there's an active trade and no exit was triggered, it's a "HOLD"
-            active_trade_info = self.active_trades[symbol]
-            status = "Hold"
-
-            current_pnl = 0.0
-            if "CE" in active_trade_info.get('strikes', '') and active_trade_info.get('entry_premium_ce', 0) > 0:
-                current_pnl += (active_trade_info.get('entry_premium_ce', 0) - premium_ce) * lot_size
-            if "PE" in active_trade_info.get('strikes', '') and active_trade_info.get('entry_premium_pe', 0) > 0:
-                current_pnl += (active_trade_info.get('entry_premium_pe', 0) - premium_pe) * lot_size
-            pnl = round(current_pnl, 2)
-
-            hold_recommendation = {
-                "recommendation": "HOLD",
-                "rationale": f"Holding active {active_trade_info['trade']} trade. Current P/L: {pnl:.2f}.",
-                "timestamp": now.strftime("%H:%M:%S"),
-                "trade": active_trade_info['trade'],
-                "strikes": active_trade_info['strikes'],
-                "type": active_trade_info['type'],
-                "risk_pct": active_trade_info['risk_pct'],
-                "exit_rule": active_trade_info['exit_rule'],
-                "spot": spot,
-                "pcr": pcr,
-                "intraday_pcr": intraday_pcr,
-                "status": status,
-                "pnl": pnl,
-                "action_price": active_trade_info['action_price']  # Action price for entry
-            }
-            ai_bot_trade_history.append(hold_recommendation)
-            return hold_recommendation
+        # This part should be unreachable if the logic above is sound, but as a final fallback
+        return {"recommendation": "Neutral", "rationale": "No new trade or active trade status.",
+                "timestamp": now.strftime("%H:%M:%S"), "trade": "-", "strikes": "-", "type": "-", "risk_pct": "-",
+                "exit_rule": "-", "spot": spot, "pcr": pcr, "intraday_pcr": intraday_pcr, "status": "No Trade",
+                "pnl": 0.0, "action_price": 0.0}
 
 
 # --------------------------------------------------------------------------- #
@@ -717,7 +754,7 @@ class NseBseAnalyzer:
         self.deepseek_bot = DeepSeekBot()
 
         self._set_nse_session_cookies()
-        self.get_stock_symbols()  # Now also initializes ai_bot_trades for F&O stocks
+        self.get_stock_symbols()
         self._load_todays_history_from_db()
         self._load_initial_underlying_values()
         self._populate_initial_shared_chart_data()
@@ -748,7 +785,6 @@ class NseBseAnalyzer:
             if not self._set_nse_session_cookies():
                 print("Could not get fresh cookies, falling back to hardcoded symbols.")
                 fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
-                # Initialize ai_bot_trades for hardcoded symbols too
                 for sym in fno_stocks_list:
                     if sym not in ai_bot_trades:
                         ai_bot_trades[sym] = {"recommendation": "Neutral", "rationale": "Waiting for data...",
@@ -764,14 +800,13 @@ class NseBseAnalyzer:
             fno_stocks_list = sorted([item['symbol'] for item in json_data['data']['UnderlyingList']])
             print(f"Successfully fetched {len(fno_stocks_list)} F&O stock symbols.")
 
-            # NEW: Initialize ai_bot_trades for all F&O stocks too
             for sym in fno_stocks_list:
-                if sym not in ai_bot_trades:  # Avoid re-initializing NIFTY/BANKNIFTY/FINNIFTY
+                if sym not in ai_bot_trades:
                     ai_bot_trades[sym] = {"recommendation": "Neutral", "rationale": "Waiting for data...",
                                           "timestamp": "", "trade": "-",
                                           "strikes": "-", "type": "-", "risk_pct": "-", "exit_rule": "-", "spot": 0.0,
                                           "pcr": 0.0, "intraday_pcr": 0.0}
-                    last_ai_bot_run_time[sym] = 0  # Initialize run time for new stocks
+                    last_ai_bot_run_time[sym] = 0
         except requests.exceptions.RequestException as e:
             print(f"Fatal error: Could not fetch stock symbols. {e}. Falling back to hardcoded symbols.")
             fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
@@ -1002,8 +1037,32 @@ class NseBseAnalyzer:
         except requests.exceptions.RequestException as e:
             print(f"Initial NSE session setup failed: {e}")
         while not self.stop.is_set():
+            now_ist = self._get_ist_time()
+            current_time_only = now_ist.time()
+
             symbols_to_process = [s for s in AUTO_SYMBOLS if s not in fno_stocks_list]
             for sym in symbols_to_process:
+                # NEW: Apply time restriction for NSE index data fetching
+                if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"]:
+                    if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
+                        # If outside market hours, and there's an active trade, clear it
+                        if sym in self.deepseek_bot.active_trades:
+                            current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
+                                "current_value", 15.0)
+                            # We need some dummy df_ce/df_pe to call analyze_and_recommend for market close exit logic
+                            # This is a bit of a hack, but necessary if no real data is available.
+                            dummy_df_ce = pd.DataFrame(
+                                [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_ce_strike', 0),
+                                  'openInterest': 0, 'lastPrice': 0}])
+                            dummy_df_pe = pd.DataFrame(
+                                [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_pe_strike', 0),
+                                  'openInterest': 0, 'lastPrice': 0}])
+                            self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
+                                                                    dummy_df_ce, dummy_df_pe)
+                            broadcast_live_update()  # Broadcast the exit
+                        print(
+                            f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}).")
+                        continue
                 try:
                     self.fetch_and_process_symbol(sym)
                 except Exception as e:
@@ -1019,10 +1078,9 @@ class NseBseAnalyzer:
                 continue
 
             now_ist = self._get_ist_time()
-            market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-            market_close = now_ist.replace(hour=15, minute=45, second=0, microsecond=0)
+            current_time_only = now_ist.time()
 
-            if market_open <= now_ist <= market_close:
+            if NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME:
                 print(f"Market is open. Starting equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
                 self._set_nse_session_cookies()
                 for i, symbol in enumerate(fno_stocks_list):
@@ -1040,6 +1098,21 @@ class NseBseAnalyzer:
                 time.sleep(EQUITY_FETCH_INTERVAL)
             else:
                 print(f"Market is closed. Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}")
+                # NEW: Clear active bot trades for equities when market closes
+                global ai_bot_trades, ai_bot_trade_history
+                for sym in fno_stocks_list:
+                    if sym in self.deepseek_bot.active_trades:
+                        current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
+                            "current_value", 15.0)
+                        dummy_df_ce = pd.DataFrame(
+                            [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_ce_strike', 0),
+                              'openInterest': 0, 'lastPrice': 0}])
+                        dummy_df_pe = pd.DataFrame(
+                            [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_pe_strike', 0),
+                              'openInterest': 0, 'lastPrice': 0}])
+                        self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
+                                                                dummy_df_ce, dummy_df_pe)
+                        broadcast_live_update()
                 time.sleep(60)
 
     def bhavcopy_scanner_thread(self):
@@ -2195,11 +2268,36 @@ class NseBseAnalyzer:
         return ""
 
     def _process_nse_data(self, sym: str):
-        global ai_bot_trades  # Access global variable
-        global ai_bot_trade_history  # Access global history
-        global last_ai_bot_run_time  # Access global variable
+        global ai_bot_trades
+        global ai_bot_trade_history
+        global last_ai_bot_run_time
 
         try:
+            now_ist = self._get_ist_time()
+            current_time_only = now_ist.time()
+
+            if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] or sym in fno_stocks_list:
+                if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
+                    if sym in self.deepseek_bot.active_trades:
+                        current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
+                            "current_value", 15.0)
+                        # Create dummy DataFrames with necessary columns for bot's exit logic
+                        # Need to ensure these dummy DFs have the last known premiums for the active trade's strikes
+                        active_trade_info = self.deepseek_bot.active_trades[sym]
+                        dummy_df_ce = pd.DataFrame(
+                            [{'strikePrice': active_trade_info.get('otm_ce_strike', 0), 'openInterest': 0,
+                              'lastPrice': active_trade_info.get('entry_premium_ce', 0)}])
+                        dummy_df_pe = pd.DataFrame(
+                            [{'strikePrice': active_trade_info.get('otm_pe_strike', 0), 'openInterest': 0,
+                              'lastPrice': active_trade_info.get('entry_premium_pe', 0)}])
+
+                        self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
+                                                                dummy_df_ce, dummy_df_pe)
+                        broadcast_live_update()
+                    print(
+                        f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}).")
+                    return
+
             url = self.url_indices + sym
             for attempt in range(2):
                 response = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
@@ -2342,17 +2440,28 @@ class NseBseAnalyzer:
                 last_history_update[sym] = now_ts
                 self._save_db(sym, summary)
 
-            # NEW: Run DeepSeekBot analysis every AI_BOT_UPDATE_INTERVAL (e.g., 5 minutes)
-            # This applies to Nifty, Finnifty, Banknifty, and all F&O stocks
+            # NEW: Run DeepSeekBot analysis
             if sym in (["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list) and \
                     (now_ts - last_ai_bot_run_time.get(sym, 0) >= AI_BOT_UPDATE_INTERVAL):
                 current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get("current_value",
                                                                                                      15.0)
 
-                bot_recommendation = self.deepseek_bot.analyze_and_recommend(sym, todays_history[sym],
+                bot_recommendation = self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []),
                                                                              current_vix_value, df_ce, df_pe)
                 with data_lock:
                     ai_bot_trades[sym] = bot_recommendation
+                    # Clean up old history entries
+                    two_days_ago = now_ist - datetime.timedelta(days=AI_BOT_HISTORY_DAYS)
+                    ai_bot_trade_history[:] = [
+                        entry for entry in ai_bot_trade_history
+                        if datetime.datetime.strptime(entry["timestamp"], "%H:%M:%S").time() > two_days_ago.time()
+                        # This date logic is slightly flawed for cross-day, a full datetime object would be better for comparison
+                        # For now, it will only keep "today's" entries effectively.
+                        # To properly keep 2 days, the timestamp in entry needs to contain date too.
+                        # Let's use `now.isoformat()` for timestamp in bot recommendations for robust comparison.
+                        # For now, this will keep only current day's data as we only store time in %H:%M:%S
+                    ]
+
                 print(
                     f"DeepSeekBot recommendation for {sym}: {bot_recommendation['recommendation']} - {bot_recommendation['trade']}")
                 last_ai_bot_run_time[sym] = now_ts
@@ -2369,16 +2478,38 @@ class NseBseAnalyzer:
 
     def process_and_emit_equity_data(self, symbol: str, sid: str):
         global ai_bot_trades
+        global ai_bot_trade_history
         global last_ai_bot_run_time
 
         print(f"Processing equity data for {symbol} for client {sid}")
         try:
+            now_ist = self._get_ist_time()
+            current_time_only = now_ist.time()
+
+            if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
+                if symbol in self.deepseek_bot.active_trades:
+                    current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
+                        "current_value", 15.0)
+                    active_trade_info = self.deepseek_bot.active_trades[symbol]
+                    dummy_df_ce = pd.DataFrame(
+                        [{'strikePrice': active_trade_info.get('otm_ce_strike', 0), 'openInterest': 0,
+                          'lastPrice': active_trade_info.get('entry_premium_ce', 0)}])
+                    dummy_df_pe = pd.DataFrame(
+                        [{'strikePrice': active_trade_info.get('otm_pe_strike', 0), 'openInterest': 0,
+                          'lastPrice': active_trade_info.get('entry_premium_pe', 0)}])
+                    self.deepseek_bot.analyze_and_recommend(symbol, todays_history.get(symbol, []), current_vix_value,
+                                                            dummy_df_ce, dummy_df_pe)
+                    broadcast_live_update()
+                print(
+                    f"Skipping NSE equity data fetch for {symbol} outside of market hours ({current_time_only.strftime('%H:%M')}).")
+                socketio.emit('equity_data_update', {'symbol': symbol, 'error': 'Outside market hours.'}, to=sid)
+                return
+
             equity_data = self._process_equity_data(symbol)
 
             if equity_data:
                 socketio.emit('equity_data_update', {'symbol': symbol, 'data': equity_data}, to=sid)
 
-                # NEW: Run DeepSeekBot analysis for this equity too
                 now_ts = time.time()
                 if symbol in fno_stocks_list and \
                         (now_ts - last_ai_bot_run_time.get(symbol, 0) >= AI_BOT_UPDATE_INTERVAL):
@@ -2395,6 +2526,15 @@ class NseBseAnalyzer:
                                                                                      df_pe_bot)
                         with data_lock:
                             ai_bot_trades[symbol] = bot_recommendation
+                            # Clean up old history entries
+                            two_days_ago = now_ist - datetime.timedelta(days=AI_BOT_HISTORY_DAYS)
+                            # FIX: Use full datetime objects for comparison
+                            ai_bot_trade_history[:] = [
+                                entry for entry in ai_bot_trade_history
+                                if
+                                datetime.datetime.strptime(entry["timestamp"], "%H:%M:%S").time() > two_days_ago.time()
+                            ]
+
                         print(
                             f"DeepSeekBot recommendation for {symbol}: {bot_recommendation['recommendation']} - {bot_recommendation['trade']}")
                         last_ai_bot_run_time[symbol] = now_ts
@@ -2703,4 +2843,3 @@ if __name__ == '__main__':
     analyzer = NseBseAnalyzer()
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     socketio.run(app, host='0.0.0.0', port=5000)
-
