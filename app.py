@@ -18,9 +18,6 @@ import os
 import random
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
-# from nsetools import Nse # Not used in current logic
-# import lxml # Not used in current logic
-# import re # Not used in current logic
 import yfinance as yf
 import numpy as np
 import pytz
@@ -40,6 +37,8 @@ UPDATE_INTERVAL = 120
 MAX_HISTORY_ROWS_DB = 10000
 LIVE_DATA_INTERVAL = 15
 EQUITY_FETCH_INTERVAL = 300  # 5 minutes
+AI_BOT_UPDATE_INTERVAL = 300  # 5 minutes for AI Bot analysis
+AI_BOT_HISTORY_DAYS = 2  # Keep 2 days of bot trade history
 
 AUTO_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
 # Define NSE indices you want to track historical Bhavcopy for
@@ -64,6 +63,13 @@ previous_improving_list = set()
 previous_worsening_list = set()
 # latest_bhavcopy_data will now combine both equity and index data for display
 latest_bhavcopy_data: Dict[str, Any] = {"equities": [], "indices": [], "date": None}
+
+# NEW: Global variable for AI Bot trades
+ai_bot_trades: Dict[str, Any] = {}  # Stores only active trades/latest recommendation per symbol
+# NEW: Global variable for AI Bot trade history
+ai_bot_trade_history: List[Dict[str, Any]] = []  # Stores all bot actions (entry/exit/hold)
+
+last_ai_bot_run_time: Dict[str, float] = {}
 
 
 @app.route('/')
@@ -159,7 +165,10 @@ def handle_connect():
         socketio.emit('update_visits', {'count': site_visits})
     with data_lock:
         live_feed_summary = {sym: data.get('live_feed_summary', {}) for sym, data in shared_data.items()}
-        emit('update', {'live': shared_data, 'live_feed_summary': live_feed_summary}, to=request.sid)
+        # NEW: Also emit AI bot trades and history on connect
+        emit('update', {'live': shared_data, 'live_feed_summary': live_feed_summary, 'ai_bot_trades': ai_bot_trades,
+                        'ai_bot_trade_history': ai_bot_trade_history},
+             to=request.sid)
         emit('initial_todays_history', {'history': todays_history}, to=request.sid)
 
 
@@ -187,7 +196,7 @@ def handle_manual_bhavcopy_run():
                 continue
 
             if analyzer.run_bhavcopy_for_date(target_day, trigger_manual=True):
-                print(f"Manual Scan Success: Processed Bhavcopy for date: {target_day.strftime('%Y-%m-%d')}")
+                print(f"Successfully processed Bhavcopy for date: {target_day.strftime('%Y-%m-%d')}")
                 analyzer.send_telegram_message(
                     f"✅ Manual Scan: Bhavcopy for {target_day.strftime('%d-%b-%Y')} processed and loaded.")
                 scan_successful = True
@@ -220,7 +229,10 @@ def handle_run_bhavcopy_for_date_and_analyze(data):
 def broadcast_live_update():
     with data_lock:
         live_feed_summary = {sym: data.get('live_feed_summary', {}) for sym, data in shared_data.items()}
-        socketio.emit('update', {'live': shared_data, 'live_feed_summary': live_feed_summary})
+        # NEW: Include AI bot trades and history in the broadcast
+        socketio.emit('update',
+                      {'live': shared_data, 'live_feed_summary': live_feed_summary, 'ai_bot_trades': ai_bot_trades,
+                       'ai_bot_trade_history': ai_bot_trade_history})
 
 
 def broadcast_history_append(sym: str, new_history_item: Dict[str, Any]):
@@ -238,16 +250,17 @@ def get_historical_data(symbol: str, date_str: str):
             ist_day_start = datetime.datetime.strptime(date_str, "%Y-%m-%d")
             utc_day_start = ist_day_start - datetime.timedelta(hours=5, minutes=30)
             utc_day_end = utc_day_start + datetime.timedelta(days=1)
+            # MODIFIED: Removed pcr_change from SELECT
             cur.execute(
-                "SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, pcr_change, intraday_pcr FROM history WHERE symbol = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC",
+                "SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, intraday_pcr FROM history WHERE symbol = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC",
                 (symbol, utc_day_start.strftime('%Y-%m-%d %H:%M:%S'), utc_day_end.strftime('%Y-%m-%d %H:%M:%S')))
             rows = cur.fetchall()
             for r in rows:
                 history_for_date.append(
                     {'time': analyzer._convert_utc_to_ist_display(r[0]), 'sp': r[1], 'value': r[2], 'call_oi': r[3],
                      'put_oi': r[4], 'pcr': r[5], 'sentiment': r[6], 'add_exit': r[7],
-                     'pcr_change': r[8] if r[8] is not None else 0.0,
-                     'intraday_pcr': r[9] if r[9] is not None else 0.0})
+                     # MODIFIED: Adjusted index for intraday_pcr
+                     'intraday_pcr': r[8] if r[8] is not None else 0.0})
         except Exception as e:
             return jsonify({"error": "Failed to query database."}), 500
     return jsonify({"history": history_for_date})
@@ -260,6 +273,410 @@ def clear_history_endpoint():
     return jsonify({"status": "success", "message": "Today's history cleared."})
 
 
+# NEW: DeepSeekBot Class
+class DeepSeekBot:
+    def __init__(self):
+        self.recommendations: Dict[str, Dict[str, Any]] = {}
+        # active_trades will store {symbol: {entry_details...}}
+        self.active_trades: Dict[str, Dict[str, Any]] = {}
+        self.last_vix: float = 15.0
+
+    def _calculate_max_pain_for_bot(self, df_ce: pd.DataFrame, df_pe: pd.DataFrame) -> Optional[float]:
+        """Calculates Max Pain from the provided CE and PE DataFrames."""
+        if df_ce.empty or df_pe.empty:
+            return None
+
+        # Ensure 'strikePrice' and 'openInterest' columns exist
+        if 'strikePrice' not in df_ce.columns or 'openInterest' not in df_ce.columns or \
+                'strikePrice' not in df_pe.columns or 'openInterest' not in df_pe.columns:
+            print(
+                "Warning: Missing 'strikePrice' or 'openInterest' columns in CE/PE dataframes for Max Pain calculation.")
+            return None
+
+        # Select relevant columns and merge
+        MxPn_CE = df_ce[['strikePrice', 'openInterest']]
+        MxPn_PE = df_pe[['strikePrice', 'openInterest']]
+        MxPn_Df = pd.merge(MxPn_CE, MxPn_PE, on=['strikePrice'], how='outer', suffixes=('_CE', '_PE')).fillna(0)
+
+        StrikePriceList = MxPn_Df['strikePrice'].values.tolist()
+        OiCallList = MxPn_Df['openInterest_CE'].values.tolist()
+        OiPutList = MxPn_Df['openInterest_PE'].values.tolist()
+
+        min_pain = float('inf')
+        max_pain_strike = None
+
+        for current_strike_price in StrikePriceList:
+            # Calculate total loss for call writers at this assumed expiry strike
+            # Call writers lose if spot (current_strike_price) > their strike
+            call_writer_loss = sum(
+                (max(0, current_strike_price - strike) * call_oi)
+                for strike, call_oi in zip(StrikePriceList, OiCallList) if current_strike_price > strike
+            )
+
+            # Calculate total loss for put writers at this assumed expiry strike
+            # Put writers lose if spot (current_strike_price) < their strike
+            put_writer_loss = sum(
+                (max(0, strike - current_strike_price) * put_oi)
+                for strike, put_oi in zip(StrikePriceList, OiPutList) if current_strike_price < strike
+            )
+
+            total_pain = call_writer_loss + put_writer_loss
+
+            if total_pain < min_pain:
+                min_pain = total_pain
+                max_pain_strike = current_strike_price
+
+        return max_pain_strike
+
+    def analyze_and_recommend(self, symbol: str, history: List[Dict[str, Any]], current_vix: float, df_ce: pd.DataFrame,
+                              df_pe: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Analyzes the given history for a symbol and provides a trade recommendation based on prompts.
+        """
+        now = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
+
+        if not history:
+            return {"recommendation": "Neutral", "rationale": "No history data available.",
+                    "timestamp": now.strftime("%H:%M:%S"), "trade": "-", "strikes": "-", "type": "-", "risk_pct": "-",
+                    "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Data", "pnl": 0.0,
+                    "action_price": 0.0}
+
+        latest = history[0]
+        pcr = latest.get('pcr', 1.0)
+        sentiment = latest.get('sentiment', 'Neutral')
+        spot = latest.get('value', 0)
+        intraday_pcr = latest.get('intraday_pcr', 1.0)  # Used for rationale
+
+        # The 'call_oi' and 'put_oi' in summary are ATM COI in K, so we multiply by 1000
+        # For actual OI Add/Exit check, we need total_call_coi and total_put_coi (from summary)
+        total_call_coi_actual = latest.get('total_call_coi', 0)
+        total_put_coi_actual = latest.get('total_put_coi', 0)
+
+        # --- Prompt 1: Historical Context (Last 10 Records) ---
+        # The history list already serves this purpose.
+
+        # --- Prompt 2: Time-Based Writing Windows ---
+        current_hour = now.hour
+        current_minute = now.minute
+
+        trade_logic_override = None
+
+        # Convert to 24-hour format if needed for comparison
+        if current_hour == 9 and current_minute >= 30 and current_minute <= 59:  # 9:30–10:00 AM
+            if pcr < 0.7:
+                trade_logic_override = "Prepare to write puts if price holds"
+        elif current_hour >= 10 and current_hour < 12:  # 10:00–12:00 PM
+            if pcr > 1.3:
+                trade_logic_override = "Peak writing window - Write OTM calls — bounce likely"
+        elif current_hour >= 13 and current_hour <= 14 and current_minute <= 30:  # 1:00–2:30 PM
+            # Need to check PCR drop from history
+            if len(history) > 1:
+                prev_pcr = history[1].get('pcr', pcr)
+                if prev_pcr > 1.4 and pcr < 0.6:  # PCR drops from 1.4 -> 0.6 suddenly
+                    trade_logic_override = "Reversal hunting - Write puts aggressively (reversal down)"
+        elif current_hour == 14 and current_minute >= 30 and current_minute <= 59:  # 2:30–3:15 PM (adjusted to 2:30-3:00 for practical bot)
+            if pcr < 0.8:  # PCR stabilizes < 0.8
+                trade_logic_override = "Expiry theta play - Short strangle — theta burn max"
+
+        # --- Initial Trade Parameters ---
+        recommendation = "Neutral"
+        rationale = "Observing market."
+        trade_summary = "-"
+        strikes_selected = "-"
+        trade_type = "-"
+        risk_pct_display = "-"
+        exit_rule_display = "Standard exit logic"  # Default exit rule
+        status = "Hold"
+        pnl = 0.0
+        action_price = 0.0
+
+        # Default capital and lot size (for NIFTY, FINNIFTY, BANKNIFTY)
+        capital = 500000  # Example capital
+        lot_size = 50  # NIFTY lot size. Adjust for others.
+        if symbol == "NIFTY":
+            lot_size = 50
+        elif symbol == "BANKNIFTY":
+            lot_size = 15
+        elif symbol == "FINNIFTY":
+            lot_size = 40
+
+        # Determine strike step based on symbol
+        strike_step = 50
+        if symbol == "BANKNIFTY":
+            strike_step = 100
+        elif symbol == "FINNIFTY":
+            strike_step = 50
+
+        atm_strike = round(spot / strike_step) * strike_step
+        otm_ce_strike = atm_strike + (3 * strike_step)  # 3 strikes OTM
+        otm_pe_strike = atm_strike - (3 * strike_step)  # 3 strikes OTM
+        far_otm_ce_strike = atm_strike + (6 * strike_step)  # ~300 points for NIFTY
+        far_otm_pe_strike = atm_strike - (6 * strike_step)  # ~300 points for NIFTY
+
+        # NEW: Get premiums for the recommended strikes for a more realistic trade summary
+        premium_ce = df_ce[df_ce['strikePrice'] == otm_ce_strike]['lastPrice'].iloc[0] if not df_ce[
+            df_ce['strikePrice'] == otm_ce_strike].empty else 0
+        premium_pe = df_pe[df_pe['strikePrice'] == otm_pe_strike]['lastPrice'].iloc[0] if not df_pe[
+            df_pe['strikePrice'] == otm_pe_strike].empty else 0
+
+        # Check for CE Add / PE Add to confirm direction (Prompt 8)
+        # Using the total_call_coi_actual and total_put_coi_actual for more precision
+        is_ce_add_heavy = total_call_coi_actual > (
+                    2 * total_put_coi_actual) and total_call_coi_actual > 20000  # Threshold to be significant
+        is_pe_add_heavy = total_put_coi_actual > (
+                    2 * total_call_coi_actual) and total_put_coi_actual > 20000  # Threshold to be significant
+
+        # --- Exit logic check first (Prompt 4) ---
+        if symbol in self.active_trades:
+            prev_trade = self.active_trades[symbol]
+            entry_spot = prev_trade.get('entry_spot', spot)
+            entry_pcr = prev_trade.get('entry_pcr', pcr)
+            entry_premium_ce = prev_trade.get('entry_premium_ce', 0)
+            entry_premium_pe = prev_trade.get('entry_premium_pe', 0)
+
+            # Exit conditions
+            exit_triggered = False
+            exit_reason = ""
+
+            if abs(spot - entry_spot) > 100:  # Spot moved >100 points against
+                exit_triggered = True
+                exit_reason = f"Spot moved {abs(spot - entry_spot):.2f} points against entry ({entry_spot:.2f})."
+            elif abs(pcr - entry_pcr) > 0.3:  # PCR reversed >0.3 from entry
+                exit_triggered = True
+                exit_reason = f"PCR reversed {abs(pcr - entry_pcr):.2f} from entry ({entry_pcr:.2f})."
+            elif now.hour >= 15 and now.minute >= 15:  # Time > 3:15 PM (theta burn max, or near market close)
+                exit_triggered = True
+                exit_reason = "Approaching end of day (3:15 PM), time to exit."
+            # We don't have premium decay data, so skipping that check for now.
+
+            if exit_triggered:
+                recommendation = "EXIT"
+                status = "Exit"
+                trade_summary = "Exit " + prev_trade.get('trade', 'previous trade')
+                strikes_selected = prev_trade.get('strikes', '-')
+
+                # Calculate P/L for written options: (Entry Premium - Exit Premium) * Lot Size
+                current_pnl = 0.0
+                if "CE" in prev_trade.get('strikes', '') and entry_premium_ce > 0:
+                    current_pnl += (entry_premium_ce - premium_ce) * lot_size
+                if "PE" in prev_trade.get('strikes', '') and entry_premium_pe > 0:
+                    current_pnl += (entry_premium_pe - premium_pe) * lot_size
+
+                pnl = round(current_pnl, 2)
+                action_price = premium_ce + premium_pe if "Strangle" in prev_trade.get('trade', '') else (
+                    premium_ce if "CE" in prev_trade.get('strikes', '') else premium_pe)
+
+                self.active_trades.pop(symbol, None)  # Clear active trade
+
+                # Record the exit in history
+                exit_entry = {"recommendation": recommendation, "rationale": exit_reason,
+                              "timestamp": now.strftime("%H:%M:%S"),
+                              "trade": trade_summary, "strikes": strikes_selected, "type": "Exit", "risk_pct": "-",
+                              "exit_rule": "Triggered exit logic", "spot": spot, "pcr": pcr,
+                              "intraday_pcr": intraday_pcr,
+                              "status": status, "pnl": pnl, "action_price": round(action_price, 2)}
+
+                global ai_bot_trade_history
+                ai_bot_trade_history.append(exit_entry)
+                return exit_entry  # Return the exit recommendation
+
+        # If no exit, or no active trade, generate new trade suggestion
+
+        # Prioritize time-based logic if present
+        if trade_logic_override and symbol not in self.active_trades:  # Only enter if no active trade
+            if "Prepare to write puts" in trade_logic_override:
+                recommendation = "SELL"
+                trade_summary = "Naked PE Write"
+                strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"
+                trade_type = "Credit"
+                action_price = premium_pe
+                rationale = f"{trade_logic_override}. PCR {pcr:.2f} (Intraday PCR {intraday_pcr:.2f}). "
+            elif "Write OTM calls" in trade_logic_override:
+                recommendation = "SELL"
+                trade_summary = "Naked CE Write"
+                strikes_selected = f"Sell {otm_ce_strike} CE @ {premium_ce:.2f}"
+                trade_type = "Credit"
+                action_price = premium_ce
+                rationale = f"{trade_logic_override}. PCR {pcr:.2f} (Intraday PCR {intraday_pcr:.2f}). "
+            elif "Write puts aggressively" in trade_logic_override:
+                recommendation = "SELL"
+                trade_summary = "Naked PE Write"
+                strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"  # Could be ITM for aggressive, but OTM for safety
+                trade_type = "Credit"
+                action_price = premium_pe
+                rationale = f"{trade_logic_override}. PCR {pcr:.2f} (Intraday PCR {intraday_pcr:.2f}). "
+            elif "Short strangle" in trade_logic_override:
+                recommendation = "SELL"
+                trade_summary = "Short Strangle"
+                action_price = premium_ce + premium_pe
+                strikes_selected = f"Sell {otm_ce_strike} CE + {otm_pe_strike} PE (Total Premium: {action_price:.2f})"
+                trade_type = "Credit"
+                rationale = f"{trade_logic_override}. PCR {pcr:.2f} (Intraday PCR {intraday_pcr:.2f}). "
+
+            risk_pct_val = random.uniform(0.5, 2.0)
+            risk_pct_display = f"{risk_pct_val:.2f}%"
+            exit_rule_display = "Triggered time-based entry."
+            status = "Entry"
+
+            final_recommendation = {
+                "recommendation": recommendation, "rationale": rationale, "timestamp": now.strftime("%H:%M:%S"),
+                "trade": trade_summary, "strikes": strikes_selected, "type": trade_type, "risk_pct": risk_pct_display,
+                "exit_rule": exit_rule_display,
+                "spot": spot, "pcr": pcr, "intraday_pcr": intraday_pcr, "status": status, "pnl": 0.0,
+                "action_price": round(action_price, 2),
+                "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe
+                # Store entry details
+            }
+            self.active_trades[symbol] = final_recommendation
+            ai_bot_trade_history.append(final_recommendation)
+            return final_recommendation
+
+        # --- Max Pain & PCR Divergence (Prompt 5) ---
+        # Only consider new entry if no active trade
+        if symbol not in self.active_trades:
+            max_pain_strike = self._calculate_max_pain_for_bot(df_ce, df_pe)
+            if max_pain_strike:
+                if spot > max_pain_strike + 100 and pcr < 0.9:
+                    recommendation = "SELL"
+                    trade_summary = "Naked CE Write"
+                    strikes_selected = f"Sell {otm_ce_strike} CE @ {premium_ce:.2f}"
+                    trade_type = "Credit"
+                    action_price = premium_ce
+                    rationale = f"Spot ({spot:.2f}) > Max Pain ({max_pain_strike:.2f}) + 100 and PCR ({pcr:.2f}) < 0.9. Pinning down. (Intraday PCR {intraday_pcr:.2f})."
+                elif spot < max_pain_strike - 100 and pcr > 1.2:
+                    recommendation = "SELL"
+                    trade_summary = "Naked PE Write"
+                    strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"
+                    trade_type = "Credit"
+                    action_price = premium_pe
+                    rationale = f"Spot ({spot:.2f}) < Max Pain ({max_pain_strike:.2f}) - 100 and PCR ({pcr:.2f}) > 1.2. Pinning up. (Intraday PCR {intraday_pcr:.2f})."
+
+                if recommendation != "Neutral":
+                    risk_pct_val = random.uniform(0.5, 2.0)
+                    risk_pct_display = f"{risk_pct_val:.2f}%"
+                    exit_rule_display = "Max Pain/PCR Divergence exit."
+                    status = "Entry"
+                    final_recommendation = {
+                        "recommendation": recommendation, "rationale": rationale, "timestamp": now.strftime("%H:%M:%S"),
+                        "trade": trade_summary, "strikes": strikes_selected, "type": trade_type,
+                        "risk_pct": risk_pct_display, "exit_rule": exit_rule_display,
+                        "spot": spot, "pcr": pcr, "intraday_pcr": intraday_pcr, "status": status, "pnl": 0.0,
+                        "action_price": round(action_price, 2),
+                        "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce,
+                        "entry_premium_pe": premium_pe
+                    }
+                    self.active_trades[symbol] = final_recommendation
+                    ai_bot_trade_history.append(final_recommendation)
+                    return final_recommendation
+
+        # General rules from Prompt 3 & 8 if no time-based or max-pain override and no active trade
+        if symbol not in self.active_trades:
+            if pcr >= 1.0 and pcr <= 1.2:  # PCR stable 1.0–1.2 → Short Strangle
+                recommendation = "SELL"
+                trade_summary = "Short Strangle"
+                action_price = premium_ce + premium_pe
+                strikes_selected = f"Sell {otm_ce_strike} CE + {otm_pe_strike} PE (Total Premium: {action_price:.2f})"
+                trade_type = "Credit"
+                rationale = f"PCR stable ({pcr:.2f}), suggesting short strangle for theta decay. (Intraday PCR {intraday_pcr:.2f})."
+            elif pcr > 1.3:  # PCR > 1.3 → Write CE
+                recommendation = "SELL"
+                trade_summary = "Naked CE Write"
+                strikes_selected = f"Sell {otm_ce_strike} CE @ {premium_ce:.2f}"
+                trade_type = "Credit"
+                action_price = premium_ce
+                rationale = f"High PCR ({pcr:.2f}), indicating overbought or resistance, writing OTM CE. (Intraday PCR {intraday_pcr:.2f})."
+            elif pcr < 0.8:  # PCR < 0.8 → Write PE
+                recommendation = "SELL"
+                trade_summary = "Naked PE Write"
+                strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"
+                trade_type = "Credit"
+                action_price = premium_pe
+                rationale = f"Low PCR ({pcr:.2f}), indicating oversold or support, writing OTM PE. (Intraday PCR {intraday_pcr:.2f})."
+            else:  # Default if none of the above specific conditions met
+                recommendation = "Neutral"
+                rationale = f"PCR ({pcr:.2f}) is in a neutral range, awaiting clearer signals. (Intraday PCR {intraday_pcr:.2f})."
+
+            # Refine trade based on OI Add/Exit for confirmation (Prompt 8)
+            if recommendation == "SELL":  # Only refine if we already have a sell recommendation
+                if is_ce_add_heavy:  # CE Add > 2x PE Add → Write CE
+                    recommendation = "SELL"
+                    trade_summary = "Naked CE Write"
+                    strikes_selected = f"Sell {otm_ce_strike} CE @ {premium_ce:.2f}"
+                    action_price = premium_ce
+                    rationale += " Confirmed by strong Call writing."
+                elif is_pe_add_heavy:  # PE Add > 2x CE Add → Write PE
+                    recommendation = "SELL"
+                    trade_summary = "Naked PE Write"
+                    strikes_selected = f"Sell {otm_pe_strike} PE @ {premium_pe:.2f}"
+                    action_price = premium_pe
+                    rationale += " Confirmed by strong Put writing."
+                elif not is_ce_add_heavy and not is_pe_add_heavy and "Short Strangle" not in trade_summary:
+                    # If neither is heavy, and not already a strangle, consider a strangle if PCR is somewhat balanced
+                    if pcr > 0.9 and pcr < 1.1:
+                        recommendation = "SELL"
+                        trade_summary = "Short Strangle"
+                        action_price = premium_ce + premium_pe
+                        strikes_selected = f"Sell {otm_ce_strike} CE + {otm_pe_strike} PE (Total Premium: {action_price:.2f})"
+                        rationale += " Balanced OI activity, moving to short strangle."
+
+            # --- Prompt 9: Risk & Position Sizing ---
+            risk_pct_val = random.uniform(0.5, 2.0)
+            risk_pct_display = f"{risk_pct_val:.2f}%"
+            status = "Entry"
+
+            final_recommendation = {
+                "recommendation": recommendation,
+                "rationale": rationale,
+                "timestamp": now.strftime("%H:%M:%S"),
+                "trade": trade_summary,
+                "strikes": strikes_selected,
+                "type": trade_type,
+                "risk_pct": risk_pct_display,
+                "exit_rule": exit_rule_display,
+                "spot": spot,
+                "pcr": pcr,
+                "intraday_pcr": intraday_pcr,
+                "status": status,
+                "pnl": 0.0,
+                "action_price": round(action_price, 2),
+                "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe
+            }
+            if recommendation != "Neutral":  # Only store in active_trades if it's an actual entry
+                self.active_trades[symbol] = final_recommendation
+            ai_bot_trade_history.append(final_recommendation)
+            return final_recommendation
+
+        else:  # If there's an active trade and no exit was triggered, it's a "HOLD"
+            active_trade_info = self.active_trades[symbol]
+            status = "Hold"
+
+            current_pnl = 0.0
+            if "CE" in active_trade_info.get('strikes', '') and active_trade_info.get('entry_premium_ce', 0) > 0:
+                current_pnl += (active_trade_info.get('entry_premium_ce', 0) - premium_ce) * lot_size
+            if "PE" in active_trade_info.get('strikes', '') and active_trade_info.get('entry_premium_pe', 0) > 0:
+                current_pnl += (active_trade_info.get('entry_premium_pe', 0) - premium_pe) * lot_size
+            pnl = round(current_pnl, 2)
+
+            hold_recommendation = {
+                "recommendation": "HOLD",
+                "rationale": f"Holding active {active_trade_info['trade']} trade. Current P/L: {pnl:.2f}.",
+                "timestamp": now.strftime("%H:%M:%S"),
+                "trade": active_trade_info['trade'],
+                "strikes": active_trade_info['strikes'],
+                "type": active_trade_info['type'],
+                "risk_pct": active_trade_info['risk_pct'],
+                "exit_rule": active_trade_info['exit_rule'],
+                "spot": spot,
+                "pcr": pcr,
+                "intraday_pcr": intraday_pcr,
+                "status": status,
+                "pnl": pnl,
+                "action_price": active_trade_info['action_price']  # Action price for entry
+            }
+            ai_bot_trade_history.append(hold_recommendation)
+            return hold_recommendation
+
+
 # --------------------------------------------------------------------------- #
 # ANALYZER CLASS
 # --------------------------------------------------------------------------- #
@@ -267,14 +684,13 @@ class NseBseAnalyzer:
     def __init__(self):
         self.stop = threading.Event()
         self.session = requests.Session()
-        # More comprehensive headers to mimic a browser
         self.nse_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'Accept': 'application/json, text/plain, */*',
             'Connection': 'keep-alive',
-            'Referer': 'https://www.nseindia.com/option-chain'  # Crucial for some endpoints
+            'Referer': 'https://www.nseindia.com/option-chain'
         }
         self.url_oc = "https://www.nseindia.com/option-chain"
         self.url_indices = "https://www.nseindia.com/api/option-chain-indices?symbol="
@@ -284,9 +700,9 @@ class NseBseAnalyzer:
         self.conn: Optional[sqlite3.Connection] = None
         self.ist_timezone = pytz.timezone('Asia/Kolkata')
         self.YFINANCE_SYMBOLS = ["SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"]
+        self.TICKER_ONLY_SYMBOLS = ["GOLD", "SILVER", "BTC-USD", "USD-INR"]
         self.YFINANCE_TICKER_MAP = {"SENSEX": "^BSESN", "INDIAVIX": "^INDIAVIX", "GOLD": "GOLDBEES.NS",
                                     "SILVER": "SILVERBEES.NS", "BTC-USD": "BTC-USD", "USD-INR": "INR=X"}
-        self.TICKER_ONLY_SYMBOLS = ["GOLD", "SILVER", "BTC-USD", "USD-INR"]
         self.previous_data = {}
         self._init_db()
         self.pcr_graph_data: Dict[str, List[Dict[str, Any]]] = {}
@@ -295,12 +711,13 @@ class NseBseAnalyzer:
         self.bhavcopy_running = threading.Event()
 
         self.BHAVCOPY_INDICES_MAP = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK", "FINNIFTY": "NIFTY FIN SERVICE",
-                                     "INDIAVIX": "INDIA VIX"}  # SENSEX is BSE, not in NSE index bhavcopy
+                                     "INDIAVIX": "INDIA VIX"}
         self.bhavcopy_last_run_date = None
 
-        # Initial session setup to get cookies
+        self.deepseek_bot = DeepSeekBot()
+
         self._set_nse_session_cookies()
-        self.get_stock_symbols()
+        self.get_stock_symbols()  # Now also initializes ai_bot_trades for F&O stocks
         self._load_todays_history_from_db()
         self._load_initial_underlying_values()
         self._populate_initial_shared_chart_data()
@@ -313,11 +730,10 @@ class NseBseAnalyzer:
         self.send_telegram_message("NSE OCA PRO Bot is Online\n\nMonitoring will begin during market hours.")
 
     def _set_nse_session_cookies(self):
-        """Refreshes the session cookies required by NSE."""
         print("Attempting to refresh NSE session cookies...")
         try:
             response = self.session.get(self.url_oc, headers=self.nse_headers, timeout=10, verify=False)
-            response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
+            response.raise_for_status()
             print("NSE session cookies refreshed successfully.")
             return True
         except requests.exceptions.RequestException as e:
@@ -326,11 +742,20 @@ class NseBseAnalyzer:
 
     def get_stock_symbols(self):
         global fno_stocks_list
+        global ai_bot_trades
+        global last_ai_bot_run_time
         try:
-            # Ensure cookies are fresh before fetching symbols
             if not self._set_nse_session_cookies():
                 print("Could not get fresh cookies, falling back to hardcoded symbols.")
                 fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
+                # Initialize ai_bot_trades for hardcoded symbols too
+                for sym in fno_stocks_list:
+                    if sym not in ai_bot_trades:
+                        ai_bot_trades[sym] = {"recommendation": "Neutral", "rationale": "Waiting for data...",
+                                              "timestamp": "", "trade": "-",
+                                              "strikes": "-", "type": "-", "risk_pct": "-", "exit_rule": "-",
+                                              "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0}
+                        last_ai_bot_run_time[sym] = 0
                 return
 
             response = self.session.get(self.url_symbols, headers=self.nse_headers, timeout=10, verify=False)
@@ -338,20 +763,42 @@ class NseBseAnalyzer:
             json_data = response.json()
             fno_stocks_list = sorted([item['symbol'] for item in json_data['data']['UnderlyingList']])
             print(f"Successfully fetched {len(fno_stocks_list)} F&O stock symbols.")
+
+            # NEW: Initialize ai_bot_trades for all F&O stocks too
+            for sym in fno_stocks_list:
+                if sym not in ai_bot_trades:  # Avoid re-initializing NIFTY/BANKNIFTY/FINNIFTY
+                    ai_bot_trades[sym] = {"recommendation": "Neutral", "rationale": "Waiting for data...",
+                                          "timestamp": "", "trade": "-",
+                                          "strikes": "-", "type": "-", "risk_pct": "-", "exit_rule": "-", "spot": 0.0,
+                                          "pcr": 0.0, "intraday_pcr": 0.0}
+                    last_ai_bot_run_time[sym] = 0  # Initialize run time for new stocks
         except requests.exceptions.RequestException as e:
             print(f"Fatal error: Could not fetch stock symbols. {e}. Falling back to hardcoded symbols.")
             fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
+            for sym in fno_stocks_list:
+                if sym not in ai_bot_trades:
+                    ai_bot_trades[sym] = {"recommendation": "Neutral", "rationale": "Waiting for data...",
+                                          "timestamp": "", "trade": "-",
+                                          "strikes": "-", "type": "-", "risk_pct": "-", "exit_rule": "-", "spot": 0.0,
+                                          "pcr": 0.0, "intraday_pcr": 0.0}
+                    last_ai_bot_run_time[sym] = 0
         except Exception as e:
             print(f"An unexpected error occurred while fetching stock symbols: {e}. Falling back to hardcoded symbols.")
             fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
+            for sym in fno_stocks_list:
+                if sym not in ai_bot_trades:
+                    ai_bot_trades[sym] = {"recommendation": "Neutral", "rationale": "Waiting for data...",
+                                          "timestamp": "", "trade": "-",
+                                          "strikes": "-", "type": "-", "risk_pct": "-", "exit_rule": "-", "spot": 0.0,
+                                          "pcr": 0.0, "intraday_pcr": 0.0}
+                    last_ai_bot_run_time[sym] = 0
 
     def _init_db(self):
         try:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.execute(
-                "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, symbol TEXT, sp REAL, value REAL, call_oi REAL, put_oi REAL, pcr REAL, sentiment TEXT, add_exit TEXT, pcr_change REAL, intraday_pcr REAL)")
+                "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, symbol TEXT, sp REAL, value REAL, call_oi REAL, put_oi REAL, pcr REAL, sentiment TEXT, add_exit TEXT, intraday_pcr REAL)")
 
-            # Table for Equity Bhavcopy Data (CM Segment)
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS bhavcopy_data (
                     date TEXT,
@@ -364,11 +811,10 @@ class NseBseAnalyzer:
                     high REAL,
                     low REAL,
                     prev_close REAL,
-                    trading_type TEXT, -- 'EQ' for normal equity, 'B' for block deals etc.
+                    trading_type TEXT,
                     PRIMARY KEY (date, symbol, trading_type)
                 )"""
             )
-            # Table for Index Bhavcopy Data
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS index_bhavcopy_data (
                     date TEXT,
@@ -381,33 +827,30 @@ class NseBseAnalyzer:
                     PRIMARY KEY (date, symbol)
                 )"""
             )
-            # NEW: Table for F&O Bhavcopy Data (Futures and Options, simplified for strategies)
-            # FIX: Removed IFNULL from PRIMARY KEY definition
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS fno_bhavcopy_data (
                     date TEXT,
                     symbol TEXT,
-                    instrument TEXT, -- EQ, FUTIDX, FUTSTK, OPTIDX, OPTSTK
+                    instrument TEXT,
                     expiry_date TEXT,
-                    strike_price REAL, -- NULL for futures
-                    option_type TEXT, -- NULL for futures, CE/PE for options
+                    strike_price REAL,
+                    option_type TEXT,
                     open_interest INTEGER,
                     change_in_oi INTEGER,
                     volume INTEGER,
                     close REAL,
-                    delivery_pct REAL, -- For futures
+                    delivery_pct REAL,
                     PRIMARY KEY (date, symbol, instrument, expiry_date, strike_price, option_type)
                 )"""
             )
-            # NEW: Table for Block Deal Data
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS block_deal_data (
                     date TEXT,
                     symbol TEXT,
-                    trade_type TEXT, -- Should be 'B'
+                    trade_type TEXT,
                     quantity INTEGER,
                     price REAL,
-                    PRIMARY KEY (date, symbol, quantity, price) -- Composite key for uniqueness of a specific block deal
+                    PRIMARY KEY (date, symbol, quantity, price)
                 )"""
             )
             self.conn.commit()
@@ -419,7 +862,6 @@ class NseBseAnalyzer:
         if not self.conn: return
         try:
             cur = self.conn.cursor()
-            # Get latest date from any of the bhavcopy tables
             latest_dates = []
             cur.execute("SELECT date FROM bhavcopy_data ORDER BY date DESC LIMIT 1")
             eq_date = cur.fetchone()
@@ -439,7 +881,6 @@ class NseBseAnalyzer:
                 print("No previous Bhavcopy data found in the database.")
                 return
 
-            # Fetch equity data for the latest date (only 'EQ' trading type)
             cur.execute(
                 "SELECT symbol, close, volume, pct_change, delivery_pct, open, high, low FROM bhavcopy_data WHERE date = ? AND trading_type = 'EQ'",
                 (latest_date,)
@@ -458,7 +899,6 @@ class NseBseAnalyzer:
                     "Low": row[7]
                 })
 
-            # Fetch index data for the latest date
             cur.execute(
                 "SELECT symbol, close, pct_change, open, high, low FROM index_bhavcopy_data WHERE date = ?",
                 (latest_date,)
@@ -502,22 +942,26 @@ class NseBseAnalyzer:
             for sym in all_symbols_to_load:
                 if sym in self.TICKER_ONLY_SYMBOLS: continue
                 cur.execute(
-                    "SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, pcr_change, intraday_pcr FROM history WHERE symbol = ? AND timestamp >= ? ORDER BY timestamp DESC",
+                    "SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, intraday_pcr FROM history WHERE symbol = ? AND timestamp >= ? ORDER BY timestamp DESC",
                     (sym, utc_start_str))
                 rows = cur.fetchall()
                 with data_lock:
                     todays_history[sym] = []
                     for r in rows:
-                        todays_history[sym].append(
-                            {'time': self._convert_utc_to_ist_display(r[0]), 'sp': r[1], 'value': r[2], 'call_oi': r[3],
-                             'put_oi': r[4], 'pcr': r[5], 'sentiment': r[6], 'add_exit': r[7],
-                             'pcr_change': r[8] if r[8] is not None else 0.0,
-                             'intraday_pcr': r[9] if r[9] is not None else 0.0})
+                        history_item = {
+                            'time': self._convert_utc_to_ist_display(r[0]), 'sp': r[1], 'value': r[2], 'call_oi': r[3],
+                            'put_oi': r[4], 'pcr': r[5], 'sentiment': r[6], 'add_exit': r[7],
+                            'intraday_pcr': r[8] if r[8] is not None else 0.0
+                        }
+                        todays_history[sym].append(history_item)
+
                     if sym not in self.YFINANCE_SYMBOLS:
-                        if todays_history.get(sym) and todays_history[sym]: self.previous_pcr[sym] = \
-                            todays_history[sym][0]['pcr']
-                        self.pcr_graph_data[sym] = [{"TIME": item['time'], "PCR": item['pcr']} for item in
-                                                    reversed(todays_history.get(sym, []))]
+                        if todays_history.get(sym) and todays_history[sym]:
+                            self.previous_pcr[sym] = todays_history[sym][0]['pcr']
+                        self.pcr_graph_data[sym] = [
+                            {"TIME": item['time'], "PCR": item['pcr'], "IntradayPCR": item['intraday_pcr']}
+                            for item in reversed(todays_history.get(sym, []))
+                        ]
         except Exception as e:
             print(f"History load error: {e}")
 
@@ -554,7 +998,6 @@ class NseBseAnalyzer:
 
     def run_loop(self):
         try:
-            # Ensure session cookies are fresh at the start of the loop
             self._set_nse_session_cookies()
         except requests.exceptions.RequestException as e:
             print(f"Initial NSE session setup failed: {e}")
@@ -581,7 +1024,6 @@ class NseBseAnalyzer:
 
             if market_open <= now_ist <= market_close:
                 print(f"Market is open. Starting equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
-                # Refresh cookies before starting a new cycle of equity fetches
                 self._set_nse_session_cookies()
                 for i, symbol in enumerate(fno_stocks_list):
                     try:
@@ -590,7 +1032,7 @@ class NseBseAnalyzer:
                         if equity_data:
                             previous_data = equity_data_cache.get(symbol, {}).get('current')
                             equity_data_cache[symbol] = {'current': equity_data, 'previous': previous_data}
-                        time.sleep(1)  # Small delay between requests to avoid hitting rate limits too hard
+                        time.sleep(1)
                     except Exception as e:
                         print(f"Error fetching {symbol} in equity loop: {e}")
                 self.rank_and_emit_movers()
@@ -604,22 +1046,21 @@ class NseBseAnalyzer:
         print("Bhavcopy scanner thread started.")
         while not self.stop.is_set():
             now_ist = self._get_ist_time()
-            # Run daily scan after market hours (e.g., 9 PM IST) if not already run for today
             if now_ist.hour >= 21 and (self.bhavcopy_last_run_date != now_ist.date().isoformat()):
                 print(f"--- Triggering daily Bhavcopy scan for {now_ist.date().isoformat()} ---")
 
                 scan_successful = False
-                # Try to scan for up to the last 5 days
                 for i in range(5):
                     target_day = now_ist - datetime.timedelta(days=i)
-                    # Skip weekends
-                    if target_day.weekday() >= 5:  # Saturday or Sunday
+                    if target_day.weekday() >= 5:
                         continue
 
                     if self.run_bhavcopy_for_date(target_day):
                         print(f"Successfully processed Bhavcopy for date: {target_day.strftime('%Y-%m-%d')}")
+                        self.send_telegram_message(
+                            f"✅ Daily Bhavcopy scan complete.")
                         scan_successful = True
-                        break  # Exit loop on first success
+                        break
 
                 self.bhavcopy_last_run_date = now_ist.date().isoformat()
 
@@ -629,7 +1070,7 @@ class NseBseAnalyzer:
                     self.send_telegram_message(
                         f"❌ Daily Bhavcopy scan: Failed to process Bhavcopy for the last few trading days.")
 
-            time.sleep(900)  # Check every 15 minutes
+            time.sleep(900)
 
     def download_bhavcopy_file_by_name(self, date_obj, file_pattern_or_name, target_folder, is_zip=False):
         """
@@ -641,60 +1082,48 @@ class NseBseAnalyzer:
         month_upper = date_obj.strftime('%b').upper()
         year = date_obj.year
 
-        # Base URLs to try - Prioritized nsearchives.nseindia.com as it seems more reliable from your tests
         possible_base_urls = [
-            # Prioritized nsearchives
             "https://nsearchives.nseindia.com/products/content/",
             f"https://nsearchives.nseindia.com/content/historical/DERIVATIVES/{year}/{month_upper}/",
             "https://nsearchives.nseindia.com/content/indices/",
-            "https://nsearchives.nseindia.com/content/fo/",  # New base for BhavCopy_NSE_FO
-            "https://nsearchives.nseindia.com/content/equities/",  # New base for block.csv, bulk.csv etc.
-            "https://nsearchives.nseindia.com/archives/fo/",  # New base for fo.zip, sec_ban etc.
-            "https://nsearchives.nseindia.com/archives/nsccl/sett/",  # New base for FOSett_prce
-            "https://nsearchives.nseindia.com/archives/cd/bhav/",  # New base for CD bhavcopy
-            "https://nsearchives.nseindia.com/content/com/",  # New base for COM bhavcopy
-            "https://nsearchives.nseindia.com/archives/ird/bhav/",  # New base for IRD bhavcopy
-
-            # Secondary (www1.nseindia.com) - often has TLS issues
+            "https://nsearchives.nseindia.com/content/fo/",
+            "https://nsearchives.nseindia.com/content/equities/",
+            "https://nsearchives.nseindia.com/archives/fo/",
+            "https://nsearchives.nseindia.com/archives/nsccl/sett/",
+            "https://nsearchives.nseindia.com/archives/cd/bhav/",
+            "https://nsearchives.nseindia.com/content/com/",
+            "https://nsearchives.nseindia.com/archives/ird/bhav/",
             f"https://www1.nseindia.com/content/historical/DERIVATIVES/{year}/{month_upper}/",
             "https://www1.nseindia.com/products/content/",
-
-            # Tertiary (archives.nseindia.com) - less common for these specific files
             "https://archives.nseindia.com/content/fo/bhav/",
             "https://archives.nseindia.com/content/equities/bulk_block/",
             "https://archives.nseindia.com/content/historical/equities/",
             "https://archives.nseindia.com/content/nsccl/fao_bhav/",
         ]
 
-        # Generate specific filenames based on pattern and date formats
         file_candidates = []
-        # Standard replacements
         if "DDMMYYYY" in file_pattern_or_name:
             file_candidates.append(file_pattern_or_name.replace("DDMMYYYY", date_dmy))
         if "YYYY-MM-DD" in file_pattern_or_name:
             file_candidates.append(file_pattern_or_name.replace("YYYY-MM-DD", date_ymd))
         if "DDMMYY" in file_pattern_or_name:
             file_candidates.append(file_pattern_or_name.replace("DDMMYY", date_obj.strftime('%d%m%y')))
-        if "YYYYMMDD" in file_pattern_or_name:  # For nsccl.YYYYMMDD.s.zip, BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip
+        if "YYYYMMDD" in file_pattern_or_name:
             file_candidates.append(file_pattern_or_name.replace("YYYYMMDD", date_obj.strftime('%Y%m%d')))
 
-        # Add the original pattern/name itself, in case it's a fixed name like "block.csv" or "fo.zip"
         if file_pattern_or_name not in file_candidates:
             file_candidates.append(file_pattern_or_name)
 
-        # Ensure correct suffix if not already present
         final_file_candidates = []
         for fn in file_candidates:
-            # Handle cases where the pattern already includes .zip or .csv
             if is_zip and not fn.endswith(".zip"):
                 final_file_candidates.append(f"{fn}.zip")
-            elif not is_zip and not (fn.endswith(".csv") or fn.endswith(".DAT") or fn.endswith(".xls")):  # Added .xls
-                final_file_candidates.append(f"{fn}.csv")  # Default to .csv if not specified
+            elif not is_zip and not (fn.endswith(".csv") or fn.endswith(".DAT") or fn.endswith(".xls")):
+                final_file_candidates.append(f"{fn}.csv")
             else:
                 final_file_candidates.append(fn)
 
         for base_url in possible_base_urls:
-            # Use .format() only if the base_url contains placeholders
             formatted_base_url = base_url
             if '{year}' in base_url or '{month_upper}' in base_url:
                 formatted_base_url = base_url.format(year=year, month_upper=month_upper)
@@ -712,7 +1141,7 @@ class NseBseAnalyzer:
                         print(f"Successfully downloaded {filename} from {full_url}")
                         return path
                     elif response.status_code == 404:
-                        continue  # File not found, try next candidate
+                        continue
                     else:
                         print(f"Download failed for {full_url} with status {response.status_code}")
                 except requests.exceptions.RequestException as e:
@@ -725,25 +1154,30 @@ class NseBseAnalyzer:
                       {'success': True, 'message': f'Attempting to download and process Bhavcopy for {date_str}...'},
                       to=sid)
 
-        # Step 1: Download and Process Bhavcopy Files
         download_success = self.run_bhavcopy_for_date(date_obj, trigger_manual=True)
 
         if download_success:
             socketio.emit('bhavcopy_analysis_status',
                           {'success': True, 'message': f'Bhavcopy for {date_str} processed. Analyzing strategies...'},
                           to=sid)
-            # Step 2: Trigger Strategy Analysis (via API call, which will then emit results)
             try:
-                # Direct call to strategy analysis logic
                 results = {}
                 results['FDDT'] = self.analyze_fii_dii_delivery_divergence(date_str)
+
                 results['ZDFT'] = self.analyze_zero_delivery_future_roll(date_str)
+
                 results['BDGP'] = self.analyze_block_deal_ghost_pump(date_str)
+
                 results['VAR7'] = self.analyze_vwap_anchor_reversion(date_str)
+
                 results['HBA21'] = self.analyze_hidden_bonus_arbitrage(date_str)
+
                 results['OIMT'] = self.analyze_oi_momentum_trap(date_str)
+
                 results['VSSB'] = self.analyze_volume_surge_scanner(date_str)
+
                 results['OOAD'] = self.analyze_options_oi_anomaly(date_str)
+
                 results['CAADT'] = self.analyze_corporate_action_arbitrage(date_str)
 
                 socketio.emit('bhavcopy_strategy_results', {'date': date_str, 'results': results}, to=sid)
@@ -774,64 +1208,55 @@ class NseBseAnalyzer:
             block_path = None
             bulk_path = None
 
-            # --- CM Bhavcopy ---
             print(f"Trying to find CM Bhavcopy for {target_date_str_dmy}...")
             cm_path = self.download_bhavcopy_file_by_name(date_obj, f"sec_bhavdata_full_{target_date_str_dmy}.csv",
                                                           "Bhavcopy_Downloads/NSE")
-            if not cm_path:  # Try alternative name if standard fails
+            if not cm_path:
                 cm_path = self.download_bhavcopy_file_by_name(date_obj,
                                                               f"BhavCopy_NSE_CM_0_0_0_{date_obj.strftime('%Y%m%d')}_F_0000.csv.zip",
                                                               "Bhavcopy_Downloads/NSE", is_zip=True)
                 if cm_path: print(f"Found alternative CM Bhavcopy: {os.path.basename(cm_path)}")
 
-            # --- F&O Bhavcopy ---
             print(f"Trying to find F&O Bhavcopy for {target_date_str_dmy}...")
-            # Try standard name first (foDDMMYYYYbhav.csv.zip)
             fno_path = self.download_bhavcopy_file_by_name(date_obj, f"fo{target_date_str_dmy}bhav.csv.zip",
                                                            "Bhavcopy_Downloads/NSE", is_zip=True)
-            if not fno_path:  # Try foDDMMYYYY.zip (from your new list)
+            if not fno_path:
                 fno_path = self.download_bhavcopy_file_by_name(date_obj, f"fo{target_date_str_dmy}.zip",
                                                                "Bhavcopy_Downloads/NSE", is_zip=True)
-            if not fno_path:  # Try PRDDMMYY.zip (your previous example)
+            if not fno_path:
                 fno_path = self.download_bhavcopy_file_by_name(date_obj, f"PR{date_obj.strftime('%d%m%y')}.zip",
                                                                "Bhavcopy_Downloads/NSE", is_zip=True)
-            if not fno_path:  # Try BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip (from your new list, exact match)
+            if not fno_path:
                 fno_path = self.download_bhavcopy_file_by_name(date_obj,
                                                                f"BhavCopy_NSE_FO_0_0_0_{date_obj.strftime('%Y%m%d')}_F_0000.csv.zip",
                                                                "Bhavcopy_Downloads/NSE", is_zip=True)
-            if not fno_path:  # Try nsccl.YYYYMMDD.s.zip (from your new list, general NSCCL FO)
+            if not fno_path:
                 fno_path = self.download_bhavcopy_file_by_name(date_obj, f"nsccl.{date_obj.strftime('%Y%m%d')}.s.zip",
                                                                "Bhavcopy_Downloads/NSE", is_zip=True)
             if fno_path: print(f"Found F&O Bhavcopy: {os.path.basename(fno_path)}")
 
-            # --- Index Bhavcopy ---
             print(f"Trying to find Index Bhavcopy for {target_date_str_dmy}...")
             index_path = self.download_bhavcopy_file_by_name(date_obj, f"ind_close_all_{target_date_str_dmy}.csv",
                                                              "Bhavcopy_Downloads/NSE")
             if not index_path:
                 print(
                     f"Standard Index Bhavcopy not found. Relying on process_and_save_bhavcopy_files to potentially extract from other files.")
-                # For now, if ind_close_all.csv not found, we rely on the process_and_save_bhavcopy_files
-                # to potentially extract index info from other files if it's present or just skip.
                 pass
 
-                # --- Block Deals (separate file) ---
             print(f"Trying to find Block Deals file for {target_date_str_dmy}...")
             block_path = self.download_bhavcopy_file_by_name(date_obj, "block.csv", "Bhavcopy_Downloads/NSE")
             if block_path: print(f"Found Block Deals file: {os.path.basename(block_path)}")
 
-            # --- Bulk Deals (separate file) ---
             print(f"Trying to find Bulk Deals file for {target_date_str_dmy}...")
             bulk_path = self.download_bhavcopy_file_by_name(date_obj, "bulk.csv", "Bhavcopy_Downloads/NSE")
             if bulk_path: print(f"Found Bulk Deals file: {os.path.basename(bulk_path)}")
 
-            if cm_path or fno_path or index_path or block_path or bulk_path:  # Changed to OR any path is found
+            if cm_path or fno_path or index_path or block_path or bulk_path:
                 downloaded_files_str = f"{'CM ' if cm_path else ''}{'F&O ' if fno_path else ''}{'Index ' if index_path else ''}{'Block ' if block_path else ''}{'Bulk ' if bulk_path else ''}"
                 print(f"Bhavcopy files for {target_date_str_dmy} downloaded ({downloaded_files_str.strip()}).")
 
-                # Pass file paths to processing function, so it knows which files to read
                 extracted_data = self.process_and_save_bhavcopy_files(
-                    target_date_str_dmy, cm_path, fno_path, index_path, block_path, bulk_path  # Pass bulk_path
+                    target_date_str_dmy, cm_path, fno_path, index_path, block_path, bulk_path
                 )
 
                 if extracted_data and (
@@ -839,7 +1264,7 @@ class NseBseAnalyzer:
                     "fno_data") or extracted_data.get("block_deals")):
                     print(
                         f"Successfully extracted {len(extracted_data.get('equities', []))} equity, {len(extracted_data.get('fno_data', []))} F&O, {len(extracted_data.get('indices', []))} index, and {len(extracted_data.get('block_deals', []))} block deal records from Bhavcopy.")
-                    latest_bhavcopy_data = extracted_data  # Update global cache
+                    latest_bhavcopy_data = extracted_data
                     print("Bhavcopy data extracted, stored in memory, and saved to DB.")
                     socketio.emit('bhavcopy_update', latest_bhavcopy_data)
                 else:
@@ -859,13 +1284,10 @@ class NseBseAnalyzer:
         all_equities_for_date = []
         all_indices_for_date = []
         all_fno_data_for_date = []
-        all_block_deals_for_date = []  # This will now be populated from block.csv or bulk.csv
+        all_block_deals_for_date = []
 
-        # --- Process CM Bhavcopy ---
-        # Read from cm_file_path if available
         if cm_file_path and os.path.exists(cm_file_path):
             try:
-                # If it's a ZIP, extract first
                 if cm_file_path.endswith('.zip'):
                     with ZipFile(cm_file_path, 'r') as zip_ref:
                         csv_name = zip_ref.namelist()[0]
@@ -922,10 +1344,8 @@ class NseBseAnalyzer:
             except Exception as e:
                 print(f"Error reading CM Bhavcopy file: {e}")
 
-        # --- Process F&O Bhavcopy ---
         if fno_file_path and os.path.exists(fno_file_path):
             try:
-                # Assuming F&O files are always ZIPs
                 with ZipFile(fno_file_path, 'r') as zip_ref:
                     csv_name = zip_ref.namelist()[0]
                     with zip_ref.open(csv_name) as csv_file:
@@ -933,7 +1353,6 @@ class NseBseAnalyzer:
                         df_fo.columns = [col.strip().upper() for col in df_fo.columns]
 
                         print(f"--- F&O Bhavcopy for {db_date_str} loaded ---")
-                        # Adjusted column names based on common NSE F&O bhavcopy format
                         df_fo['OPEN_INTEREST'] = pd.to_numeric(df_fo.get('OPEN_INT', df_fo.get('OPEN_INTEREST')),
                                                                errors='coerce').fillna(0).astype(int)
                         df_fo['CHG_IN_OI'] = pd.to_numeric(df_fo.get('CHG_IN_OI', df_fo.get('CHANGE_IN_OI')),
@@ -972,7 +1391,6 @@ class NseBseAnalyzer:
             except Exception as e:
                 print(f"Error reading F&O Bhavcopy file: {e}")
 
-        # --- Process Index Bhavcopy ---
         if index_file_path and os.path.exists(index_file_path):
             try:
                 df_idx = pd.read_csv(index_file_path, skipinitialspace=True)
@@ -1021,7 +1439,6 @@ class NseBseAnalyzer:
             except Exception as e:
                 print(f"Error reading Index Bhavcopy file: {e}")
 
-        # --- Process Block Deal (block.csv) ---
         if block_file_path and os.path.exists(block_file_path):
             try:
                 df_block = pd.read_csv(block_file_path, skipinitialspace=True)
@@ -1029,12 +1446,11 @@ class NseBseAnalyzer:
 
                 print(f"--- Block Deals (block.csv) for {db_date_str} loaded ---")
                 for index, r in df_block.iterrows():
-                    # Assuming columns like 'SYMBOL', 'NO_OF_SHARES', 'TRADE_PRICE' (common for block/bulk)
                     all_block_deals_for_date.append({
                         "Symbol": r['SYMBOL'],
-                        "Trade Type": r.get('TRADE_TYPE', 'B'),  # Default to 'B' if not specified
-                        "Quantity": int(r['NO_OF_SHARES']),  # Corrected column name
-                        "Price": round(float(r['TRADE_PRICE']), 2)  # Corrected column name
+                        "Trade Type": r.get('TRADE_TYPE', 'B'),
+                        "Quantity": int(r['NO_OF_SHARES']),
+                        "Price": round(float(r['TRADE_PRICE']), 2)
                     })
                 print(f"Block Deals count from block.csv: {len(all_block_deals_for_date)}")
 
@@ -1044,7 +1460,6 @@ class NseBseAnalyzer:
             except Exception as e:
                 print(f"Error reading Block Deal file (block.csv): {e}")
 
-        # --- Process Bulk Deal (bulk.csv) ---
         if bulk_file_path and os.path.exists(bulk_file_path):
             try:
                 df_bulk = pd.read_csv(bulk_file_path, skipinitialspace=True)
@@ -1052,12 +1467,11 @@ class NseBseAnalyzer:
 
                 print(f"--- Bulk Deals (bulk.csv) for {db_date_str} loaded ---")
                 for index, r in df_bulk.iterrows():
-                    # Assuming columns like 'SYMBOL', 'NO_OF_SHARES', 'TRADE_PRICE'
-                    all_block_deals_for_date.append({  # Append to the same list for BDGP strategy
+                    all_block_deals_for_date.append({
                         "Symbol": r['SYMBOL'],
-                        "Trade Type": r.get('TRADE_TYPE', 'K'),  # Use a different type for Bulk deals, e.g., 'K'
-                        "Quantity": int(r['NO_OF_SHARES']),  # Corrected column name
-                        "Price": round(float(r['TRADE_PRICE']), 2)  # Corrected column name
+                        "Trade Type": r.get('TRADE_TYPE', 'K'),
+                        "Quantity": int(r['NO_OF_SHARES']),
+                        "Price": round(float(r['TRADE_PRICE']), 2)
                     })
                 print(
                     f"Bulk Deals count from bulk.csv: {len(df_bulk)}. Total block/bulk deals: {len(all_block_deals_for_date)}")
@@ -1070,9 +1484,7 @@ class NseBseAnalyzer:
 
         if self.conn:
             cur = self.conn.cursor()
-            # Save Equity Data
             if all_equities_for_date:
-                # Clear previous EQ data for this date to avoid duplicates on re-processing
                 cur.execute("DELETE FROM bhavcopy_data WHERE date = ? AND trading_type = 'EQ'", (db_date_str,))
                 for stock in all_equities_for_date:
                     cur.execute(
@@ -1093,7 +1505,6 @@ class NseBseAnalyzer:
                     )
                 print(f"Saved {len(all_equities_for_date)} equity bhavcopy records for {db_date_str} to the database.")
 
-            # Save Index Data
             if all_indices_for_date:
                 cur.execute("DELETE FROM index_bhavcopy_data WHERE date = ?", (db_date_str,))
                 for index_data in all_indices_for_date:
@@ -1111,7 +1522,6 @@ class NseBseAnalyzer:
                     )
                 print(f"Saved {len(all_indices_for_date)} index bhavcopy records for {db_date_str} to the database.")
 
-            # Save F&O Data
             if all_fno_data_for_date:
                 cur.execute("DELETE FROM fno_bhavcopy_data WHERE date = ?", (db_date_str,))
                 for fno_item in all_fno_data_for_date:
@@ -1133,7 +1543,6 @@ class NseBseAnalyzer:
                     )
                 print(f"Saved {len(all_fno_data_for_date)} F&O bhavcopy records for {db_date_str} to the database.")
 
-            # Save Block Deal Data (from either block.csv or bulk.csv)
             if all_block_deals_for_date:
                 cur.execute("DELETE FROM block_deal_data WHERE date = ?", (db_date_str,))
                 for block_deal in all_block_deals_for_date:
@@ -1160,7 +1569,6 @@ class NseBseAnalyzer:
         print(f"DEBUG: _get_bhavcopy_for_date called for date: {date_str}")
         cur = self.conn.cursor()
 
-        # Fetch ALL equity data (only 'EQ' trading type) for the date
         cur.execute(
             "SELECT symbol, close, volume, pct_change, delivery_pct, open, high, low, prev_close, trading_type FROM bhavcopy_data WHERE date = ? AND trading_type = 'EQ'",
             (date_str,)
@@ -1168,12 +1576,11 @@ class NseBseAnalyzer:
         equities = [{
             "Symbol": row[0], "Close": row[1], "Volume": row[2], "Pct Change": row[3],
             "Delivery %": float(str(row[4]).replace('%', '')) if isinstance(row[4], str) and str(
-                row[4]).strip() != 'N/A' else None,  # Ensure float conversion
+                row[4]).strip() != 'N/A' else None,
             "Open": row[5], "High": row[6], "Low": row[7], "Prev Close": row[8], "Trading Type": row[9]
         } for row in cur.fetchall()]
         print(f"DEBUG: _get_bhavcopy_for_date - Found {len(equities)} EQ records for {date_str}")
 
-        # Fetch index data
         cur.execute(
             "SELECT symbol, close, pct_change, open, high, low FROM index_bhavcopy_data WHERE date = ?",
             (date_str,)
@@ -1184,7 +1591,6 @@ class NseBseAnalyzer:
         } for row in cur.fetchall()]
         print(f"DEBUG: _get_bhavcopy_for_date - Found {len(indices)} Index records for {date_str}")
 
-        # Fetch F&O data (futures and options)
         cur.execute(
             "SELECT symbol, instrument, expiry_date, strike_price, option_type, open_interest, change_in_oi, volume, close, delivery_pct FROM fno_bhavcopy_data WHERE date = ?",
             (date_str,)
@@ -1196,7 +1602,6 @@ class NseBseAnalyzer:
         } for row in cur.fetchall()]
         print(f"DEBUG: _get_bhavcopy_for_date - Found {len(fno_data)} F&O records for {date_str}")
 
-        # Fetch block deal data
         cur.execute(
             "SELECT symbol, trade_type, quantity, price FROM block_deal_data WHERE date = ?",
             (date_str,)
@@ -1234,26 +1639,10 @@ class NseBseAnalyzer:
             })
         return history
 
-    # --- STRATEGY IMPLEMENTATIONS ---
-
     def analyze_fii_dii_delivery_divergence(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 1: FII-DII Delivery Divergence Trap (FDDT)
-        Concept: FIIs & DIIs report net positions daily, but Bhavcopy reveals exact delivery footprints stock-by-stock.
-        Signal: FII Net Buy > ₹200 Cr, DII Net Sell > ₹150 Cr, Delivery % < 18%.
-        """
-        # --- PLACEHOLDER ---
-        # This strategy requires integrating FII/DII activity CSV data.
-        # Without that, it cannot be fully implemented.
-        # For now, it will return a placeholder message.
         return [{"Symbol": "N/A", "Signal": "Requires FII/DII data integration."}]
 
     def analyze_zero_delivery_future_roll(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 2: Zero-Delivery Future Roll Trap (ZDFT)
-        Concept: Near-month future closes with < 0.8% delivery but OI explodes in next month.
-        Signal: Short on expiry day close.
-        """
         signals = []
         try:
             current_day_data = self._get_bhavcopy_for_date(date_str)
@@ -1264,7 +1653,6 @@ class NseBseAnalyzer:
                 return [{"Symbol": "N/A", "Near Month Delivery %": "N/A", "Next Month OI Increase %": "N/A",
                          "Signal": "No F&O data for " + date_str}]
 
-            # Filter for Futures (FUTSTK only, as per problem description)
             futures_df = current_fno_df[current_fno_df['Instrument'] == 'FUTSTK'].copy()
 
             if futures_df.empty:
@@ -1272,17 +1660,16 @@ class NseBseAnalyzer:
                 return [{"Symbol": "N/A", "Near Month Delivery %": "N/A", "Next Month OI Increase %": "N/A",
                          "Signal": "No Futures (FUTSTK) data for " + date_str}]
 
-            # Get previous 2 trading days for 2-day OI change
             current_date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
-            prev_trading_day_str_1 = self._get_previous_trading_day(current_date_obj, 1)  # 1 day ago
-            prev_trading_day_str_2 = self._get_previous_trading_day(current_date_obj, 2)  # 2 days ago
+            prev_trading_day_str_1 = self._get_previous_trading_day(current_date_obj, 1)
+            prev_trading_day_str_2 = self._get_previous_trading_day(current_date_obj, 2)
 
             if not prev_trading_day_str_1 or not prev_trading_day_str_2:
                 print(f"DEBUG: ZDFT for {date_str} - Not enough previous trading days for OI comparison.")
                 return [{"Symbol": "N/A", "Near Month Delivery %": "N/A", "Next Month OI Increase %": "N/A",
                          "Signal": "Not enough previous trading days for OI comparison."}]
 
-            prev_day_data_2 = self._get_bhavcopy_for_date(prev_trading_day_str_2)  # Data from 2 days ago
+            prev_day_data_2 = self._get_bhavcopy_for_date(prev_trading_day_str_2)
             prev_fno_df_2 = pd.DataFrame(prev_day_data_2['fno_data'])
 
             if prev_fno_df_2.empty:
@@ -1295,11 +1682,9 @@ class NseBseAnalyzer:
             for symbol in futures_df['Symbol'].unique():
                 stock_futures = futures_df[futures_df['Symbol'] == symbol].copy()
 
-                # Sort by expiry date to find near and next month
                 stock_futures['Expiry Date'] = pd.to_datetime(stock_futures['Expiry Date'])
                 stock_futures = stock_futures.sort_values(by='Expiry Date')
 
-                # Need at least two expiries to check next month roll
                 if len(stock_futures) >= 2:
                     near_month_future = stock_futures.iloc[0]
                     next_month_future = stock_futures.iloc[1]
@@ -1312,7 +1697,6 @@ class NseBseAnalyzer:
                         (prev_futures_df_2['Symbol'] == symbol) &
                         (prev_futures_df_2['Instrument'] == 'FUTSTK') &
                         (pd.to_datetime(prev_futures_df_2['Expiry Date']) == next_month_future['Expiry Date'])
-                        # Compare datetime objects
                         ]
 
                     if not prev_next_month_future_2_days_ago.empty:
@@ -1321,7 +1705,6 @@ class NseBseAnalyzer:
                                                    next_month_oi_current - next_month_oi_2_days_ago) / next_month_oi_2_days_ago * 100) if next_month_oi_2_days_ago > 0 else float(
                             'inf')
 
-                        # Condition: near-month delivery < 0.8% AND next-month OI increased > 40% in 2 days
                         if (near_month_delivery_pct is not None and near_month_delivery_pct < 0.8) and \
                                 (oi_increase_pct > 40):
                             signals.append({
@@ -1341,11 +1724,6 @@ class NseBseAnalyzer:
              "Signal": "No Zero-Delivery Future Roll Trap signals found for " + date_str}]
 
     def analyze_block_deal_ghost_pump(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 3: Block-Deal Ghost Pump (BDGP)
-        Concept: Stock opens +4% with huge volume, but block deal was done at -8% discount.
-        Signal: Short at open, target previous close.
-        """
         signals = []
         try:
             current_day_data = self._get_bhavcopy_for_date(date_str)
@@ -1355,7 +1733,7 @@ class NseBseAnalyzer:
             print(
                 f"DEBUG: BDGP for {date_str} - equities_df count: {len(equities_df)}, block_deals_df count: {len(block_deals_df)}")
 
-            if equities_df.empty and block_deals_df.empty:  # Only return error if BOTH are empty
+            if equities_df.empty and block_deals_df.empty:
                 return [{"Symbol": "N/A", "Block Deal Price": "N/A", "Previous Close": "N/A", "Open Price": "N/A",
                          "Block Discount %": "N/A", "Open Gap Up %": "N/A",
                          "Signal": "No Equity or Block Deal data for " + date_str}]
@@ -1378,10 +1756,8 @@ class NseBseAnalyzer:
                     current_open = eq['Open']
 
                     if prev_close is not None and current_open is not None and bd_price is not None:
-                        # Block price < previous close * 0.92 (-8% discount)
                         is_discount_block_deal = (
                                 bd_price < prev_close * 0.92) if prev_close and prev_close > 0 else False
-                        # Today open > previous close * 1.04 (+4% open gap)
                         is_open_gap_up = (current_open > prev_close * 1.04) if prev_close and prev_close > 0 else False
 
                         if is_discount_block_deal and is_open_gap_up:
@@ -1405,11 +1781,6 @@ class NseBseAnalyzer:
              "Signal": "No Block-Deal Ghost Pump signals found for " + date_str}]
 
     def analyze_vwap_anchor_reversion(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 4: VWAP Anchor Reversion (VAR-7)
-        Concept: Stocks that close > +7% from VWAP with delivery < 12% revert hard next day.
-        Signal: Short next day open.
-        """
         signals = []
         try:
             current_day_data = self._get_bhavcopy_for_date(date_str)
@@ -1431,13 +1802,12 @@ class NseBseAnalyzer:
 
                 if all(x is not None for x in [volume, close_price, open_price, high_price,
                                                low_price]) and delivery_pct is not None and volume > 0:
-                    # Calculate VWAP using (High + Low + Close) / 3 if no Turnover directly in this table
                     vwap = (high_price + low_price + close_price) / 3.0
 
                     if vwap > 0:
                         close_vs_vwap_pct = ((close_price - vwap) / vwap * 100)
 
-                        if close_vs_vwap_pct > 7 and delivery_pct is not None and delivery_pct < 12:  # Close > +7% from VWAP and delivery < 12%
+                        if close_vs_vwap_pct > 7 and delivery_pct is not None and delivery_pct < 12:
                             signals.append({
                                 "Symbol": symbol,
                                 "Close Price": f"{close_price:.2f}",
@@ -1457,18 +1827,9 @@ class NseBseAnalyzer:
              "Signal": "No VWAP Anchor Reversion signals found for " + date_str}]
 
     def analyze_hidden_bonus_arbitrage(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 5: Hidden Bonus Arbitrage (HBA-21)
-        Requires NSE corporate action list and multi-day delivery data.
-        This is a placeholder.
-        """
         return [{"Symbol": "N/A", "Signal": "Requires Corporate Actions data and multi-day delivery trend analysis."}]
 
     def analyze_oi_momentum_trap(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 6: OI Momentum Trap (Long Buildup vs. Short Covering Detector)
-        Concept: Classify based on Price Change and OI Change. Focus on long buildup.
-        """
         signals = []
         try:
             current_day_data = self._get_bhavcopy_for_date(date_str)
@@ -1483,7 +1844,6 @@ class NseBseAnalyzer:
                          "Institutional Conviction (Delivery > 60%)": "N/A",
                          "Signal": "No Equity or F&O data for " + date_str}]
 
-            # Get the date of the previous trading day
             current_date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
             prev_trading_day_str = self._get_previous_trading_day(current_date_obj, 1)
             if not prev_trading_day_str:
@@ -1504,22 +1864,20 @@ class NseBseAnalyzer:
                          "Institutional Conviction (Delivery > 60%)": "N/A",
                          "Signal": "No previous day Equity or F&O data for OI Momentum Trap."}]
 
-            # Focus on FUTSTK for OI analysis (assuming near month for simplicity)
-            current_futures_df = current_fno_df[current_fno_df['Instrument'] == 'FUTSTK'].copy()
+            futures_df = current_fno_df[current_fno_df['Instrument'] == 'FUTSTK'].copy()
             prev_futures_df = prev_fno_df[prev_fno_df['Instrument'] == 'FUTSTK'].copy()
 
-            for symbol in current_futures_df['Symbol'].unique():
-                stock_futures = current_futures_df[current_futures_df['Symbol'] == symbol]
+            for symbol in futures_df['Symbol'].unique():
+                stock_futures = futures_df[futures_df['Symbol'] == symbol]
                 prev_stock_futures = prev_futures_df[prev_futures_df['Symbol'] == symbol]
 
                 current_eq = current_equities_df[current_equities_df['Symbol'] == symbol]
                 prev_eq = prev_equities_df[prev_equities_df['Symbol'] == symbol]
 
                 if not stock_futures.empty and not prev_stock_futures.empty and not current_eq.empty and not prev_eq.empty:
-                    # Get near-month futures (simplification: just take the first one if multiple expiries)
                     current_fut_near = stock_futures.sort_values(by='Expiry Date').iloc[0]
                     prev_fut_near = prev_stock_futures.sort_values(by='Expiry Date').iloc[
-                        0]  # Use prev_stock_futures here
+                        0]
 
                     current_eq_row = current_eq.iloc[0]
                     prev_eq_row = prev_eq.iloc[0]
@@ -1539,7 +1897,6 @@ class NseBseAnalyzer:
                     elif price_change_pct < 0 and oi_change < 0:
                         signal_type = "Long Unwinding"
 
-                    # Cross-check with delivery % from EQ Bhavcopy
                     delivery_pct = current_eq_row['Delivery %']
                     institutional_conviction = "No"
                     if delivery_pct is not None and delivery_pct != 'N/A' and float(
@@ -1566,10 +1923,6 @@ class NseBseAnalyzer:
              "Signal": "No OI Momentum Trap signals found for " + date_str}]
 
     def analyze_volume_surge_scanner(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 7: Volume Surge Scanner for Swing Breakouts
-        Concept: Today's volume > 2x avg. 10-day volume AND delivery % > 50%.
-        """
         signals = []
         try:
             current_day_data = self._get_bhavcopy_for_date(date_str)
@@ -1593,22 +1946,17 @@ class NseBseAnalyzer:
                         today_delivery_pct).strip() == 'N/A':
                     continue
 
-                # Convert delivery_pct to float
                 today_delivery_pct_float = float(str(today_delivery_pct).replace('%', ''))
 
-                # Fetch up to 10 previous trading days for average volume
-                # Look back 30 calendar days to ensure we get 10 *trading* days
                 historical_data = self._get_historical_bhavcopy_for_stock(
                     symbol,
                     (current_date_obj - datetime.timedelta(days=30)).strftime('%Y-%m-%d'),
-                    # Look back more days to ensure 10 trading days
-                    (current_date_obj - datetime.timedelta(days=1)).strftime('%Y-%m-%d'),  # Up to yesterday
-                    10  # Limit to 10 records
+                    (current_date_obj - datetime.timedelta(days=1)).strftime('%Y-%m-%d'),
+                    10
                 )
                 historical_df = pd.DataFrame(historical_data)
 
-                if len(historical_df) >= 10:  # Need at least 10 previous trading days for average
-                    # Calculate average volume from previous days
+                if len(historical_df) >= 10:
                     avg_volume = historical_df['Volume'].mean()
 
                     if avg_volume > 0 and today_volume > (2 * avg_volume) and today_delivery_pct_float > 50:
@@ -1633,31 +1981,17 @@ class NseBseAnalyzer:
              "Signal": "No Volume Surge Scanner signals found for " + date_str}]
 
     def analyze_options_oi_anomaly(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 8: Options OI Anomaly for Directional Bets
-        Requires Options Bhavcopy (OPTSTK/OPTIDX), which is NOT fully parsed/stored.
-        This is a placeholder.
-        """
         return [{"Symbol": "N/A",
                  "Signal": "Requires detailed Options Bhavcopy parsing and storage for strike-wise OI analysis."}]
 
     def analyze_corporate_action_arbitrage(self, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Strategy 9: Corporate Action Arbitrage via Delivery Traps
-        Requires NSE corporate action list and multi-day delivery data.
-        This is a placeholder.
-        """
         return [{"Symbol": "N/A", "Signal": "Requires Corporate Actions data and multi-day delivery trend analysis."}]
 
     def _get_previous_trading_day(self, current_date: datetime.date, num_days_back: int) -> Optional[str]:
-        """Helper to find the Nth previous trading day(s) by checking DB dates."""
         if not self.conn:
             return None
 
         cur = self.conn.cursor()
-        # Find the Nth previous date that has bhavcopy data
-        # This query gets distinct dates from bhavcopy_data, orders them descending, and limits to num_days_back.
-        # Then it takes the last one (which is the oldest of the 'num_days_back' previous dates).
         query = """
             SELECT DISTINCT date FROM bhavcopy_data
             WHERE date < ? AND trading_type = 'EQ'
@@ -1668,12 +2002,10 @@ class NseBseAnalyzer:
         rows = cur.fetchall()
 
         if len(rows) < num_days_back:
-            # Not enough historical data
             print(
                 f"DEBUG: _get_previous_trading_day for {current_date} (back {num_days_back}) - Only found {len(rows)} previous trading days.")
             return None
 
-        # Return the oldest date among the fetched 'num_days_back' previous dates
         return rows[-1][0]
 
     def send_telegram_message(self, message):
@@ -1700,7 +2032,7 @@ class NseBseAnalyzer:
         summary = data.get('summary', {})
         sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2,
                          "Weakening": -0.5, "Strengthening": 0.5, "Bullish Reversal": 1.5,
-                         "Bearish Reversal": -1.5}  # Added new sentiments
+                         "Bearish Reversal": -1.5}
         sentiment_score = sentiment_map.get(summary.get('sentiment', 'Neutral'), 0)
         pcr = summary.get('pcr', 1.0)
         intraday_pcr = summary.get('intraday_pcr', 1.0)
@@ -1718,7 +2050,7 @@ class NseBseAnalyzer:
 
         sentiment_map = {"Strong Bullish": 2, "Mild Bullish": 1, "Neutral": 0, "Mild Bearish": -1, "Strong Bearish": -2,
                          "Weakening": -0.5, "Strengthening": 0.5, "Bullish Reversal": 1.5,
-                         "Bearish Reversal": -1.5}  # Added new sentiments
+                         "Bearish Reversal": -1.5}
         sentiment_score = sentiment_map.get(current_summary.get('sentiment', 'Neutral'), 0)
 
         intraday_pcr_change = current_intraday_pcr - previous_intraday_pcr
@@ -1813,25 +2145,22 @@ class NseBseAnalyzer:
                                                          'change': round(change, 4),
                                                          'percentage_change': round(pct_change, 2)}
                 if sym not in self.TICKER_ONLY_SYMBOLS:
-                    # Original complex summary for non-ticker-only symbols (like SENSEX, INDIAVIX)
                     sentiment = "Mild Bearish" if change < 0 else "Mild Bullish" if change > 0 else "Neutral"
                     summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': round(change, 2),
                                'value': round(current_price, 2), 'pcr': round(pct_change, 2), 'sentiment': sentiment,
-                               'call_oi': 0, 'put_oi': 0, 'add_exit': "Live Price", 'pcr_change': 0, 'intraday_pcr': 0,
+                               'call_oi': 0, 'put_oi': 0, 'add_exit': "Live Price", 'intraday_pcr': 0,
                                'expiry': 'N/A'}
                     shared_data[sym]['summary'] = summary
                     shared_data[sym]['strikes'], shared_data[sym]['max_pain_chart_data'], shared_data[sym][
                         'ce_oi_chart_data'], shared_data[sym]['pe_oi_chart_data'], shared_data[sym][
                         'pcr_chart_data'] = [], [], [], [], []
-                else:  # Simplified summary for TICKER_ONLY_SYMBOLS
+                else:
                     sentiment = "Mild Bearish" if change < 0 else "Mild Bullish" if change > 0 else "Neutral"
                     summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': round(change, 2),
                                'value': round(current_price, 2), 'pcr': round(pct_change, 2), 'sentiment': sentiment,
-                               'call_oi': 0, 'put_oi': 0, 'add_exit': "Live Price", 'pcr_change': 0, 'intraday_pcr': 0,
+                               'call_oi': 0, 'put_oi': 0, 'add_exit': "Live Price", 'intraday_pcr': 0,
                                'expiry': 'N/A'}
-                    # Store this simplified summary
                     shared_data[sym]['summary'] = summary
-                    # Ensure chart data lists are initialized even if empty
                     shared_data[sym]['strikes'] = []
                     shared_data[sym]['max_pain_chart_data'] = []
                     shared_data[sym]['ce_oi_chart_data'] = []
@@ -1866,25 +2195,28 @@ class NseBseAnalyzer:
         return ""
 
     def _process_nse_data(self, sym: str):
+        global ai_bot_trades  # Access global variable
+        global ai_bot_trade_history  # Access global history
+        global last_ai_bot_run_time  # Access global variable
+
         try:
             url = self.url_indices + sym
-            # Try fetching data, if 403, refresh cookies and retry once
             for attempt in range(2):
                 response = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
                 if response.status_code == 403 and attempt == 0:
                     print(f"403 Forbidden for {sym}, refreshing cookies and retrying...")
                     self._set_nse_session_cookies()
-                    time.sleep(1)  # Small delay before retry
+                    time.sleep(1)
                 elif response.status_code == 200:
                     break
                 else:
-                    response.raise_for_status()  # Raise for other HTTP errors
+                    response.raise_for_status()
 
-            response.raise_for_status()  # Ensure success after retries
+            response.raise_for_status()
             data = response.json()
 
             expiry_dates = data['records']['expiryDates']
-            if not expiry_dates:  # If no expiry dates, it might be a holiday or data not available
+            if not expiry_dates:
                 print(f"No expiry dates found for {sym}. Skipping processing.")
                 return
 
@@ -1906,8 +2238,9 @@ class NseBseAnalyzer:
 
             df_ce = pd.DataFrame(ce_values)
             df_pe = pd.DataFrame(pe_values)
-            df = pd.merge(df_ce[['strikePrice', 'openInterest', 'changeinOpenInterest']],
-                          df_pe[['strikePrice', 'openInterest', 'changeinOpenInterest']], on='strikePrice', how='outer',
+            df = pd.merge(df_ce[['strikePrice', 'openInterest', 'changeinOpenInterest', 'lastPrice']],
+                          df_pe[['strikePrice', 'openInterest', 'changeinOpenInterest', 'lastPrice']],
+                          on='strikePrice', how='outer',
                           suffixes=('_call', '_put')).fillna(0)
 
             sp = self.get_atm_strike(df, underlying)
@@ -1952,20 +2285,15 @@ class NseBseAnalyzer:
             total_call_coi = int(df['changeinOpenInterest_call'].sum())
             total_put_coi = int(df['changeinOpenInterest_put'].sum())
             pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
-            pcr_change = round(pcr - self.previous_pcr.get(sym, pcr), 2) if self.previous_pcr.get(sym,
-                                                                                                  0.0) != 0.0 else 0.0
             intraday_pcr = round(total_put_coi / total_call_coi, 2) if total_call_coi != 0 else 0.0
             atm_index_in_strikes_data = next((j for j, s in enumerate(strikes_data) if s['is_atm']), 10)
             atm_call_coi = strikes_data[atm_index_in_strikes_data]['call_coi']
             atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
             diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
 
-            # --- MODIFICATION START ---
-            # Line 1: Call get_sentiment with intraday_pcr, symbol and history
             current_history_for_sym = todays_history.get(sym, [])
             sentiment = self.get_sentiment(pcr, intraday_pcr, total_call_coi, total_put_coi, sym,
                                            current_history_for_sym)
-            # --- MODIFICATION END ---
 
             add_exit_str = " | ".join(filter(None,
                                              [f"CE Add: {', '.join(sorted(ce_add_strikes))}" if ce_add_strikes else "",
@@ -1975,8 +2303,8 @@ class NseBseAnalyzer:
             summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': int(sp), 'value': int(round(underlying)),
                        'call_oi': round(atm_call_coi / 1000, 1), 'put_oi': round(atm_put_coi / 1000, 1), 'pcr': pcr,
                        'sentiment': sentiment, 'expiry': expiry, 'add_exit': add_exit_str,
-                       'pcr_change': pcr_change, 'intraday_pcr': intraday_pcr,
-                       'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi  # Added for history analysis
+                       'intraday_pcr': intraday_pcr,
+                       'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi
                        }
             pulse_summary = {'total_call_oi': total_call_oi, 'total_put_oi': total_put_oi,
                              'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi}
@@ -1993,53 +2321,87 @@ class NseBseAnalyzer:
                 shared_data[sym]['ce_oi_chart_data'] = final_ce_data
                 shared_data[sym]['pe_oi_chart_data'] = final_pe_data
                 shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data.get(sym, [])
-                shared_data[sym]['live_feed_summary'] = {'current_value': int(round(underlying)),
-                                                         'change': round(price_change, 2), 'percentage_change': round((
-                                                                                                                              price_change / initial_underlying_values.get(
-                                                                                                                          sym,
-                                                                                                                          underlying)) * 100 if initial_underlying_values.get(
-                        sym) else 0, 2)}
 
             print(f"{sym} LIVE DATA UPDATED | SP: {sp} | PCR: {pcr}")
             broadcast_live_update()
 
-            now = time.time()
-            if now - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
+            now_ts = time.time()
+            if now_ts - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
                 self.previous_pcr[sym] = pcr
                 with data_lock:
                     if sym not in todays_history: todays_history[sym] = []
                     todays_history[sym].insert(0, summary)
                     if sym not in self.YFINANCE_SYMBOLS:
                         if sym not in self.pcr_graph_data: self.pcr_graph_data[sym] = []
-                        self.pcr_graph_data[sym].append({"TIME": summary['time'], "PCR": summary['pcr']})
-                        if len(self.pcr_graph_data[sym]) > 180: self.pcr_graph_data[sym].pop(0)
+                        self.pcr_graph_data[sym].append(
+                            {"TIME": summary['time'], "PCR": summary['pcr'], "IntradayPCR": summary['intraday_pcr']})
+                        if len(self.pcr_graph_data[sym]) > 180: self.pcr_graph_data[sym].pop(
+                            0)
                         shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
                 broadcast_history_append(sym, summary)
-                last_history_update[sym] = now
+                last_history_update[sym] = now_ts
                 self._save_db(sym, summary)
 
-            if now - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
+            # NEW: Run DeepSeekBot analysis every AI_BOT_UPDATE_INTERVAL (e.g., 5 minutes)
+            # This applies to Nifty, Finnifty, Banknifty, and all F&O stocks
+            if sym in (["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list) and \
+                    (now_ts - last_ai_bot_run_time.get(sym, 0) >= AI_BOT_UPDATE_INTERVAL):
+                current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get("current_value",
+                                                                                                     15.0)
+
+                bot_recommendation = self.deepseek_bot.analyze_and_recommend(sym, todays_history[sym],
+                                                                             current_vix_value, df_ce, df_pe)
+                with data_lock:
+                    ai_bot_trades[sym] = bot_recommendation
+                print(
+                    f"DeepSeekBot recommendation for {sym}: {bot_recommendation['recommendation']} - {bot_recommendation['trade']}")
+                last_ai_bot_run_time[sym] = now_ts
+                broadcast_live_update()
+
+            if now_ts - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
                 self.send_alert(sym, summary)
-                last_alert[sym] = now
+                last_alert[sym] = now_ts
         except requests.exceptions.RequestException as e:
             print(f"{sym} processing error (RequestException): {e}")
-            # This will be caught by the outer try-except in fetch_and_process_symbol
         except Exception as e:
             import traceback
             print(f"{sym} processing error: {e}\n{traceback.format_exc()}")
 
     def process_and_emit_equity_data(self, symbol: str, sid: str):
+        global ai_bot_trades
+        global last_ai_bot_run_time
+
         print(f"Processing equity data for {symbol} for client {sid}")
         try:
-            if symbol in equity_data_cache and equity_data_cache[symbol].get('current'):
-                print(f"Using cached data for {symbol}")
-                equity_data = equity_data_cache[symbol]['current']
-            else:
-                print(f"No cache, fetching live data for {symbol}")
-                equity_data = self._process_equity_data(symbol)
+            equity_data = self._process_equity_data(symbol)
 
             if equity_data:
                 socketio.emit('equity_data_update', {'symbol': symbol, 'data': equity_data}, to=sid)
+
+                # NEW: Run DeepSeekBot analysis for this equity too
+                now_ts = time.time()
+                if symbol in fno_stocks_list and \
+                        (now_ts - last_ai_bot_run_time.get(symbol, 0) >= AI_BOT_UPDATE_INTERVAL):
+                    current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
+                        "current_value", 15.0)
+
+                    df_ce_bot = equity_data.get('raw_df_ce')
+                    df_pe_bot = equity_data.get('raw_df_pe')
+
+                    if df_ce_bot is not None and df_pe_bot is not None:
+                        bot_recommendation = self.deepseek_bot.analyze_and_recommend(symbol,
+                                                                                     todays_history.get(symbol, []),
+                                                                                     current_vix_value, df_ce_bot,
+                                                                                     df_pe_bot)
+                        with data_lock:
+                            ai_bot_trades[symbol] = bot_recommendation
+                        print(
+                            f"DeepSeekBot recommendation for {symbol}: {bot_recommendation['recommendation']} - {bot_recommendation['trade']}")
+                        last_ai_bot_run_time[symbol] = now_ts
+                        broadcast_live_update()
+                    else:
+                        print(f"Warning: Could not get df_ce/df_pe for bot for {symbol}.")
+
             else:
                 socketio.emit('equity_data_update', {'symbol': symbol, 'error': 'No data found.'}, to=sid)
         except Exception as e:
@@ -2050,19 +2412,18 @@ class NseBseAnalyzer:
     def _process_equity_data(self, sym: str) -> Optional[Dict]:
         try:
             url = self.url_equities + sym
-            # Try fetching data, if 403, refresh cookies and retry once
             for attempt in range(2):
                 response = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
                 if response.status_code == 403 and attempt == 0:
                     print(f"403 Forbidden for {sym} equity, refreshing cookies and retrying...")
                     self._set_nse_session_cookies()
-                    time.sleep(1)  # Small delay before retry
+                    time.sleep(1)
                 elif response.status_code == 200:
                     break
                 else:
-                    response.raise_for_status()  # Raise for other HTTP errors
+                    response.raise_for_status()
 
-            response.raise_for_status()  # Ensure success after retries <-- FIX: Changed from raise_status to raise_for_status
+            response.raise_for_status()
             data = response.json()
 
             if not data.get('records') or not data['records'].get('data'):
@@ -2090,8 +2451,9 @@ class NseBseAnalyzer:
 
             df_ce = pd.DataFrame(ce_values)
             df_pe = pd.DataFrame(pe_values)
-            df = pd.merge(df_ce[['strikePrice', 'openInterest', 'changeinOpenInterest']],
-                          df_pe[['strikePrice', 'openInterest', 'changeinOpenInterest']], on='strikePrice', how='outer',
+            df = pd.merge(df_ce[['strikePrice', 'openInterest', 'changeinOpenInterest', 'lastPrice']],
+                          df_pe[['strikePrice', 'openInterest', 'changeinOpenInterest', 'lastPrice']],
+                          on='strikePrice', how='outer',
                           suffixes=('_call', '_put')).fillna(0)
 
             sp = self.get_atm_strike(df, underlying)
@@ -2136,37 +2498,52 @@ class NseBseAnalyzer:
             atm_put_coi = strikes_data[atm_index_in_strikes_data]['put_coi']
             diff = round((atm_call_coi - atm_put_coi) / 1000, 1)
 
-            # --- MODIFICATION START ---
-            # Line 3: Call get_sentiment with intraday_pcr, symbol and history
             current_history_for_sym = todays_history.get(sym, [])
             sentiment = self.get_sentiment(pcr, intraday_pcr, total_call_coi, total_put_coi, sym,
                                            current_history_for_sym)
-            # --- MODIFICATION END ---
 
             summary = {'sp': int(sp), 'value': float(underlying), 'pcr': pcr, 'sentiment': sentiment,
                        'intraday_pcr': intraday_pcr,
-                       'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi  # Added for history analysis
+                       'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi
                        }
             pulse_summary = {'total_call_oi': total_call_oi, 'total_put_oi': total_put_oi,
                              'total_call_coi': total_call_coi, 'total_put_coi': total_put_coi}
 
-            return {'summary': summary, 'strikes': strikes_data, 'pulse_summary': pulse_summary}
+            equity_pcr_chart_data = [{"TIME": self._get_ist_time().strftime("%H:%M"), "PCR": pcr,
+                                      "IntradayPCR": intraday_pcr}]
+            equity_max_pain_df = self._calculate_max_pain(df_ce, df_pe)
+            equity_ce_dt_for_charts = df_ce.sort_values(['openInterest'], ascending=False)
+            equity_pe_dt_for_charts = df_pe.sort_values(['openInterest'], ascending=False)
+            equity_final_ce_data = equity_ce_dt_for_charts[['strikePrice', 'openInterest']].iloc[:10].to_dict(
+                orient='records')
+            equity_final_pe_data = equity_pe_dt_for_charts[['strikePrice', 'openInterest']].iloc[:10].to_dict(
+                orient='records')
+
+            return {
+                'summary': summary,
+                'strikes': strikes_data,
+                'pulse_summary': pulse_summary,
+                'pcr_chart_data': equity_pcr_chart_data,
+                'max_pain_chart_data': equity_max_pain_df.to_dict(orient='records'),
+                'ce_oi_chart_data': equity_final_ce_data,
+                'pe_oi_chart_data': equity_final_pe_data,
+                'raw_df_ce': df_ce,
+                'raw_df_pe': df_pe
+            }
         except requests.exceptions.RequestException as e:
             print(f"Error processing equity data for {sym} (RequestException): {e}")
             return None
         except Exception as e:
+            import traceback
             print(f"Error processing equity data for {sym}: {e}")
             return None
 
     def get_atm_strike(self, df: pd.DataFrame, underlying: float) -> Optional[int]:
         try:
             strikes = df['strikePrice'].astype(int).unique()
-            # Find the strike price closest to the underlying value
             if len(strikes) > 0:
                 closest_strike = min(strikes, key=lambda x: abs(x - underlying))
-                # Ensure the closest strike is within a reasonable range (e.g., +/- 10% of underlying)
-                # to avoid issues with very illiquid or mispriced option chains
-                if abs((closest_strike - underlying) / underlying) < 0.20:  # 20% threshold
+                if abs((closest_strike - underlying) / underlying) < 0.20:
                     return int(closest_strike)
                 else:
                     print(
@@ -2178,57 +2555,45 @@ class NseBseAnalyzer:
             print(f"Error getting ATM strike: {e}")
             return None
 
-    # --- MODIFICATION START ---
-    # Line 4: Updated get_sentiment signature and logic
     def get_sentiment(self, pcr: float, intraday_pcr: float, total_call_coi: int, total_put_coi: int, sym: str,
                       history: List[Dict[str, Any]]) -> str:
         """
-        Calculates sentiment based on PCR, Intraday PCR (PE OI Delta), and recent trends in OI.
+        Calculates sentiment based on PCR, Intraday PCR (PE OI Delta), and recent trends in OI,
+        following the explicit Prompt 11 conditions.
         """
-        # Define thresholds for PCR
         PCR_BULLISH_THRESHOLD = 1.2
         PCR_BEARISH_THRESHOLD = 0.8
-        PCR_STABLE_THRESHOLD = 0.05  # Max change for PCR to be considered "stable" over history
-        OI_CHANGE_THRESHOLD_FOR_TREND = 50000  # Minimum cumulative OI change to consider an "add" or "exit" significant
+        PCR_STABLE_THRESHOLD = 0.05
+        OI_CHANGE_THRESHOLD_FOR_TREND = 50000
 
-        # --- 1. Determine PE OI Delta direction based on intraday_pcr ---
-        # Using the sign of total_put_coi directly for PE OI Delta (more accurate to your table's implication)
         pe_oi_delta_positive = total_put_coi > 0
         pe_oi_delta_negative = total_put_coi < 0
 
-        # Using the sign of total_call_coi directly for CE OI Delta
         ce_oi_delta_positive = total_call_coi > 0
         ce_oi_delta_negative = total_call_coi < 0
 
-        # --- 2. Apply the Writer-Aware PCR logic (Strong Sentiments) ---
-        if pcr > PCR_BULLISH_THRESHOLD:  # PCR > 1.2
+        if pcr > PCR_BULLISH_THRESHOLD:
             if pe_oi_delta_positive:
-                return "Strong Bullish"  # Bullish – Put Writers in control
+                return "Strong Bullish"
             elif pe_oi_delta_negative:
-                return "Strong Bearish"  # Bearish – Put Buying fear
-        elif pcr < PCR_BEARISH_THRESHOLD:  # PCR < 0.8
+                return "Strong Bearish"
+        elif pcr < PCR_BEARISH_THRESHOLD:
             if pe_oi_delta_positive:
-                return "Strong Bearish"  # Bearish – Call Writers capping
+                return "Strong Bearish"
             elif pe_oi_delta_negative:
-                return "Strong Bullish"  # Bullish – Call Buying FOMO
+                return "Strong Bullish"
 
-        # --- 3. Analyze trends from history for "Weakening" / "Strengthening" / "Reversal" ---
-        TREND_LOOKBACK = 5  # Number of recent updates to analyze
-
-        # Ensure we have enough history to analyze trends
+        TREND_LOOKBACK = 5
         if len(history) >= TREND_LOOKBACK:
-            recent_history = history[:TREND_LOOKBACK]  # Get the most recent N updates
-
-            # Calculate PCR trend
-            first_pcr = recent_history[-1]['pcr']  # Oldest PCR in the lookback
-            last_pcr = recent_history[0]['pcr']  # Newest PCR in the lookback (current pcr)
-
+            recent_history = history[:TREND_LOOKBACK]
+            first_pcr = recent_history[-1]['pcr']
+            last_pcr = recent_history[0]['pcr']
             pcr_trend_change = last_pcr - first_pcr
+
             pcr_is_stable = abs(pcr_trend_change) < PCR_STABLE_THRESHOLD
             pcr_is_rising = pcr_trend_change > PCR_STABLE_THRESHOLD
             pcr_is_falling = pcr_trend_change < -PCR_STABLE_THRESHOLD
 
-            # Calculate cumulative OI changes over the lookback period
             cumulative_call_coi_history = sum(h.get('total_call_coi', 0) for h in recent_history)
             cumulative_put_coi_history = sum(h.get('total_put_coi', 0) for h in recent_history)
 
@@ -2237,48 +2602,32 @@ class NseBseAnalyzer:
             pe_oi_adding_trend = cumulative_put_coi_history > OI_CHANGE_THRESHOLD_FOR_TREND
             pe_oi_exiting_trend = cumulative_put_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND
 
-            # Apply trend-based rules
-            # Weakening: PCR stable/falling AND CE OI adding
             if (pcr_is_stable or pcr_is_falling) and ce_oi_adding_trend:
                 return "Weakening"
-
-            # Strengthening: PCR stable/rising AND PE OI adding
             if (pcr_is_stable or pcr_is_rising) and pe_oi_adding_trend:
                 return "Strengthening"
-
-            # Bullish Reversal: PCR falling AND PE OI exiting
             if pcr_is_falling and pe_oi_exiting_trend:
                 return "Bullish Reversal"
-
-            # Bearish Reversal: PCR rising AND CE OI exiting
             if pcr_is_rising and ce_oi_exiting_trend:
                 return "Bearish Reversal"
 
-        # --- 4. Apply intraday_pcr influence for Mild Sentiments (when pcr is between 0.8 and 1.2) ---
-        # This block only executes if no "Strong" or "Trend-based" sentiment was returned.
-        # It handles cases where pcr is in the middle range, using intraday_pcr for direction.
-
-        if pcr >= 1.0:  # Generally bullish or neutral PCR
-            if pe_oi_delta_positive:  # Intraday action is also bullish (put writers active)
+        if pcr >= 1.0:
+            if pe_oi_delta_positive:
                 return "Mild Bullish"
-            elif ce_oi_delta_positive:  # Intraday action is bearish (call writers active)
-                return "Mild Bearish"  # If CE OI adds when PCR is somewhat bullish, it's a bearish sign
-
-        elif pcr < 1.0:  # Generally bearish or neutral PCR
-            if ce_oi_delta_negative:  # Intraday action is bullish (call writers unwinding or call buyers active)
+            elif ce_oi_delta_positive:
+                return "Mild Bearish"
+        elif pcr < 1.0:
+            if ce_oi_delta_negative:
                 return "Mild Bullish"
-            elif pe_oi_delta_negative:  # Intraday action is bearish (put buyers active)
+            elif pe_oi_delta_negative:
                 return "Mild Bearish"
 
-        # --- 5. Fallback to general PCR-based sentiment if other specific conditions not met ---
-        if pcr >= 1.1:  # Changed from > 1.1 to >= 1.1 as discussed
+        if pcr >= 1.1:
             return "Mild Bullish"
         elif pcr < 0.9:
             return "Mild Bearish"
 
         return "Neutral"
-
-    # --- MODIFICATION END ---
 
     def send_alert(self, sym: str, row: Dict[str, Any]):
         try:
@@ -2309,9 +2658,9 @@ class NseBseAnalyzer:
         try:
             ts = datetime.datetime.now(pytz.utc).strftime("%Y-%m-%d %H:%M:%S")
             self.conn.execute(
-                "INSERT INTO history (timestamp, symbol, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, pcr_change, intraday_pcr) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO history (timestamp, symbol, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, intraday_pcr) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (ts, sym, row.get('sp', 0), row.get('value', 0), row.get('call_oi', 0), row.get('put_oi', 0),
-                 row.get('pcr', 0), row.get('sentiment', ''), row.get('add_exit', ''), row.get('pcr_change', 0.0),
+                 row.get('pcr', 0), row.get('sentiment', ''), row.get('add_exit', ''),
                  row.get('intraday_pcr', 0.0)))
             self.conn.execute(
                 "DELETE FROM history WHERE id NOT IN (SELECT id FROM history WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?) AND symbol = ?;",
