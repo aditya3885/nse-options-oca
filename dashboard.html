@@ -14,6 +14,8 @@
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <!-- ADDED: Moment.js for date formatting -->
     <script src="https://cdn.jsdelivr.net/npm/moment@2.29.1/moment.min.js"></script>
+    <!-- NEW: Moment-Timezone for explicit timezone formatting -->
+    <script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.5.43/builds/moment-timezone-with-data-2012-2022.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -117,11 +119,11 @@
         <div id="market-pulse-container" class="market-pulse-container"></div>
 
         <div class="grid">
-            <div class="card" id="NIFTY_summary"><h2>NIFTY</h2><p>SP: <span id="nifty-sp">-</span></p><p>Value: <span id="nifty-value">-</span></p><p>Call COI: <span id="nifty-call">-K</span></p><p>Put COI: <span id="nifty-put">-K</span></p><p>PCR: <span id="nifty-pcr">-</span></p><p>Sentiment: <span id="nifty-sentiment">-</span></p><p>OI Changes: <span id="nifty-add-exit">-</span></p></div>
-            <div class="card" id="FINNIFTY_summary"><h2>FINNIFTY</h2><p>SP: <span id="finnifty-sp">-</span></p><p>Value: <span id="finnifty-value">-</span></p><p>Call COI: <span id="finnifty-call">-K</span></p><p>Put COI: <span id="finnifty-put">-K</span></p><p>PCR: <span id="finnifty-pcr">-</span></p><p>Sentiment: <span id="finnifty-sentiment">-</span></p><p>OI Changes: <span id="finnifty-add-exit">-</span></p></div>
-            <div class="card" id="BANKNIFTY_summary"><h2>BANKNIFTY</h2><p>SP: <span id="banknifty-sp">-</span></p><p>Value: <span id="banknifty-value">-</span></p><p>Call COI: <span id="banknifty-call">-K</span></p><p>Put COI: <span id="banknifty-put">-K</span></p><p>PCR: <span id="banknifty-pcr">-</span></p><p>Sentiment: <span id="banknifty-sentiment">-</span></p><p>OI Changes: <span id="banknifty-add-exit">-</span></p></div>
-            <div class="card" id="SENSEX_summary"><h2>SENSEX</h2><p>Value: <span id="sensex-value">-</span></p><p>Change: <span id="sensex-change">-</span></p><p>Pct Change: <span id="sensex-pct">-%</span></p><p>Sentiment: <span id="sensex-sentiment">-</span></p></div>
-            <div class="card" id="INDIAVIX_summary"><h2>INDIAVIX</h2><p>Value: <span id="indiavix-value">-</span></p><p>Change: <span id="indiavix-change">-</span></p><p>Pct Change: <span id="indiavix-pct">-%</span></p><p>Sentiment: <span id="indiavix-sentiment">-</span></p></div>
+            <div class="card" id="NIFTY_summary"><h2>NIFTY</h2><p>SP: <span id="nifty-sp">-</span></p><p>Value: <span id="nifty-value">-</span></p><p>Call COI: <span id="nifty-call">-K</span></p><p>Put COI: <span id="nifty-put">-K</span></p><p>PCR: <span id="nifty-pcr">-</span></p><p>Sentiment: <span id="nifty-sentiment">-</span></p><p>ML Sentiment: <span id="nifty-ml-sentiment">-</span></p><p>OI Changes: <span id="nifty-add-exit">-</span></p></div>
+            <div class="card" id="FINNIFTY_summary"><h2>FINNIFTY</h2><p>SP: <span id="finnifty-sp">-</span></p><p>Value: <span id="finnifty-value">-</span></p><p>Call COI: <span id="finnifty-call">-K</span></p><p>Put COI: <span id="finnifty-put">-K</span></p><p>PCR: <span id="finnifty-pcr">-</span></p><p>Sentiment: <span id="finnifty-sentiment">-</span></p><p>ML Sentiment: <span id="finnifty-ml-sentiment">-</span></p><p>OI Changes: <span id="finnifty-add-exit">-</span></p></div>
+            <div class="card" id="BANKNIFTY_summary"><h2>BANKNIFTY</h2><p>SP: <span id="banknifty-sp">-</span></p><p>Value: <span id="banknifty-value">-</span></p><p>Call COI: <span id="banknifty-call">-K</span></p><p>Put COI: <span id="banknifty-put">-K</span></p><p>PCR: <span id="banknifty-pcr">-</span></p><p>Sentiment: <span id="banknifty-sentiment">-</span></p><p>ML Sentiment: <span id="banknifty-ml-sentiment">-</span></p><p>OI Changes: <span id="banknifty-add-exit">-</span></p></div>
+            <div class="card" id="SENSEX_summary"><h2>SENSEX</h2><p>Value: <span id="sensex-value">-</span></p><p>Change: <span id="sensex-change">-</span></p><p>Pct Change: <span id="sensex-pct">-%</span></p><p>Sentiment: <span id="sensex-sentiment">-</span></p><p>ML Sentiment: <span id="sensex-ml-sentiment">-</span></p></div>
+            <div class="card" id="INDIAVIX_summary"><h2>INDIAVIX</h2><p>Value: <span id="indiavix-value">-</span></p><p>Change: <span id="indiavix-change">-</span></p><p>Pct Change: <span id="indiavix-pct">-%</span></p><p>Sentiment: <span id="indiavix-sentiment">-</span></p><p>ML Sentiment: <span id="indiavix-ml-sentiment">-</span></p></div>
         </div>
 
         <div class="tabs">
@@ -134,13 +136,14 @@
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY_EQUITIES')" data-symbol="BHAVCOPY_EQUITIES">Bhavcopy (F&O)</button>
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY_INDICES')" data-symbol="BHAVCOPY_INDICES">Bhavcopy (Indices)</button>
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY_STRATEGIES')" data-symbol="BHAVCOPY_STRATEGIES">Bhavcopy Strategies</button>
-            <!-- Removed AI Bot Trades tab button as it's now on the main page -->
+            <!-- ADDED: News Tab -->
+            <button class="tablink" onclick="openTab(event, 'NEWS')" data-symbol="NEWS">News</button>
         </div>
 
         <div class="global-controls"><button class="clear-history-button" onclick="clearTodaysHistory(null)">Clear All Today's History</button></div>
 
         <div id="NIFTY_tab" class="tabcontent" style="display: block;">
-            <h3 style="margin-top: 20px;">NIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="nifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
+            <h3 style="margin-top: 20px;">NIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="nifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
             <h3>NIFTY Charts</h3>
             <div class="chart-grid">
                 <div class="chart-container"><canvas id="nifty-pcr-chart"></canvas></div>
@@ -151,10 +154,10 @@
             </div>
             <h3>NIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="nifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">NIFTY Historical Data</h3><div class="history-controls"><label for="nifty-history-date">Date:</label><input type="date" id="nifty-history-date" class="history-date-picker"><button onclick="loadHistoricalData('NIFTY')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('NIFTY')">Clear Today's NIFTY History</button></div>
-            <div class="table-container"><table id="nifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-container"><table id="nifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div id="FINNIFTY_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">FINNIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="finnifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
+            <h3 style="margin-top: 20px;">FINNIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="finnifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
             <h3>FINNIFTY Charts</h3>
             <div class="chart-grid">
                 <div class="chart-container"><canvas id="finnifty-pcr-chart"></canvas></div>
@@ -165,10 +168,10 @@
             </div>
             <h3>FINNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="finnifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">FINNIFTY Historical Data</h3><div class="history-controls"><label for="finnifty-history-date">Date:</label><input type="date" id="finnifty-history-date" class="history-date-picker"><button onclick="loadHistoricalData('FINNIFTY')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('FINNIFTY')">Clear Today's FINNIFTY History</button></div>
-            <div class="table-container"><table id="finnifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-container"><table id="finnifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div id="BANKNIFTY_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">BANKNIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="banknifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
+            <h3 style="margin-top: 20px;">BANKNIFTY Today's Updates (Newest First)</h3><div class="table-container"><table id="banknifty-todays-history-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
             <h3>BANKNIFTY Charts</h3>
             <div class="chart-grid">
                 <div class="chart-container"><canvas id="banknifty-pcr-chart"></canvas></div>
@@ -179,17 +182,17 @@
             </div>
             <h3>BANKNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="banknifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">BANKNIFTY Historical Data</h3><div class="history-controls"><label for="banknifty-history-date">Date:</label><input type="date" id="banknifty-history-date" class="history-date-picker"><button onclick="loadHistoricalData('BANKNIFTY')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('BANKNIFTY')">Clear Today's BANKNIFTY History</button></div>
-            <div class="table-container"><table id="banknifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-container"><table id="banknifty-historical-data-table"><thead><tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th style="width: 30%;">OI Changes</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div id="SENSEX_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">SENSEX Today's Updates (Newest First)</h3><div class="table-container"><table id="sensex-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th></tr></thead><tbody></tbody></table></div>
+            <h3 style="margin-top: 20px;">SENSEX Today's Updates (Newest First)</h3><div class="table-container"><table id="sensex-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">SENSEX Historical Data</h3><div class="history-controls"><label for="sensex-history-date">Date:</label><input type="date" id="sensex-history-date" class="history-date-picker"><button onclick="loadHistoricalData('SENSEX')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('SENSEX')">Clear Today's SENSEX History</button></div>
-            <div class="table-container"><table id="sensex-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-container"><table id="sensex-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div id="INDIAVIX_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (Newest First)</h3><div class="table-container"><table id="indiavix-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th></tr></thead><tbody></tbody></table></div>
+            <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (Newest First)</h3><div class="table-container"><table id="indiavix-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">INDIAVIX Historical Data</h3><div class="history-controls"><label for="indiavix-history-date">Date:</label><input type="date" id="indiavix-history-date" class="history-date-picker"><button onclick="loadHistoricalData('INDIAVIX')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('INDIAVIX')">Clear Today's INDIAVIX History</button></div>
-            <div class="table-container"><table id="indiavix-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment</th></tr></thead><tbody></tbody></table></div>
+            <div class="table-container"><table id="indiavix-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th></tr></thead><tbody></tbody></table></div>
         </div>
 
         <div id="EQUITY_tab" class="tabcontent">
@@ -208,7 +211,8 @@
                         <p>Value: <span id="equity-value">-</span></p>
                         <p>PCR: <span id="equity-pcr">-</span></p>
                         <p>Intraday PCR: <span id="equity-intraday-pcr">-</span></p>
-                        <p>Sentiment: <span id="equity-sentiment">-</span></p>
+                        <p>Sentiment (Rule-Based): <span id="equity-sentiment">-</span></p>
+                        <p>Sentiment (ML-Based): <span id="equity-ml-sentiment">-</span></p>
                     </div>
                 </div>
                 <!-- Equity Charts -->
@@ -248,7 +252,7 @@
                 <div class="table-container">
                     <table id="equity-historical-data-table">
                         <thead>
-                            <tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment</th><th style="width: 30%;">OI Changes</th></tr>
+                            <tr><th>Time</th><th>SP</th><th>Value</th><th>Call COI</th><th>Put COI</th><th>PCR</th><th>Intraday PCR</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th style="width: 30%;">OI Changes</th></tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -411,6 +415,30 @@
             </div>
         </div>
 
+        <!-- NEW: News Tab -->
+        <div id="NEWS_tab" class="tabcontent">
+            <h3 style="margin-top: 20px;">Latest Indian Market News Headlines</h3>
+            <p id="news-status" style="text-align: center; margin-bottom: 20px;">Fetching latest news...</p>
+            <div class="table-container">
+                <table id="news-table">
+                    <thead>
+                        <tr>
+                            <th>Time (IST)</th>
+                            <th>Headline</th>
+                            <th>Source</th>
+                            <th>Key Details</th>
+                            <th>Impact</th>
+                            <th>Link</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="6">No news available.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+
         <footer>@aditya_nse_bot | Updated: <span id="time">-</span> | Site Visits: <span id="visit-counter">-</span></footer>
     </div>
 
@@ -444,7 +472,7 @@
 
 
             // Only update charts for non-simple assets and non-bhavcopy tabs
-            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY" && !symbol.startsWith("BHAVCOPY")) {
+            if (!SIMPLE_ASSETS.includes(symbol) && shared_data_cache[symbol] && symbol !== "EQUITY" && !symbol.startsWith("BHAVCOPY") && symbol !== "NEWS") { // ADDED: symbol !== "NEWS"
                 updateCharts(symbol, shared_data_cache[symbol]);
             }
 
@@ -464,6 +492,11 @@
                     const colspan = tbody.previousElementSibling.querySelector('thead tr').children.length;
                     tbody.innerHTML = `<tr><td colspan="${colspan}">Initializing...</td></tr>`;
                 });
+            }
+            // NEW: If News tab is opened, ensure news is displayed
+            if (symbol === "NEWS") {
+                // The news is already in news_alerts global variable, just render it.
+                renderNewsTable(news_alerts);
             }
         }
 
@@ -618,14 +651,13 @@
         function addHistoryItemToTable(tbody, item, symbol, prepend = false) {
             const tr = document.createElement('tr');
             if (SIMPLE_ASSETS.includes(symbol)) {
-                tr.innerHTML = `<td>${item.time}</td><td>${formatNumber(item.value)}</td><td class="${getChangeColorClass(item.sp)}">${item.sp >= 0 ? '+' : ''}${formatNumber(item.sp)}</td><td class="${getChangeColorClass(item.pcr)}">${item.pcr >= 0 ? '+' : ''}${formatNumber(item.pcr)}%</td><td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td>`;
+                // For SIMPLE_ASSETS, the ml_sentiment is also just a text field
+                tr.innerHTML = `<td>${item.time}</td><td>${formatNumber(item.value)}</td><td class="${getChangeColorClass(item.sp)}">${item.sp >= 0 ? '+' : ''}${formatNumber(item.sp)}</td><td class="${getChangeColorClass(item.pcr)}">${item.pcr >= 0 ? '+' : ''}${formatNumber(item.pcr)}%</td><td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td><td class="${item.ml_sentiment && item.ml_sentiment.includes('Bullish') ? 'positive' : (item.ml_sentiment && item.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.ml_sentiment || 'N/A'}</td>`;
             } else {
-                // MODIFIED: Removed ΔPCR from innerHTML
+                // For OI_SYMBOLS and EQUITY, ml_sentiment is added
                 const intradayPcr = item.intraday_pcr || 0.0;
-                // pcr_change is now removed, so the `pcr_change_class` is no longer needed.
-                // The intradayPcrClass is used for intraday PCR column.
                 const intradayPcrClass = intradayPcr > 1.2 ? 'positive' : (intradayPcr < 0.8 && intradayPcr !== 0) ? 'negative' : 'neutral';
-                tr.innerHTML = `<td>${item.time}</td><td>${formatNumber(item.sp,0)}</td><td>${formatNumber(item.value)}</td><td>${formatNumber(item.call_oi,1)}K</td><td>${formatNumber(item.put_oi,1)}K</td><td>${formatNumber(item.pcr)}</td><td class="${intradayPcrClass}">${formatNumber(intradayPcr)}</td><td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td><td>${item.add_exit || '-'}</td>`;
+                tr.innerHTML = `<td>${item.time}</td><td>${formatNumber(item.sp,0)}</td><td>${formatNumber(item.value)}</td><td>${formatNumber(item.call_oi,1)}K</td><td>${formatNumber(item.put_oi,1)}K</td><td>${formatNumber(item.pcr)}</td><td class="${intradayPcrClass}">${formatNumber(intradayPcr)}</td><td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td><td class="${item.ml_sentiment && item.ml_sentiment.includes('Bullish') ? 'positive' : (item.ml_sentiment && item.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.ml_sentiment || 'N/A'}</td><td>${item.add_exit || '-'}</td>`;
             }
             if (prepend) tbody.prepend(tr); else tbody.appendChild(tr);
         }
@@ -648,8 +680,10 @@
             const selectedDate = dateInput.value;
             if (!selectedDate) { alert("Please select a date."); return; }
 
-            // MODIFIED: Colspan adjusted from 10 to 9 (removed ΔPCR)
-            const colspan = SIMPLE_ASSETS.includes(symbol) ? 5 : 9;
+            // MODIFIED: Colspan adjusted for ml_sentiment
+            // SIMPLE_ASSETS have 6 columns now (Time, Value, Change, Pct Change, Sentiment, ML Sentiment)
+            // Other assets (Nifty, Banknifty, Finnifty, Equity) have 10 columns (Time, SP, Value, Call COI, Put COI, PCR, Intraday PCR, Sentiment, ML Sentiment, OI Changes)
+            const colspan = SIMPLE_ASSETS.includes(symbol) ? 6 : 10;
             historicalTbody.innerHTML = `<tr><td colspan="${colspan}">Loading...</td></tr>`;
             try {
                 const response = await fetch(`/history/${effectiveSymbol}/${selectedDate}`);
@@ -1080,6 +1114,39 @@
             });
         }
 
+        // NEW: Function to render news alerts table
+        let news_alerts = []; // Local cache for news alerts
+
+        function renderNewsTable(newsData) {
+            const newsTbody = document.querySelector('#news-table tbody');
+            newsTbody.innerHTML = '';
+            if (!newsData || newsData.length === 0) {
+                newsTbody.innerHTML = `<tr><td colspan="6">No news available.</td></tr>`; // Updated colspan
+                document.getElementById('news-status').textContent = 'No news available.';
+                document.getElementById('news-status').style.color = '';
+                return;
+            }
+
+            newsData.forEach(newsItem => {
+                const tr = document.createElement('tr');
+                // MODIFIED: Use moment.tz to format news timestamp in IST
+                const formattedTime = moment.tz(newsItem.timestamp, 'Asia/Kolkata').format('HH:mm'); // Format timestamp in IST
+                const impactClass = newsItem.Impact && newsItem.Impact.includes('Bullish') ? 'positive' : (newsItem.Impact && newsItem.Impact.includes('Bearish') ? 'negative' : 'neutral');
+                tr.innerHTML = `
+                    <td>${formattedTime}</td>
+                    <td>${newsItem.Headline}</td>
+                    <td>${newsItem.Source}</td>
+                    <td>${newsItem['Key Details'] || 'N/A'}</td>
+                    <td class="${impactClass}">${newsItem.Impact || 'N/A'}</td>
+                    <td><a href="${newsItem.URL}" target="_blank">Link</a></td>
+                `;
+                newsTbody.appendChild(tr);
+            });
+            document.getElementById('news-status').textContent = 'Latest news fetched.';
+            document.getElementById('news-status').style.color = '#4CAF50';
+        }
+
+        // --- SocketIO Listeners ---
 
         socket.on('initial_todays_history', (data) => {
             console.log("Received initial_todays_history:", data); // Debugging
@@ -1216,6 +1283,13 @@
                                  sentimentEl.classList.remove('positive', 'negative', 'neutral');
                                  sentimentEl.classList.add(liveData.summary.sentiment.includes('Bullish') ? 'positive' : (liveData.summary.sentiment.includes('Bearish') ? 'negative' : 'neutral'));
                              }
+                             // NEW: Update ML Sentiment
+                             if(document.getElementById(`${lower}-ml-sentiment`)) {
+                                const mlSentimentEl = document.getElementById(`${lower}-ml-sentiment`);
+                                mlSentimentEl.textContent = liveData.summary.ml_sentiment;
+                                mlSentimentEl.classList.remove('positive', 'negative', 'neutral');
+                                mlSentimentEl.classList.add(liveData.summary.ml_sentiment && liveData.summary.ml_sentiment.includes('Bullish') ? 'positive' : (liveData.summary.ml_sentiment && liveData.summary.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral'));
+                             }
                              if(document.getElementById(`${lower}-add-exit`)) document.getElementById(`${lower}-add-exit`).textContent = liveData.summary.add_exit;
                              if(summaryCard.querySelector(`#${lower}-change`)) {
                                  const changeEl = summaryCard.querySelector(`#${lower}-change`);
@@ -1231,7 +1305,6 @@
                              }
                         }
                     }
-
                     if (OI_SYMBOLS.includes(sym) && liveData.strikes) {
                         const tbody = document.querySelector(`#${lower}-table tbody`);
                         if(tbody) {
@@ -1277,7 +1350,7 @@
                     const pnlClass = getPnLClass(trade.pnl);
 
                     tr.innerHTML = `
-                        <td>${trade.timestamp}</td>
+                        <td>${moment.tz(trade.timestamp, 'Asia/Kolkata').format('HH:mm:ss')}</td> <!-- FIX: Use moment.tz for IST -->
                         <td>${trade.symbol}</td>
                         <td class="${trade.status === "Entry" ? "positive" : (trade.status === "Exit" ? "negative" : "neutral")}">${trade.status}</td>
                         <td class="${pnlClass}">${trade.pnl !== 0.0 ? formatNumber(trade.pnl) : '-'}</td>
@@ -1295,6 +1368,7 @@
                         latestRationale[trade.symbol] = trade.rationale;
                     }
                 });
+
 
                 // Display latest rationales
                 let combinedRationaleText = '';
@@ -1364,6 +1438,12 @@
             equitySentimentEl.textContent = summary.sentiment;
             equitySentimentEl.classList.remove('positive', 'negative', 'neutral');
             equitySentimentEl.classList.add(summary.sentiment.includes('Bullish') ? 'positive' : (summary.sentiment.includes('Bearish') ? 'negative' : 'neutral'));
+            // NEW: Update ML Sentiment for Equity
+            const equityMlSentimentEl = document.getElementById('equity-ml-sentiment');
+            equityMlSentimentEl.textContent = summary.ml_sentiment;
+            equityMlSentimentEl.classList.remove('positive', 'negative', 'neutral');
+            equityMlSentimentEl.classList.add(summary.ml_sentiment && summary.ml_sentiment.includes('Bullish') ? 'positive' : (summary.ml_sentiment && summary.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral'));
+
 
             // Update Option Chain Table
             const tableBody = document.querySelector('#equity-table tbody');
@@ -1387,6 +1467,18 @@
             // NEW: Render Charts for Equity
             // The equityData object now contains all necessary chart data from the backend
             updateCharts(symbol, equityData);
+        });
+
+        // NEW: SocketIO Listener for News Updates
+        socket.on('news_update', (data) => {
+            console.log("Received news_update:", data); // Debugging
+            if (data.news) {
+                news_alerts = data.news; // Update local cache
+                const newsTabContent = document.getElementById('NEWS_tab');
+                if (newsTabContent && newsTabContent.style.display === 'block') {
+                    renderNewsTable(news_alerts); // Only render if news tab is active
+                }
+            }
         });
 
         document.addEventListener('DOMContentLoaded', () => {
