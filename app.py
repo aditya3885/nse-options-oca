@@ -40,6 +40,7 @@ EQUITY_FETCH_INTERVAL = 300  # 5 minutes
 AI_BOT_UPDATE_INTERVAL = 300  # 5 minutes for AI Bot analysis
 AI_BOT_TRADING_START_TIME = datetime.time(9, 15)
 AI_BOT_TRADING_END_TIME = datetime.time(15, 15)  # Bot active until 3:15 PM IST
+AI_BOT_HISTORY_DAYS = 2  # Keep AI Bot trade history for the last 2 days
 
 NSE_FETCH_START_TIME = datetime.time(9, 15)
 NSE_FETCH_END_TIME = datetime.time(15, 31)  # NSE data fetch active until 3:31 PM IST
@@ -174,6 +175,8 @@ def handle_connect():
                         'ai_bot_trade_history': ai_bot_trade_history},
              to=request.sid)
         emit('initial_todays_history', {'history': todays_history}, to=request.sid)
+        # Emit last known top movers on connect
+        analyzer.rank_and_emit_movers()
 
 
 @socketio.on('fetch_equity_data')
@@ -366,7 +369,7 @@ class DeepSeekBot:
 
                 final_exit_rec = {
                     "recommendation": "EXIT", "rationale": "Market closed, exiting active trade.",
-                    "timestamp": now.strftime("%H:%M:%S"),
+                    "timestamp": now.isoformat(),  # Changed to isoformat
                     "trade": "Exit " + self.active_trades[symbol].get('trade', 'previous trade'),
                     "strikes": self.active_trades[symbol].get('strikes', '-'),
                     "type": "Exit", "risk_pct": "-", "exit_rule": "Market Close",
@@ -380,14 +383,16 @@ class DeepSeekBot:
                 return final_exit_rec
             else:
                 return {"recommendation": "Neutral", "rationale": "Outside trading hours.",
-                        "timestamp": now.strftime("%H:%M:%S"), "trade": "-", "strikes": "-", "type": "-",
+                        "timestamp": now.isoformat(),  # Changed to isoformat
+                        "trade": "-", "strikes": "-", "type": "-",
                         "risk_pct": "-",
                         "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Trade",
                         "pnl": 0.0, "action_price": 0.0}
 
         if not history:
             return {"recommendation": "Neutral", "rationale": "No history data available.",
-                    "timestamp": now.strftime("%H:%M:%S"), "trade": "-", "strikes": "-", "type": "-", "risk_pct": "-",
+                    "timestamp": now.isoformat(),  # Changed to isoformat
+                    "trade": "-", "strikes": "-", "type": "-", "risk_pct": "-",
                     "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Data", "pnl": 0.0,
                     "action_price": 0.0}
 
@@ -502,7 +507,7 @@ class DeepSeekBot:
                 self.active_trades.pop(symbol, None)
 
                 final_recommendation = {"recommendation": recommendation, "rationale": exit_reason,
-                                        "timestamp": now.strftime("%H:%M:%S"),
+                                        "timestamp": now.isoformat(),  # Changed to isoformat
                                         "trade": trade_summary, "strikes": strikes_selected, "type": "Exit",
                                         "risk_pct": "-",
                                         "exit_rule": "Triggered exit logic", "spot": spot, "pcr": pcr,
@@ -528,7 +533,7 @@ class DeepSeekBot:
             hold_recommendation = {
                 "recommendation": "HOLD",
                 "rationale": f"Holding active {active_trade_info['trade']} trade. Current P/L: {pnl:.2f}.",
-                "timestamp": now.strftime("%H:%M:%S"),
+                "timestamp": now.isoformat(),  # Changed to isoformat
                 "trade": active_trade_info['trade'],
                 "strikes": active_trade_info['strikes'],
                 "type": active_trade_info['type'],
@@ -583,12 +588,14 @@ class DeepSeekBot:
             status = "Entry"
 
             final_recommendation = {
-                "recommendation": recommendation, "rationale": rationale, "timestamp": now.strftime("%H:%M:%S"),
+                "recommendation": recommendation, "rationale": rationale, "timestamp": now.isoformat(),
+                # Changed to isoformat
                 "trade": trade_summary, "strikes": strikes_selected, "type": trade_type, "risk_pct": risk_pct_display,
                 "exit_rule": exit_rule_display,
                 "spot": spot, "pcr": pcr, "intraday_pcr": intraday_pcr, "status": status, "pnl": 0.0,
                 "action_price": round(action_price, 2),
-                "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe
+                "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe,
+                "otm_ce_strike": otm_ce_strike, "otm_pe_strike": otm_pe_strike  # Store these for exit logic
             }
             if recommendation != "Neutral":
                 self.active_trades[symbol] = final_recommendation
@@ -620,13 +627,15 @@ class DeepSeekBot:
                     exit_rule_display = "Max Pain/PCR Divergence exit."
                     status = "Entry"
                     final_recommendation = {
-                        "recommendation": recommendation, "rationale": rationale, "timestamp": now.strftime("%H:%M:%S"),
+                        "recommendation": recommendation, "rationale": rationale, "timestamp": now.isoformat(),
+                        # Changed to isoformat
                         "trade": trade_summary, "strikes": strikes_selected, "type": trade_type,
                         "risk_pct": risk_pct_display, "exit_rule": exit_rule_display,
                         "spot": spot, "pcr": pcr, "intraday_pcr": intraday_pcr, "status": status, "pnl": 0.0,
                         "action_price": round(action_price, 2),
                         "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce,
-                        "entry_premium_pe": premium_pe
+                        "entry_premium_pe": premium_pe,
+                        "otm_ce_strike": otm_ce_strike, "otm_pe_strike": otm_pe_strike  # Store these for exit logic
                     }
                     self.active_trades[symbol] = final_recommendation
                     ai_bot_trade_history.append(final_recommendation)
@@ -688,7 +697,7 @@ class DeepSeekBot:
             final_recommendation = {
                 "recommendation": recommendation,
                 "rationale": rationale,
-                "timestamp": now.strftime("%H:%M:%S"),
+                "timestamp": now.isoformat(),  # Changed to isoformat
                 "trade": trade_summary,
                 "strikes": strikes_selected,
                 "type": trade_type,
@@ -700,7 +709,8 @@ class DeepSeekBot:
                 "status": status,
                 "pnl": 0.0,
                 "action_price": round(action_price, 2),
-                "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe
+                "entry_spot": spot, "entry_pcr": pcr, "entry_premium_ce": premium_ce, "entry_premium_pe": premium_pe,
+                "otm_ce_strike": otm_ce_strike, "otm_pe_strike": otm_pe_strike  # Store these for exit logic
             }
             if recommendation != "Neutral":
                 self.active_trades[symbol] = final_recommendation
@@ -709,7 +719,8 @@ class DeepSeekBot:
 
         # This part should be unreachable if the logic above is sound, but as a final fallback
         return {"recommendation": "Neutral", "rationale": "No new trade or active trade status.",
-                "timestamp": now.strftime("%H:%M:%S"), "trade": "-", "strikes": "-", "type": "-", "risk_pct": "-",
+                "timestamp": now.isoformat(),  # Changed to isoformat
+                "trade": "-", "strikes": "-", "type": "-", "risk_pct": "-",
                 "exit_rule": "-", "spot": spot, "pcr": pcr, "intraday_pcr": intraday_pcr, "status": "No Trade",
                 "pnl": 0.0, "action_price": 0.0}
 
@@ -1020,6 +1031,10 @@ class NseBseAnalyzer:
             ist_now = self._get_ist_time()
             utc_start_str = ist_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(pytz.utc).strftime(
                 '%Y-%m-%d %H:%M:%S')
+            all_symbols_to_load = AUTO_SYMBOLS + fno_stocks_list
+            for s in all_symbols_to_load:
+                if s not in todays_history: todays_history[s] = []  # Ensure dict entry exists for all potential symbols
+
             if sym:
                 cur.execute("DELETE FROM history WHERE symbol = ? AND timestamp >= ?", (sym, utc_start_str))
                 if sym in todays_history: todays_history[sym] = []
@@ -1051,18 +1066,19 @@ class NseBseAnalyzer:
                                 "current_value", 15.0)
                             # We need some dummy df_ce/df_pe to call analyze_and_recommend for market close exit logic
                             # This is a bit of a hack, but necessary if no real data is available.
+                            active_trade_info = self.deepseek_bot.active_trades[sym]
                             dummy_df_ce = pd.DataFrame(
-                                [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_ce_strike', 0),
-                                  'openInterest': 0, 'lastPrice': 0}])
+                                [{'strikePrice': active_trade_info.get('otm_ce_strike', 0), 'openInterest': 0,
+                                  'lastPrice': active_trade_info.get('entry_premium_ce', 0)}])
                             dummy_df_pe = pd.DataFrame(
-                                [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_pe_strike', 0),
-                                  'openInterest': 0, 'lastPrice': 0}])
+                                [{'strikePrice': active_trade_info.get('otm_pe_strike', 0), 'openInterest': 0,
+                                  'lastPrice': active_trade_info.get('entry_premium_pe', 0)}])
                             self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
                                                                     dummy_df_ce, dummy_df_pe)
                             broadcast_live_update()  # Broadcast the exit
                         print(
-                            f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}).")
-                        continue
+                            f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
+                        continue  # Skip to next symbol, do not clear previous data
                 try:
                     self.fetch_and_process_symbol(sym)
                 except Exception as e:
@@ -1097,19 +1113,21 @@ class NseBseAnalyzer:
                 print(f"Equity fetch cycle finished. Sleeping for {EQUITY_FETCH_INTERVAL} seconds.")
                 time.sleep(EQUITY_FETCH_INTERVAL)
             else:
-                print(f"Market is closed. Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}")
+                print(
+                    f"Market is closed. Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}. Retaining last data.")
                 # NEW: Clear active bot trades for equities when market closes
                 global ai_bot_trades, ai_bot_trade_history
                 for sym in fno_stocks_list:
                     if sym in self.deepseek_bot.active_trades:
                         current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
                             "current_value", 15.0)
+                        active_trade_info = self.deepseek_bot.active_trades[sym]
                         dummy_df_ce = pd.DataFrame(
-                            [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_ce_strike', 0),
-                              'openInterest': 0, 'lastPrice': 0}])
+                            [{'strikePrice': active_trade_info.get('otm_ce_strike', 0), 'openInterest': 0,
+                              'lastPrice': active_trade_info.get('entry_premium_ce', 0)}])
                         dummy_df_pe = pd.DataFrame(
-                            [{'strikePrice': self.deepseek_bot.active_trades[sym].get('otm_pe_strike', 0),
-                              'openInterest': 0, 'lastPrice': 0}])
+                            [{'strikePrice': active_trade_info.get('otm_pe_strike', 0), 'openInterest': 0,
+                              'lastPrice': active_trade_info.get('entry_premium_pe', 0)}])
                         self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
                                                                 dummy_df_ce, dummy_df_pe)
                         broadcast_live_update()
@@ -2071,15 +2089,16 @@ class NseBseAnalyzer:
             ORDER BY date DESC
             LIMIT ?
         """
+        # We need to fetch num_days_back records to get the Nth previous day
         cur.execute(query, (current_date.strftime('%Y-%m-%d'), num_days_back))
         rows = cur.fetchall()
 
         if len(rows) < num_days_back:
-            print(
-                f"DEBUG: _get_previous_trading_day for {current_date} (back {num_days_back}) - Only found {len(rows)} previous trading days.")
+            # print(f"DEBUG: _get_previous_trading_day for {current_date} (back {num_days_back}) - Only found {len(rows)} previous trading days.")
             return None
 
-        return rows[-1][0]
+        # The Nth previous day is the last one in the limited sorted list
+        return rows[num_days_back - 1][0]
 
     def send_telegram_message(self, message):
         if not SEND_TEXT_UPDATES or TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
@@ -2135,7 +2154,13 @@ class NseBseAnalyzer:
 
     def rank_and_emit_movers(self):
         global previous_improving_list, previous_worsening_list
-        if not equity_data_cache: return
+        if not equity_data_cache:
+            # Emit an empty state or "Waiting for data..." if no equity data has been processed yet
+            socketio.emit('top_movers_update', {
+                'strongest': [], 'weakest': [], 'improving': [], 'worsening': [],
+                'status': "Waiting for market data..."
+            })
+            return
 
         strength_scores = []
         reversal_scores = []
@@ -2143,7 +2168,7 @@ class NseBseAnalyzer:
         for symbol, data_points in equity_data_cache.items():
             current_data = data_points.get('current')
             previous_data = data_points.get('previous')
-            if not current_data: continue
+            if not current_data: continue  # Skip if no current data
 
             strength_score = self.calculate_strength_score(current_data)
             strength_scores.append(
@@ -2160,8 +2185,9 @@ class NseBseAnalyzer:
 
         top_strongest = strength_scores[:10]
         top_weakest = strength_scores[-10:][::-1]
-        top_improving = reversal_scores[:10]
-        top_worsening = sorted(reversal_scores, key=lambda x: x['score'])[:10]
+        top_improving = sorted([s for s in reversal_scores if s['score'] > 0], key=lambda x: x['score'], reverse=True)[
+            :10]
+        top_worsening = sorted([s for s in reversal_scores if s['score'] < 0], key=lambda x: x['score'])[:10]
 
         socketio.emit('top_movers_update', {
             'strongest': top_strongest,
@@ -2243,17 +2269,17 @@ class NseBseAnalyzer:
             print(f"{sym} YFINANCE DATA UPDATED | Value: {current_price:.2f}")
             broadcast_live_update()
 
-            now = time.time()
-            if now - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
+            now_ts_float = time.time()
+            if now_ts_float - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
                 with data_lock:
                     if sym not in todays_history: todays_history[sym] = []
                     todays_history[sym].insert(0, summary)
                 broadcast_history_append(sym, summary)
-                last_history_update[sym] = now
+                last_history_update[sym] = now_ts_float
                 self._save_db(sym, summary)
-            if now - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
+            if now_ts_float - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
                 self.send_alert(sym, summary)
-                last_alert[sym] = now
+                last_alert[sym] = now_ts_float
         except Exception as e:
             print(f"{sym} yfinance processing error: {e}")
 
@@ -2295,8 +2321,8 @@ class NseBseAnalyzer:
                                                                 dummy_df_ce, dummy_df_pe)
                         broadcast_live_update()
                     print(
-                        f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}).")
-                    return
+                        f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
+                    return  # Skip processing and return, leaving shared_data as is
 
             url = self.url_indices + sym
             for attempt in range(2):
@@ -2423,8 +2449,8 @@ class NseBseAnalyzer:
             print(f"{sym} LIVE DATA UPDATED | SP: {sp} | PCR: {pcr}")
             broadcast_live_update()
 
-            now_ts = time.time()
-            if now_ts - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
+            now_ts_float = time.time()
+            if now_ts_float - last_history_update.get(sym, 0) >= UPDATE_INTERVAL:
                 self.previous_pcr[sym] = pcr
                 with data_lock:
                     if sym not in todays_history: todays_history[sym] = []
@@ -2437,12 +2463,12 @@ class NseBseAnalyzer:
                             0)
                         shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data[sym]
                 broadcast_history_append(sym, summary)
-                last_history_update[sym] = now_ts
+                last_history_update[sym] = now_ts_float
                 self._save_db(sym, summary)
 
             # NEW: Run DeepSeekBot analysis
             if sym in (["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list) and \
-                    (now_ts - last_ai_bot_run_time.get(sym, 0) >= AI_BOT_UPDATE_INTERVAL):
+                    (now_ts_float - last_ai_bot_run_time.get(sym, 0) >= AI_BOT_UPDATE_INTERVAL):
                 current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get("current_value",
                                                                                                      15.0)
 
@@ -2451,25 +2477,22 @@ class NseBseAnalyzer:
                 with data_lock:
                     ai_bot_trades[sym] = bot_recommendation
                     # Clean up old history entries
-                    two_days_ago = now_ist - datetime.timedelta(days=AI_BOT_HISTORY_DAYS)
+                    now_dt = self._get_ist_time()
+                    two_days_ago_dt = now_dt - datetime.timedelta(days=AI_BOT_HISTORY_DAYS)
+                    # Filter history to keep entries from 'two_days_ago_dt' onwards
                     ai_bot_trade_history[:] = [
                         entry for entry in ai_bot_trade_history
-                        if datetime.datetime.strptime(entry["timestamp"], "%H:%M:%S").time() > two_days_ago.time()
-                        # This date logic is slightly flawed for cross-day, a full datetime object would be better for comparison
-                        # For now, it will only keep "today's" entries effectively.
-                        # To properly keep 2 days, the timestamp in entry needs to contain date too.
-                        # Let's use `now.isoformat()` for timestamp in bot recommendations for robust comparison.
-                        # For now, this will keep only current day's data as we only store time in %H:%M:%S
+                        if datetime.datetime.fromisoformat(entry["timestamp"]).date() >= two_days_ago_dt.date()
                     ]
 
                 print(
                     f"DeepSeekBot recommendation for {sym}: {bot_recommendation['recommendation']} - {bot_recommendation['trade']}")
-                last_ai_bot_run_time[sym] = now_ts
+                last_ai_bot_run_time[sym] = now_ts_float
                 broadcast_live_update()
 
-            if now_ts - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
+            if now_ts_float - last_alert.get(sym, 0) >= UPDATE_INTERVAL:
                 self.send_alert(sym, summary)
-                last_alert[sym] = now_ts
+                last_alert[sym] = now_ts_float
         except requests.exceptions.RequestException as e:
             print(f"{sym} processing error (RequestException): {e}")
         except Exception as e:
@@ -2501,8 +2524,15 @@ class NseBseAnalyzer:
                                                             dummy_df_ce, dummy_df_pe)
                     broadcast_live_update()
                 print(
-                    f"Skipping NSE equity data fetch for {symbol} outside of market hours ({current_time_only.strftime('%H:%M')}).")
-                socketio.emit('equity_data_update', {'symbol': symbol, 'error': 'Outside market hours.'}, to=sid)
+                    f"Skipping NSE equity data fetch for {symbol} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
+                # Emit the last known equity data for this symbol if available, otherwise an error.
+                if symbol in equity_data_cache:
+                    socketio.emit('equity_data_update',
+                                  {'symbol': symbol, 'data': equity_data_cache[symbol]['current']}, to=sid)
+                else:
+                    socketio.emit('equity_data_update',
+                                  {'symbol': symbol, 'error': 'Outside market hours, no current data available.'},
+                                  to=sid)
                 return
 
             equity_data = self._process_equity_data(symbol)
@@ -2510,9 +2540,9 @@ class NseBseAnalyzer:
             if equity_data:
                 socketio.emit('equity_data_update', {'symbol': symbol, 'data': equity_data}, to=sid)
 
-                now_ts = time.time()
+                now_ts_float = time.time()
                 if symbol in fno_stocks_list and \
-                        (now_ts - last_ai_bot_run_time.get(symbol, 0) >= AI_BOT_UPDATE_INTERVAL):
+                        (now_ts_float - last_ai_bot_run_time.get(symbol, 0) >= AI_BOT_UPDATE_INTERVAL):
                     current_vix_value = shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
                         "current_value", 15.0)
 
@@ -2527,17 +2557,16 @@ class NseBseAnalyzer:
                         with data_lock:
                             ai_bot_trades[symbol] = bot_recommendation
                             # Clean up old history entries
-                            two_days_ago = now_ist - datetime.timedelta(days=AI_BOT_HISTORY_DAYS)
-                            # FIX: Use full datetime objects for comparison
+                            now_dt = self._get_ist_time()
+                            two_days_ago_dt = now_dt - datetime.timedelta(days=AI_BOT_HISTORY_DAYS)
                             ai_bot_trade_history[:] = [
                                 entry for entry in ai_bot_trade_history
-                                if
-                                datetime.datetime.strptime(entry["timestamp"], "%H:%M:%S").time() > two_days_ago.time()
+                                if datetime.datetime.fromisoformat(entry["timestamp"]).date() >= two_days_ago_dt.date()
                             ]
 
                         print(
                             f"DeepSeekBot recommendation for {symbol}: {bot_recommendation['recommendation']} - {bot_recommendation['trade']}")
-                        last_ai_bot_run_time[symbol] = now_ts
+                        last_ai_bot_run_time[symbol] = now_ts_float
                         broadcast_live_update()
                     else:
                         print(f"Warning: Could not get df_ce/df_pe for bot for {symbol}.")
@@ -2578,10 +2607,12 @@ class NseBseAnalyzer:
 
             underlying = data['records']['underlyingValue']
 
-            prev_price = initial_underlying_values.get(sym, underlying)
-            price_change = underlying - prev_price
-            if initial_underlying_values.get(sym) is None:
+            prev_price = initial_underlying_values.get(sym)
+            if prev_price is None:
+                price_change = 0
                 initial_underlying_values[sym] = float(underlying)
+            else:
+                price_change = underlying - prev_price
 
             ce_values = [d['CE'] for d in data['records']['data'] if 'CE' in d and d['expiryDate'] == expiry]
             pe_values = [d['PE'] for d in data['records']['data'] if 'PE' in d and d['expiryDate'] == expiry]
@@ -2683,6 +2714,9 @@ class NseBseAnalyzer:
             strikes = df['strikePrice'].astype(int).unique()
             if len(strikes) > 0:
                 closest_strike = min(strikes, key=lambda x: abs(x - underlying))
+                # Consider a wider range for equities or if underlying can fluctuate significantly
+                # For NIFTY/BANKNIFTY, 20% might be too wide, but for individual stocks it could be reasonable.
+                # Adjust this threshold if you find it's too permissive or restrictive.
                 if abs((closest_strike - underlying) / underlying) < 0.20:
                     return int(closest_strike)
                 else:
@@ -2726,30 +2760,32 @@ class NseBseAnalyzer:
         TREND_LOOKBACK = 5
         if len(history) >= TREND_LOOKBACK:
             recent_history = history[:TREND_LOOKBACK]
-            first_pcr = recent_history[-1]['pcr']
-            last_pcr = recent_history[0]['pcr']
-            pcr_trend_change = last_pcr - first_pcr
+            # Ensure history is not empty and has relevant data
+            if recent_history and 'pcr' in recent_history[-1] and 'pcr' in recent_history[0]:
+                first_pcr = recent_history[-1]['pcr']
+                last_pcr = recent_history[0]['pcr']
+                pcr_trend_change = last_pcr - first_pcr
 
-            pcr_is_stable = abs(pcr_trend_change) < PCR_STABLE_THRESHOLD
-            pcr_is_rising = pcr_trend_change > PCR_STABLE_THRESHOLD
-            pcr_is_falling = pcr_trend_change < -PCR_STABLE_THRESHOLD
+                pcr_is_stable = abs(pcr_trend_change) < PCR_STABLE_THRESHOLD
+                pcr_is_rising = pcr_trend_change > PCR_STABLE_THRESHOLD
+                pcr_is_falling = pcr_trend_change < -PCR_STABLE_THRESHOLD
 
-            cumulative_call_coi_history = sum(h.get('total_call_coi', 0) for h in recent_history)
-            cumulative_put_coi_history = sum(h.get('total_put_coi', 0) for h in recent_history)
+                cumulative_call_coi_history = sum(h.get('total_call_coi', 0) for h in recent_history)
+                cumulative_put_coi_history = sum(h.get('total_put_coi', 0) for h in recent_history)
 
-            ce_oi_adding_trend = cumulative_call_coi_history > OI_CHANGE_THRESHOLD_FOR_TREND
-            ce_oi_exiting_trend = cumulative_call_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND
-            pe_oi_adding_trend = cumulative_put_coi_history > OI_CHANGE_THRESHOLD_FOR_TREND
-            pe_oi_exiting_trend = cumulative_put_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND
+                ce_oi_adding_trend = cumulative_call_coi_history > OI_CHANGE_THRESHOLD_FOR_TREND
+                ce_oi_exiting_trend = cumulative_call_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND
+                pe_oi_adding_trend = cumulative_put_coi_history > OI_CHANGE_THRESHOLD_FOR_TREND
+                pe_oi_exiting_trend = cumulative_put_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND
 
-            if (pcr_is_stable or pcr_is_falling) and ce_oi_adding_trend:
-                return "Weakening"
-            if (pcr_is_stable or pcr_is_rising) and pe_oi_adding_trend:
-                return "Strengthening"
-            if pcr_is_falling and pe_oi_exiting_trend:
-                return "Bullish Reversal"
-            if pcr_is_rising and ce_oi_exiting_trend:
-                return "Bearish Reversal"
+                if (pcr_is_stable or pcr_is_falling) and ce_oi_adding_trend:
+                    return "Weakening"
+                if (pcr_is_stable or pcr_is_rising) and pe_oi_adding_trend:
+                    return "Strengthening"
+                if pcr_is_falling and pe_oi_exiting_trend:
+                    return "Bullish Reversal"
+                if pcr_is_rising and ce_oi_exiting_trend:
+                    return "Bearish Reversal"
 
         if pcr >= 1.0:
             if pe_oi_delta_positive:
@@ -2825,9 +2861,16 @@ class NseBseAnalyzer:
             try:
                 center_idx = strikes_sorted.index(min_pain_strike)
             except ValueError:
+                # If min_pain_strike is not exactly in the list, find the closest one
                 center_idx = (pd.Series(strikes_sorted) - min_pain_strike).abs().idxmin()
+
             start_idx = max(0, center_idx - 8)
             end_idx = min(len(strikes_sorted), center_idx + 8)
+
+            # Ensure start_idx is not greater than end_idx if the list is very small
+            if start_idx >= end_idx:
+                return pd.DataFrame()  # Return empty if window is invalid
+
             strikes_in_window = strikes_sorted[start_idx:end_idx]
             return max_pain_df[max_pain_df['StrikePrice'].isin(strikes_in_window)]
         return pd.DataFrame()
@@ -2843,3 +2886,4 @@ if __name__ == '__main__':
     analyzer = NseBseAnalyzer()
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     socketio.run(app, host='0.0.0.0', port=5000)
+
