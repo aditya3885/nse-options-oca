@@ -1,3 +1,4 @@
+python-dotenv
 joblib
 eventlet
 brotli>=1.1.0
