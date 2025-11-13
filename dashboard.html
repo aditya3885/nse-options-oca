@@ -455,9 +455,9 @@
                                 <th style="width: 30%;">OI Changes</th>
                             </tr>
                         </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
+                    <tbody></tbody>
+                </table>
+            </div>
             </div>
             <div id="equity-loader" class="hidden" style="text-align: center; padding: 40px;">Loading...</div>
             <div id="equity-error" class="hidden" style="text-align: center; padding: 40px; color: #F44336;"></div>
@@ -671,6 +671,7 @@
 
             // Only update charts for OI-based symbols (Nifty, Banknifty, Finnifty, Equity)
             if (OI_SYMBOLS.includes(symbol) || symbol === "EQUITY") {
+                // Ensure charts are updated when a tab is opened, using the cached data
                 if (shared_data_cache[symbol]) {
                     updateCharts(symbol, shared_data_cache[symbol]);
                 }
@@ -1540,6 +1541,18 @@
                     document.getElementById(`${lower}-total-put-coi-label`).textContent = formatNumber(s.total_put_coi, 0);
                 });
 
+                // This is the key change: Always update charts for the active symbol
+                const activeTabElement = document.querySelector('.tablink.active');
+                if (activeTabElement) {
+                    const activeSymbol = activeTabElement.dataset.symbol;
+                    // Only update charts if the active tab is an OI_SYMBOL or EQUITY and has live data
+                    if ((OI_SYMBOLS.includes(activeSymbol) || activeSymbol === "EQUITY") && data.live[activeSymbol]) {
+                        // Cache the live data for the active symbol
+                        shared_data_cache[activeSymbol] = data.live[activeSymbol];
+                        updateCharts(activeSymbol, data.live[activeSymbol]);
+                    }
+                }
+
                 Object.keys(data.live).forEach(sym => {
                     const lower = sym.toLowerCase();
                     const liveData = data.live[sym];
@@ -1604,13 +1617,8 @@
                             });
                         }
                     }
-                    shared_data_cache[sym] = liveData;
+                    shared_data_cache[sym] = liveData; // Always update cache for all symbols
                 });
-
-                const activeSymbol = document.querySelector('.tablink.active').dataset.symbol;
-                if(data.live[activeSymbol]) {
-                    updateCharts(activeSymbol, data.live[activeSymbol]);
-                }
             }
 
             if (data.ai_bot_trade_history) {
