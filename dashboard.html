@@ -220,6 +220,7 @@
                 <div class="chart-container"><canvas id="nifty-max-pain-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-oi-chart"></canvas></div>
+                <div class="chart-container"><canvas id="nifty-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
             </div>
             <h3>NIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="nifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">NIFTY Historical Data</h3>
@@ -279,6 +280,7 @@
                 <div class="chart-container"><canvas id="finnifty-max-pain-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-oi-chart"></canvas></div>
+                <div class="chart-container"><canvas id="finnifty-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
             </div>
             <h3>FINNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="finnifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">FINNIFTY Historical Data</h3>
@@ -338,6 +340,7 @@
                 <div class="chart-container"><canvas id="banknifty-max-pain-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-oi-chart"></canvas></div>
+                <div class="chart-container"><canvas id="banknifty-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
             </div>
             <h3>BANKNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="banknifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">BANKNIFTY Historical Data</h3>
@@ -408,6 +411,7 @@
                     <div class="chart-container"><canvas id="equity-max-pain-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-ce-oi-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-oi-chart"></canvas></div>
+                    <div class="chart-container"><canvas id="equity-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
                 </div>
                 <h3>Option Chain (ATM ±10)</h3>
                 <div class="table-container">
@@ -806,6 +810,100 @@
             const peLabels = liveData.pe_oi_chart_data.map(d => d.strikePrice);
             const peData = liveData.pe_oi_chart_data.map(d => d.openInterest);
             renderChart(`${lower}-pe-oi-chart`, 'bar', peLabels, peData, `${symbol} PE OI`, 'rgba(54, 162, 235, 0.5)', 'rgba(54, 162, 235, 1)');
+
+            // IV Skew Chart (Line Chart)
+            // Assuming 'iv_skew_chart_data' contains objects like {strike: X, call_iv: Y, put_iv: Z}
+            const ivSkewLabels = liveData.iv_skew_chart_data.map(d => d.strike);
+            const callIvData = liveData.iv_skew_chart_data.map(d => d.call_iv);
+            const putIvData = liveData.iv_skew_chart_data.map(d => d.put_iv);
+
+            const ivSkewCtx = document.getElementById(`${lower}-iv-skew-chart`);
+            if (ivSkewCtx) {
+                if (chartInstances[`${lower}-iv-skew-chart`]) {
+                    chartInstances[`${lower}-iv-skew-chart`].destroy();
+                }
+                chartInstances[`${lower}-iv-skew-chart`] = new Chart(ivSkewCtx, {
+                    type: 'line',
+                    data: {
+                        labels: ivSkewLabels,
+                        datasets: [
+                            {
+                                label: 'Call IV',
+                                data: callIvData,
+                                backgroundColor: 'rgba(255, 165, 0, 0.2)', // Orange for Call IV
+                                borderColor: 'rgba(255, 165, 0, 1)',
+                                borderWidth: 1,
+                                fill: false,
+                            },
+                            {
+                                label: 'Put IV',
+                                data: putIvData,
+                                backgroundColor: 'rgba(0, 128, 0, 0.2)', // Green for Put IV
+                                borderColor: 'rgba(0, 128, 0, 1)',
+                                borderWidth: 1,
+                                fill: false,
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                labels: {
+                                    color: '#ccc'
+                                }
+                            },
+                            zoom: {
+                                zoom: {
+                                    wheel: {
+                                        enabled: true,
+                                    },
+                                    pinch: {
+                                        enabled: true
+                                    },
+                                    mode: 'x',
+                                },
+                                pan: {
+                                    enabled: true,
+                                    mode: 'x',
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                ticks: {
+                                    color: '#ccc',
+                                },
+                                grid: {
+                                    color: 'rgba(200, 200, 200, 0.1)',
+                                }
+                            },
+                            y: {
+                                ticks: {
+                                    color: '#ccc',
+                                },
+                                grid: {
+                                    color: 'rgba(200, 200, 200, 0.1)',
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Implied Volatility (%)',
+                                    color: '#ccc'
+                                }
+                            }
+                        },
+                        animation: {
+                            duration: 0
+                        },
+                        elements: {
+                            line: {
+                                tension: 0.3
+                            }
+                        }
+                    }
+                });
+            }
         }
 
 
@@ -1092,8 +1190,7 @@
                 const response = await fetch('/api/bhavcopy');
                 const data = await response.json();
                 console.log("Received initial Bhavcopy data from /api/bhavcopy:", data);
-                updateBhavcopyTables(data, 'equities');
-                updateBhavcopyTables(data, 'indices');
+                updateBhavcopyTables(data); // Call without specific type to update both
             } catch (error) {
                 console.error("Error fetching initial Bhavcopy data:", error);
                 document.getElementById('bhavcopy-equity-status').textContent = 'Failed to load initial Bhavcopy data.';
