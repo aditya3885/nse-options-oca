@@ -1490,34 +1490,57 @@
             console.log("Received live 'update' data:", data);
             document.getElementById('time').textContent = new Date().toLocaleTimeString();
 
-            if (data.live_feed_summary) {
-                ALL_SYMBOLS.forEach(sym => {
-                    const lower = sym.toLowerCase().replace(/-/g, '');
+            // Update ticker for ALL_SYMBOLS
+            ALL_SYMBOLS.forEach(sym => {
+                const lower = sym.toLowerCase().replace(/-/g, '');
+                let tickerValue = '-';
+                let tickerChange = '-';
+                let tickerChangeClass = 'neutral';
+
+                // Prioritize live_feed_summary for YFinance assets (which have 'change' and 'percentage_change')
+                if (YF_ASSETS.includes(sym) && data.live_feed_summary && data.live_feed_summary[sym]) {
                     const feed = data.live_feed_summary[sym];
-                    const valEl = document.getElementById(`ticker-${lower}-value`);
-                    const chgEl = document.getElementById(`ticker-${lower}-change`);
-                    const valElClone = document.getElementById(`ticker-${lower}-value-clone`);
-                    const chgElClone = document.getElementById(`ticker-${lower}-change-clone`);
-
-                    if (feed && typeof feed.current_value !== 'undefined' && valEl && chgEl) {
-                        const valText = formatNumber(feed.current_value, 4);
-                        const chgText = `${feed.change >= 0 ? '▲' : '▼'} ${Math.abs(feed.change).toFixed(2)} (${feed.percentage_change.toFixed(2)}%)`;
-                        const colorClass = getChangeColorClass(feed.change);
-
-                        valEl.textContent = valText;
-                        chgEl.textContent = chgText;
-                        chgEl.classList.remove('positive', 'negative', 'neutral');
-                        chgEl.classList.add(colorClass);
-
-                        if(valElClone) valElClone.textContent = valText;
-                        if(chgElClone) {
-                            chgElClone.textContent = chgText;
-                            chgElClone.classList.remove('positive', 'negative', 'neutral');
-                            chgElClone.classList.add(colorClass);
-                        }
+                    if (typeof feed.current_value !== 'undefined') {
+                        tickerValue = formatNumber(feed.current_value, 4);
+                        tickerChange = `${feed.change >= 0 ? '▲' : '▼'} ${Math.abs(feed.change).toFixed(2)} (${feed.percentage_change.toFixed(2)}%)`;
+                        tickerChangeClass = getChangeColorClass(feed.change);
                     }
-                });
-            }
+                }
+                // For OI_SYMBOLS (NIFTY, FINNIFTY, BANKNIFTY) use data.live[sym].summary
+                else if (OI_SYMBOLS.includes(sym) && data.live && data.live[sym] && data.live[sym].summary) {
+                    const summary = data.live[sym].summary;
+                    if (typeof summary.value !== 'undefined') {
+                        tickerValue = formatNumber(summary.value, 2); // Assuming value is the main price
+                        // Calculate change and percentage change from current and previous value if available
+                        // This assumes `shared_data_cache` has the previous value, or `summary` itself has it.
+                        // For simplicity, let's just show value and PCR in ticker for now if change not directly available
+                        // Or, we need to store previous 'value' in shared_data_cache to calculate change
+                        // For now, let's use a simple representation.
+                        tickerChange = `PCR: ${formatNumber(summary.pcr)}`; // Show PCR in change spot
+                        tickerChangeClass = getChangeColorClass(summary.pcr - 1); // Simple color based on PCR vs 1
+                    }
+                }
+
+                // Update the elements
+                const valEl = document.getElementById(`ticker-${lower}-value`);
+                const chgEl = document.getElementById(`ticker-${lower}-change`);
+                const valElClone = document.getElementById(`ticker-${lower}-value-clone`);
+                const chgElClone = document.getElementById(`ticker-${lower}-change-clone`);
+
+                if (valEl) valEl.textContent = tickerValue;
+                if (chgEl) {
+                    chgEl.textContent = tickerChange;
+                    chgEl.classList.remove('positive', 'negative', 'neutral');
+                    chgEl.classList.add(tickerChangeClass);
+                }
+                if (valElClone) valElClone.textContent = tickerValue;
+                if (chgElClone) {
+                    chgElClone.textContent = tickerChange;
+                    chgElClone.classList.remove('positive', 'negative', 'neutral');
+                    chgElClone.classList.add(tickerChangeClass);
+                }
+            });
+
 
             if (data.live) {
                 OI_SYMBOLS.forEach(sym => {
