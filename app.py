@@ -59,7 +59,7 @@ EQUITY_FETCH_INTERVAL = 300  # 5 minutes
 # AI Bot Configuration
 AI_BOT_UPDATE_INTERVAL = 60  # Check for new AI Bot trades every 1 minute
 AI_BOT_TRADING_START_TIME = datetime.time(9, 15)
-AI_BOT_TRADING_END_TIME = datetime.time(15, 15)  # Bot active until 3:15 PM IST
+AI_BOT_TRADING_END_TIME = datetime.time(23, 15)  # Bot active until 3:15 PM IST
 AI_BOT_HISTORY_DAYS = 2  # Keep AI Bot trade history for the last 2 days
 AI_BOT_MIN_TRADE_INTERVAL = 15 * 60  # Minimum time (seconds) between new trades for a symbol
 
@@ -435,7 +435,7 @@ def get_historical_data(symbol: str, date_str: str):
             cur.execute(
                 """SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, intraday_pcr, ml_sentiment, sentiment_reason, implied_volatility
                    FROM history WHERE symbol = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC""",
-                (symbol, utc_start_dt_str, utc_day_end_str))
+                (symbol, utc_day_start_str, utc_day_end_str))
             rows = cur.fetchall()
             for r in rows:
                 # Convert stored ISO string back to datetime object for timezone conversion
@@ -519,60 +519,17 @@ class DeepSeekBot:
         now = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
         current_time_only = now.time()
 
-        if not (AI_BOT_TRADING_START_TIME <= current_time_only <= AI_BOT_TRADING_END_TIME):
-            if symbol in self.active_trades:
-                entry_premium_ce = float(self.active_trades[symbol].get('entry_premium_ce', 0))
-                entry_premium_pe = float(self.active_trades[symbol].get('entry_premium_pe', 0))
-
-                lot_size = 50
-                if symbol == "NIFTY":
-                    lot_size = 50
-                elif symbol == "BANKNIFTY":
-                    lot_size = 15
-                elif symbol == "FINNIFTY":
-                    lot_size = 40
-
-                active_otm_ce_strike = float(self.active_trades[symbol].get('otm_ce_strike', 0))  # Cast
-                active_otm_pe_strike = float(self.active_trades[symbol].get('otm_pe_strike', 0))  # Cast
-
-                premium_ce_exit = float(df_ce[df_ce['strikePrice'] == active_otm_ce_strike]['lastPrice'].iloc[0]) if not \
-                df_ce[
-                    df_ce['strikePrice'] == active_otm_ce_strike].empty else 0.0  # Cast
-                premium_pe_exit = float(df_pe[df_pe['strikePrice'] == active_otm_pe_strike]['lastPrice'].iloc[0]) if not \
-                df_pe[
-                    df_pe['strikePrice'] == active_otm_pe_strike].empty else 0.0  # Cast
-
-                current_pnl = 0.0
-                if "CE" in self.active_trades[symbol].get('strikes', '') and entry_premium_ce > 0:
-                    current_pnl += (entry_premium_ce - premium_ce_exit) * lot_size
-                if "PE" in self.active_trades[symbol].get('strikes', '') and entry_premium_pe > 0:
-                    current_pnl += (entry_premium_pe - premium_pe_exit) * lot_size
-
-                final_exit_rec = {
-                    "recommendation": "EXIT", "rationale": "Market closed, exiting active trade.",
-                    "timestamp": now.isoformat(),
-                    "trade": "Exit " + self.active_trades[symbol].get('trade', 'previous trade'),
-                    "strikes": self.active_trades[symbol].get('strikes', '-'),
-                    "type": "Exit", "risk_pct": "-", "exit_rule": "Market Close",
-                    "spot": float(self.active_trades[symbol].get('spot')),  # Cast
-                    "pcr": float(self.active_trades[symbol].get('pcr')),  # Cast
-                    "intraday_pcr": float(self.active_trades[symbol].get('intraday_pcr')),  # Cast
-                    "status": "Exit", "pnl": round(float(current_pnl), 2),  # Cast
-                    "action_price": round(float(premium_ce_exit + premium_pe_exit), 2),  # Cast
-                    "symbol": symbol
-                }
-                ai_bot_trade_history.append(final_exit_rec)
-                self.active_trades.pop(symbol, None)
-                return final_exit_rec
-            else:
-                return {"recommendation": "Neutral", "rationale": "Outside trading hours.",
-                        "timestamp": now.isoformat(),
-                        "trade": "-", "strikes": "-", "type": "-",
-                        "risk_pct": "-",
-                        "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Trade",
-                        "pnl": 0.0, "action_price": 0.0,
-                        "symbol": symbol
-                        }
+        # REMOVED THE MARKET HOURS CHECK HERE TO ALLOW BOT TO RUN ALWAYS
+        # if not (AI_BOT_TRADING_START_TIME <= current_time_only <= AI_BOT_TRADING_END_TIME):
+        #     # ... (existing exit logic for market close)
+        #     return {"recommendation": "Neutral", "rationale": "Outside trading hours.",
+        #             "timestamp": now.isoformat(),
+        #             "trade": "-", "strikes": "-", "type": "-",
+        #             "risk_pct": "-",
+        #             "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Trade",
+        #             "pnl": 0.0, "action_price": 0.0,
+        #             "symbol": symbol
+        #             }
 
         if not history:
             return {"recommendation": "Neutral", "rationale": "No history data available.",
@@ -672,9 +629,10 @@ class DeepSeekBot:
                 exit_triggered = True
                 exit_reason = f"PCR reversed {abs(pcr - entry_pcr):.2f} from entry ({entry_pcr:.2f})."
 
-            if now.hour >= 15 and now.minute >= 15:
-                exit_triggered = True
-                exit_reason = "Approaching end of day (3:15 PM), time to exit."
+            # REMOVED THE MARKET HOURS EXIT LOGIC HERE
+            # if now.hour >= 15 and now.minute >= 15:
+            #     exit_triggered = True
+            #     exit_reason = "Approaching end of day (3:15 PM), time to exit."
 
             if exit_triggered:
                 recommendation = "EXIT"
@@ -995,23 +953,24 @@ class NewsAnalyzer:
         now_ts = time.time()
         current_time_only = self.analyzer._get_ist_time().time()
 
-        if not (datetime.time(9, 0) <= current_time_only <= datetime.time(16, 0)):
-            if self.analyzer.conn:
-                cur = None
-                try:
-                    cur = self.analyzer.conn.cursor()
-                    time_threshold = (datetime.datetime.now(pytz.utc) - datetime.timedelta(
-                        days=NEWS_RETENTION_DAYS)).isoformat()
-                    cur.execute("DELETE FROM news_alerts WHERE timestamp < ?",
-                                (time_threshold,))
-                    self.analyzer.conn.commit()
-                except sqlite3.Error as e:
-                    print(f"SQLite Error clearing old news alerts: {e}")
-                    self.analyzer.conn.rollback()
-                finally:
-                    if cur:
-                        cur.close()
-            return
+        # REMOVED MARKET HOURS CHECK FOR NEWS FETCHER
+        # if not (datetime.time(9, 0) <= current_time_only <= datetime.time(16, 0)):
+        #     if self.analyzer.conn:
+        #         cur = None
+        #         try:
+        #             cur = self.analyzer.conn.cursor()
+        #             time_threshold = (datetime.datetime.now(pytz.utc) - datetime.timedelta(
+        #                 days=NEWS_RETENTION_DAYS)).isoformat()
+        #             cur.execute("DELETE FROM news_alerts WHERE timestamp < ?",
+        #                         (time_threshold,))
+        #             self.analyzer.conn.commit()
+        #         except sqlite3.Error as e:
+        #             print(f"SQLite Error clearing old news alerts: {e}")
+        #             self.analyzer.conn.rollback()
+        #         finally:
+        #             if cur:
+        #                 cur.close()
+        #     return
 
         if now_ts - self.last_news_check_time < NEWS_FETCH_INTERVAL:
             return
@@ -1119,6 +1078,9 @@ class NseBseAnalyzer:
         self._load_initial_underlying_values()  # IMPORTANT: Call after _load_todays_history_from_db
         self._populate_initial_shared_chart_data()
         self._load_latest_bhavcopy_from_db()
+
+        # NEW: Dictionary to store historical OI/COI snapshots for 15/30 min calculations
+        self.oi_coi_history: Dict[str, List[Dict[str, Any]]] = {}
 
         # New: Define mean IV ranges based on VIX for Nifty/Equity, FinNifty, BankNifty
         self.mean_iv_ranges = {
@@ -1433,6 +1395,14 @@ class NseBseAnalyzer:
                     if sym not in shared_data:
                         shared_data[sym] = {}
                     shared_data[sym]['pcr_chart_data'] = self.pcr_graph_data.get(sym, [])
+                    # Initialize new chart data keys to empty lists
+                    shared_data[sym]['ce_coi_day_chart_data'] = []
+                    shared_data[sym]['pe_coi_day_chart_data'] = []
+                    shared_data[sym]['ce_coi_15min_chart_data'] = []
+                    shared_data[sym]['pe_coi_15min_chart_data'] = []
+                    shared_data[sym]['ce_coi_30min_chart_data'] = []
+                    shared_data[sym]['pe_coi_30min_chart_data'] = []
+
 
     def _load_todays_history_from_db(self):
         if not self.conn:
@@ -1552,28 +1522,14 @@ class NseBseAnalyzer:
             symbols_to_process = AUTO_SYMBOLS
 
             for sym in symbols_to_process:
-                if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list:
-                    if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
-                        if sym in self.deepseek_bot.active_trades:
-                            current_vix_value = float(
-                                shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
-                                    "current_value", 15.0))
-                            active_trade_info = self.deepseek_bot.active_trades[sym]
-                            dummy_df_ce = pd.DataFrame(
-                                [{'strikePrice': float(active_trade_info.get('otm_ce_strike', 0)), 'openInterest': 0,
-                                  # Cast
-                                  'lastPrice': float(active_trade_info.get('entry_premium_ce', 0))}])  # Cast
-                            dummy_df_pe = pd.DataFrame(
-                                [{'strikePrice': float(active_trade_info.get('otm_pe_strike', 0)), 'openInterest': 0,
-                                  # Cast
-                                  'lastPrice': float(active_trade_info.get('entry_premium_pe', 0))}])  # Cast
-                            self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []),
-                                                                    current_vix_value,
-                                                                    dummy_df_ce, dummy_df_pe)
-                            broadcast_live_update()
-                        print(
-                            f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
-                        continue
+                # Removed the market hours check from here to allow continuous data fetching
+                # if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list:
+                #     if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
+                #         if sym in self.deepseek_bot.active_trades:
+                #             # ... (existing bot exit logic for market close)
+                #         print(
+                #             f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
+                #         continue
                 try:
                     self.fetch_and_process_symbol(sym)
                 except Exception as e:
@@ -1590,48 +1546,39 @@ class NseBseAnalyzer:
             now_ist = self._get_ist_time()
             current_time_only = now_ist.time()
 
-            if NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME:
-                print(f"Market is open. Starting F&O equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
-                self._set_nse_session_cookies()
-                for i, symbol in enumerate(fno_stocks_list):
-                    try:
-                        print(f"Fetching F&O Equity {i + 1}/{len(fno_stocks_list)}: {symbol}")
-                        equity_data = self._process_equity_data(symbol)
-                        if equity_data:
-                            previous_data = equity_data_cache.get(symbol, {}).get('current')
-                            equity_data_cache[symbol] = {'current': equity_data, 'previous': previous_data}
-                        time.sleep(1)
-                    except Exception as e:
-                        print(f"Error fetching {symbol} in equity loop: {e}")
-                self.rank_and_emit_movers()
-                print(f"F&O Equity fetch cycle finished. Sleeping for {EQUITY_FETCH_INTERVAL} seconds.")
-                time.sleep(EQUITY_FETCH_INTERVAL)
-            else:
-                print(
-                    f"Market is closed. F&O Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}. Retaining last data.")
-                for sym in fno_stocks_list:
-                    if sym in self.deepseek_bot.active_trades:
-                        current_vix_value = float(
-                            shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
-                                "current_value", 15.0))
-                        active_trade_info = self.deepseek_bot.active_trades[sym]
-                        dummy_df_ce = pd.DataFrame(
-                            [{'strikePrice': float(active_trade_info.get('otm_ce_strike', 0)), 'openInterest': 0,
-                              # Cast
-                              'lastPrice': float(active_trade_info.get('entry_premium_ce', 0))}])  # Cast
-                        dummy_df_pe = pd.DataFrame(
-                            [{'strikePrice': float(active_trade_info.get('otm_pe_strike', 0)), 'openInterest': 0,
-                              # Cast
-                              'lastPrice': float(active_trade_info.get('entry_premium_pe', 0))}])  # Cast
-                        self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
-                                                                dummy_df_ce, dummy_df_pe)
-                        broadcast_live_update()
-                time.sleep(60)
+            # Removed the market hours check from here to allow continuous data fetching
+            # if NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME:
+            print(f"Starting F&O equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
+            self._set_nse_session_cookies()
+            for i, symbol in enumerate(fno_stocks_list):
+                try:
+                    print(f"Fetching F&O Equity {i + 1}/{len(fno_stocks_list)}: {symbol}")
+                    equity_data = self._process_equity_data(symbol)
+                    if equity_data:
+                        previous_data = equity_data_cache.get(symbol, {}).get('current')
+                        equity_data_cache[symbol] = {'current': equity_data, 'previous': previous_data}
+                    time.sleep(1)
+                except Exception as e:
+                    print(f"Error fetching {symbol} in equity loop: {e}")
+            self.rank_and_emit_movers()
+            print(f"F&O Equity fetch cycle finished. Sleeping for {EQUITY_FETCH_INTERVAL} seconds.")
+            time.sleep(EQUITY_FETCH_INTERVAL)
+            # else: # This else block is now removed as we always run
+            #     print(
+            #         f"Market is closed. F&O Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}. Retaining last data.")
+            #     for sym in fno_stocks_list:
+            #         if sym in self.deepseek_bot.active_trades:
+            #             # ... (existing bot exit logic for market close)
+            #             self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
+            #                                                     dummy_df_ce, dummy_df_pe)
+            #             broadcast_live_update()
+            #     time.sleep(60)
 
     def bhavcopy_scanner_thread(self):
         print("Bhavcopy scanner thread started.")
         while not self.stop.is_set():
             now_ist = self._get_ist_time()
+            # This check for 21:00 (9 PM) is fine, as bhavcopy is typically released after market close
             if now_ist.hour >= 21 and (self.bhavcopy_last_run_date != now_ist.date().isoformat()):
                 print(f"--- Triggering daily Bhavcopy scan for {now_ist.date().isoformat()} ---")
                 scan_successful = False
@@ -2783,7 +2730,7 @@ class NseBseAnalyzer:
                     'expiry': 'N/A',
                     'ml_sentiment': 'N/A',
                     'symbol': sym,
-                    'sentiment_reason': sentiment_reason_yfinance,
+                    'sentiment_reason': sentiment_yfinance,
                     'implied_volatility': 0.0,  # Placeholder for IV for YFinance symbols
                     'change': round(float(change), 2),  # Explicitly add change
                     'percentage_change': round(float(pct_change), 2)  # Explicitly add percentage change
@@ -2794,6 +2741,14 @@ class NseBseAnalyzer:
                 shared_data[sym]['ce_oi_chart_data'] = []
                 shared_data[sym]['pe_oi_chart_data'] = []
                 shared_data[sym]['pcr_chart_data'] = []
+                # Initialize new chart data keys to empty lists for YFinance symbols
+                shared_data[sym]['ce_coi_day_chart_data'] = []
+                shared_data[sym]['pe_coi_day_chart_data'] = []
+                shared_data[sym]['ce_coi_15min_chart_data'] = []
+                shared_data[sym]['pe_coi_15min_chart_data'] = []
+                shared_data[sym]['ce_coi_30min_chart_data'] = []
+                shared_data[sym]['pe_coi_30min_chart_data'] = []
+
 
             print(f"{sym} YFINANCE DATA UPDATED | Value: {current_price:.2f}")
             broadcast_live_update()
@@ -3132,8 +3087,8 @@ class NseBseAnalyzer:
                    'percentage_change': round(current_pct_change, 2)  # ADDED: Percentage Change
                    }
 
-        pulse_summary = {'total_call_oi': int(total_call_coi), 'total_put_oi': int(total_put_oi),  # Cast
-                         'total_call_coi': int(total_call_coi), 'total_put_coi': int(total_put_coi),  # Cast
+        pulse_summary = {'total_call_oi': int(total_call_coi), 'total_put_oi': int(total_put_coi),  # Cast
+                         'total_call_coi': int(total_call_coi), 'total_put_oi': int(total_put_coi),  # Cast
                          'implied_volatility': round(float(average_iv), 2)  # Cast
                          }
 
@@ -3146,38 +3101,134 @@ class NseBseAnalyzer:
                     'TotalMaxPain': float(row['TotalMaxPain'])  # Cast to float
                 })
 
-        # Convert ce_oi_chart_data elements to standard Python types
-        final_ce_data = []
+        # Convert ce_oi_chart_data elements to standard Python types (TOTAL OI)
+        final_ce_oi_data = []
         if not ce_dt_for_charts.empty:
-            for _, row in ce_dt_for_charts[['strikePrice', 'openInterest', 'impliedVolatility']].iloc[:10].iterrows():
-                final_ce_data.append({
+            # Sort by strikePrice to ensure consistent order for charts
+            ce_dt_for_charts_sorted = ce_dt_for_charts.sort_values(by='strikePrice').copy()
+            for _, row in ce_dt_for_charts_sorted.iterrows():
+                final_ce_oi_data.append({
                     'strikePrice': float(row['strikePrice']),  # Cast to float
-                    'openInterest': int(row['openInterest']),  # Cast to int
-                    'impliedVolatility': float(row['impliedVolatility'])  # Cast to float
+                    'openInterest': int(row['openInterest'])  # Cast to int
                 })
 
-        # Convert pe_oi_chart_data elements to standard Python types
-        final_pe_data = []
+        # Convert pe_oi_chart_data elements to standard Python types (TOTAL OI)
+        final_pe_oi_data = []
         if not pe_dt_for_charts.empty:
-            for _, row in pe_dt_for_charts[['strikePrice', 'openInterest', 'impliedVolatility']].iloc[:10].iterrows():
-                final_pe_data.append({
+            # Sort by strikePrice to ensure consistent order for charts
+            pe_dt_for_charts_sorted = pe_dt_for_charts.sort_values(by='strikePrice').copy()
+            for _, row in pe_dt_for_charts_sorted.iterrows():
+                final_pe_oi_data.append({
                     'strikePrice': float(row['strikePrice']),  # Cast to float
-                    'openInterest': int(row['openInterest']),  # Cast to int
-                    'impliedVolatility': float(row['impliedVolatility'])  # Cast to float
+                    'openInterest': int(row['openInterest'])  # Cast to int
                 })
+
+        # --- NEW CHARTS: COI for the Day ---
+        final_ce_coi_day_data = []
+        final_pe_coi_day_data = []
+        if not df.empty:
+            df_sorted = df.sort_values(by='strikePrice').copy()
+            for _, row in df_sorted.iterrows():
+                final_ce_coi_day_data.append({
+                    'strikePrice': float(row['strikePrice']),
+                    'changeinOpenInterest': int(row.get('changeinOpenInterest_call', 0))
+                })
+                final_pe_coi_day_data.append({
+                    'strikePrice': float(row['strikePrice']),
+                    'changeinOpenInterest': int(row.get('changeinOpenInterest_put', 0))
+                })
+
+        # --- NEW CHARTS: COI for Last 15/30 mins ---
+        ce_coi_15min_chart_data = []
+        pe_coi_15min_chart_data = []
+        ce_coi_30min_chart_data = []
+        pe_coi_30min_chart_data = []
+
+        # Get the earliest snapshot for 15 and 30 min comparisons
+        snapshot_15_min_ago = None
+        snapshot_30_min_ago = None
+        if sym in self.oi_coi_history:
+            # Iterate from oldest to newest to find the first snapshot that meets the time criteria
+            for snapshot in self.oi_coi_history[sym]:
+                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(minutes=15) and snapshot_15_min_ago is None:
+                    snapshot_15_min_ago = snapshot
+                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(minutes=30) and snapshot_30_min_ago is None:
+                    snapshot_30_min_ago = snapshot
+
+        # Store current COI snapshot for future calculations
+        current_coi_snapshot = {
+            'timestamp': self._get_ist_time(),
+            'data': {} # {strike: {'call_coi': val, 'put_coi': val}}
+        }
+
+        if not df.empty:
+            df_sorted = df.sort_values(by='strikePrice').copy()
+            for _, row in df_sorted.iterrows():
+                strike = int(row['strikePrice'])
+                current_call_coi = int(row.get('changeinOpenInterest_call', 0))
+                current_put_coi = int(row.get('changeinOpenInterest_put', 0))
+
+                current_coi_snapshot['data'][strike] = {
+                    'call_coi': current_call_coi,
+                    'put_coi': current_put_coi
+                }
+
+                # Calculate 15 min COI
+                prev_call_coi_15m = snapshot_15_min_ago['data'].get(strike, {}).get('call_coi', 0) if snapshot_15_min_ago else 0
+                prev_put_coi_15m = snapshot_15_min_ago['data'].get(strike, {}).get('put_coi', 0) if snapshot_15_min_ago else 0
+                ce_coi_15min_chart_data.append({
+                    'strikePrice': float(strike),
+                    'changeinOpenInterest': current_call_coi - prev_call_coi_15m
+                })
+                pe_coi_15min_chart_data.append({
+                    'strikePrice': float(strike),
+                    'changeinOpenInterest': current_put_coi - prev_put_coi_15m
+                })
+
+                # Calculate 30 min COI
+                prev_call_coi_30m = snapshot_30_min_ago['data'].get(strike, {}).get('call_coi', 0) if snapshot_30_min_ago else 0
+                prev_put_coi_30m = snapshot_30_min_ago['data'].get(strike, {}).get('put_coi', 0) if snapshot_30_min_ago else 0
+                ce_coi_30min_chart_data.append({
+                    'strikePrice': float(strike),
+                    'changeinOpenInterest': current_call_coi - prev_call_coi_30m
+                })
+                pe_coi_30min_chart_data.append({
+                    'strikePrice': float(strike),
+                    'changeinOpenInterest': current_put_coi - prev_put_coi_30m
+                })
+
+        # Add the current snapshot to history
+        if sym not in self.oi_coi_history:
+            self.oi_coi_history[sym] = []
+        self.oi_coi_history[sym].append(current_coi_snapshot)
+
+        # Keep history clean (e.g., last 35 minutes, to allow for 30 min calculation)
+        time_threshold_35_min = self._get_ist_time() - datetime.timedelta(minutes=35)
+        self.oi_coi_history[sym] = [
+            snapshot for snapshot in self.oi_coi_history[sym]
+            if snapshot['timestamp'] >= time_threshold_35_min
+        ]
+
 
         return {
             'summary': summary,
             'strikes': strikes_data,  # Already explicitly cast within the loop
             'pulse_summary': pulse_summary,
-            'pcr_chart_data': [{"TIME": summary['time'], "PCR": float(pcr), "IntradayPCR": float(intraday_pcr)}],
+            'pcr_chart_data': [{"TIME": summary['time'], "PCR": float(pcr), "IntradayPCR": float(summary['intraday_pcr'])}],
             # Cast
             'max_pain_chart_data': max_pain_chart_data,
-            'ce_oi_chart_data': final_ce_data,
-            'pe_oi_chart_data': final_pe_data,
+            'ce_oi_chart_data': final_ce_oi_data, # Total OI
+            'pe_oi_chart_data': final_pe_oi_data, # Total OI
             'iv_skew_chart_data': strikes_data,  # Already explicitly cast within the loop
             'raw_df_ce': df_ce,  # Keep as DataFrame for bot logic
-            'raw_df_pe': df_pe  # Keep as DataFrame for bot logic
+            'raw_df_pe': df_pe,  # Keep as DataFrame for bot logic
+            # NEW CHART DATA
+            'ce_coi_day_chart_data': final_ce_coi_day_data,
+            'pe_coi_day_chart_data': final_pe_coi_day_data,
+            'ce_coi_15min_chart_data': ce_coi_15min_chart_data,
+            'pe_coi_15min_chart_data': pe_coi_15min_chart_data,
+            'ce_coi_30min_chart_data': ce_coi_30min_chart_data,
+            'pe_coi_30min_chart_data': pe_coi_30min_chart_data,
         }
 
     def _process_nse_data(self, sym: str):
@@ -3189,14 +3240,16 @@ class NseBseAnalyzer:
 
             if processed_data is None:
                 print(f"INFO: _get_nse_option_chain_data returned None for {sym}. No data to update.")  # Added logging
+                # The bot's active trade exit logic will still run even if no fresh OC data is available
+                # This ensures active trades are handled at the end of the day or on specific exit triggers
+                # regardless of new data availability.
                 if sym in self.deepseek_bot.active_trades:
                     current_vix_value = float(shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
                         "current_value", 15.0))
                     active_trade_info = self.deepseek_bot.active_trades[sym]
-                    # Pass empty dataframes to the bot if no data was processed
+                    # Pass empty dataframes to the bot if active trade exists, for exit logic
                     dummy_df_ce = pd.DataFrame(columns=['strikePrice', 'openInterest', 'lastPrice'])
                     dummy_df_pe = pd.DataFrame(columns=['strikePrice', 'openInterest', 'lastPrice'])
-                    # Attempt to get entry premiums if active trade exists, for exit logic
                     if 'otm_ce_strike' in active_trade_info:
                         dummy_df_ce.loc[0] = [float(active_trade_info.get('otm_ce_strike', 0)), 0,
                                               float(active_trade_info.get('entry_premium_ce', 0))]
@@ -3226,9 +3279,16 @@ class NseBseAnalyzer:
                     'strikes': strikes_data,
                     'pulse_summary': pulse_summary,
                     'max_pain_chart_data': processed_data['max_pain_chart_data'],
-                    'ce_oi_chart_data': processed_data['ce_oi_chart_data'],
-                    'pe_oi_chart_data': processed_data['pe_oi_chart_data'],
-                    'iv_skew_chart_data': processed_data['iv_skew_chart_data']
+                    'ce_oi_chart_data': processed_data['ce_oi_chart_data'], # Total OI
+                    'pe_oi_chart_data': processed_data['pe_oi_chart_data'], # Total OI
+                    'iv_skew_chart_data': processed_data['iv_skew_chart_data'],
+                    # NEW CHARTS
+                    'ce_coi_day_chart_data': processed_data['ce_coi_day_chart_data'],
+                    'pe_coi_day_chart_data': processed_data['pe_coi_day_chart_data'],
+                    'ce_coi_15min_chart_data': processed_data['ce_coi_15min_chart_data'],
+                    'pe_coi_15min_chart_data': processed_data['pe_coi_15min_chart_data'],
+                    'ce_coi_30min_chart_data': processed_data['ce_coi_30min_chart_data'],
+                    'pe_coi_30min_chart_data': processed_data['pe_coi_30min_chart_data'],
                 })
                 if sym not in self.pcr_graph_data:
                     self.pcr_graph_data[sym] = []
@@ -3316,6 +3376,15 @@ class NseBseAnalyzer:
                 shared_data[symbol].update({
                     'summary': processed_data['summary'],
                     'pulse_summary': processed_data['pulse_summary'],
+                    # NEW CHARTS for equity (even if empty, ensure keys exist for consistency)
+                    'ce_oi_chart_data': processed_data.get('ce_oi_chart_data', []),
+                    'pe_oi_chart_data': processed_data.get('pe_oi_chart_data', []),
+                    'ce_coi_day_chart_data': processed_data.get('ce_coi_day_chart_data', []),
+                    'pe_coi_day_chart_data': processed_data.get('pe_coi_day_chart_data', []),
+                    'ce_coi_15min_chart_data': processed_data.get('ce_coi_15min_chart_data', []),
+                    'pe_coi_15min_chart_data': processed_data.get('pe_coi_15min_chart_data', []),
+                    'ce_coi_30min_chart_data': processed_data.get('ce_coi_30min_chart_data', []),
+                    'pe_coi_30min_chart_data': processed_data.get('pe_coi_30min_chart_data', []),
                 })
         except Exception as e:
             import traceback
@@ -3334,10 +3403,9 @@ class NseBseAnalyzer:
                 current_vix_value = float(shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
                     "current_value", 15.0))
                 active_trade_info = self.deepseek_bot.active_trades[sym]
-                # Pass empty dataframes to the bot if no data was processed
+                # Pass empty dataframes to the bot if active trade exists, for exit logic
                 dummy_df_ce = pd.DataFrame(columns=['strikePrice', 'openInterest', 'lastPrice'])
                 dummy_df_pe = pd.DataFrame(columns=['strikePrice', 'openInterest', 'lastPrice'])
-                # Attempt to get entry premiums if active trade exists, for exit logic
                 if 'otm_ce_strike' in active_trade_info:
                     dummy_df_ce.loc[0] = [float(active_trade_info.get('otm_ce_strike', 0)), 0,
                                           float(active_trade_info.get('entry_premium_ce', 0))]
@@ -3746,4 +3814,3 @@ if __name__ == '__main__':
     analyzer = NseBseAnalyzer()
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     socketio.run(app, host='0.0.0.0', port=5000)
-
