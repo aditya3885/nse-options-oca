@@ -78,11 +78,11 @@ NEWS_RETENTION_DAYS = 3  # Keep news for the last 3 days
 # Public RSS feeds for Indian financial news (can be volatile, verify URLs)
 # Using more general feeds or known reliable ones. Some specific ones might be flaky.
 RSS_FEEDS = [
-    "https://www.moneycontrol.com/rss/markets.xml",
+    "https://www.moneycontrol.com/rss/latestnews.xml",
     "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
-    "https://www.cnbctv18.com/rss/markets.xml",
+    "https://www.5paisa.com/rss/news.xml",
     "https://www.livemint.com/rss/markets",
-    "https://www.business-standard.com/rss/markets-122",
+    "https://www.business-standard.com/rss/latest.rss",
     "https://zeenews.india.com/markets.rss",
 ]
 
