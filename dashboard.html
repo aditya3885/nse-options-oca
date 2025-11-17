@@ -123,37 +123,46 @@
                 <h2>NIFTY</h2>
                 <p>SP: <span id="nifty-sp">-</span></p>
                 <p>Value: <span id="nifty-value">-</span></p>
-                <p>Call COI: <span id="nifty-call">-K</span></p>
-                <p>Put COI: <span id="nifty-put">-K</span></p>
+                <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
+                <p>Call COI (Day): <span id="nifty-call-coi-daily">-K</span></p>
+                <p>Put COI (Day): <span id="nifty-put-coi-daily">-K</span></p>
                 <p>PCR: <span id="nifty-pcr">-</span></p>
                 <p>Sentiment: <span id="nifty-sentiment">-</span></p>
                 <p>ML Sentiment: <span id="nifty-ml-sentiment">-</span></p>
-                <p>Reason: <span id="nifty-sentiment-reason">-</span></p> <!-- ADDED -->
+                <p>Reason: <span id="nifty-sentiment-reason">-</span></p>
                 <p>OI Changes: <span id="nifty-add-exit">-</span></p>
+                <!-- NEW: Display Diff. in OI for the day -->
+                <p>Diff. in OI (Day): <span id="nifty-diff-oi-daily">-</span></p>
             </div>
             <div class="card" id="FINNIFTY_summary">
                 <h2>FINNIFTY</h2>
                 <p>SP: <span id="finnifty-sp">-</span></p>
                 <p>Value: <span id="finnifty-value">-</span></p>
-                <p>Call COI: <span id="finnifty-call">-K</span></p>
-                <p>Put COI: <span id="finnifty-put">-K</span></p>
+                <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
+                <p>Call COI (Day): <span id="finnifty-call-coi-daily">-K</span></p>
+                <p>Put COI (Day): <span id="finnifty-put-coi-daily">-K</span></p>
                 <p>PCR: <span id="finnifty-pcr">-</span></p>
                 <p>Sentiment: <span id="finnifty-sentiment">-</span></p>
                 <p>ML Sentiment: <span id="finnifty-ml-sentiment">-</span></p>
-                <p>Reason: <span id="finnifty-sentiment-reason">-</span></p> <!-- ADDED -->
+                <p>Reason: <span id="finnifty-sentiment-reason">-</span></p>
                 <p>OI Changes: <span id="finnifty-add-exit">-</span></p>
+                <!-- NEW: Display Diff. in OI for the day -->
+                <p>Diff. in OI (Day): <span id="finnifty-diff-oi-daily">-</span></p>
             </div>
             <div class="card" id="BANKNIFTY_summary">
                 <h2>BANKNIFTY</h2>
                 <p>SP: <span id="banknifty-sp">-</span></p>
                 <p>Value: <span id="banknifty-value">-</span></p>
-                <p>Call COI: <span id="banknifty-call">-K</span></p>
-                <p>Put COI: <span id="banknifty-put">-K</span></p>
+                <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
+                <p>Call COI (Day): <span id="banknifty-call-coi-daily">-K</span></p>
+                <p>Put COI (Day): <span id="banknifty-put-coi-daily">-K</span></p>
                 <p>PCR: <span id="banknifty-pcr">-</span></p>
                 <p>Sentiment: <span id="banknifty-sentiment">-</span></p>
                 <p>ML Sentiment: <span id="banknifty-ml-sentiment">-</span></p>
-                <p>Reason: <span id="banknifty-sentiment-reason">-</span></p> <!-- ADDED -->
+                <p>Reason: <span id="banknifty-sentiment-reason">-</span></p>
                 <p>OI Changes: <span id="banknifty-add-exit">-</span></p>
+                <!-- NEW: Display Diff. in OI for the day -->
+                <p>Diff. in OI (Day): <span id="banknifty-diff-oi-daily">-</span></p>
             </div>
             <div class="card" id="SENSEX_summary">
                 <h2>SENSEX</h2>
@@ -162,7 +171,7 @@
                 <p>Pct Change: <span id="sensex-pct">-%</span></p>
                 <p>Sentiment: <span id="sensex-sentiment">-</span></p>
                 <p>ML Sentiment: <span id="sensex-ml-sentiment">-</span></p>
-                <p>Reason: <span id="sensex-sentiment-reason">-</span></p> <!-- ADDED -->
+                <p>Reason: <span id="sensex-sentiment-reason">-</span></p>
             </div>
             <div class="card" id="INDIAVIX_summary">
                 <h2>INDIAVIX</h2>
@@ -171,7 +180,7 @@
                 <p>Pct Change: <span id="indiavix-pct">-%</span></p>
                 <p>Sentiment: <span id="indiavix-sentiment">-</span></p>
                 <p>ML Sentiment: <span id="indiavix-ml-sentiment">-</span></p>
-                <p>Reason: <span id="indiavix-sentiment-reason">-</span></p> <!-- ADDED -->
+                <p>Reason: <span id="indiavix-sentiment-reason">-</span></p>
             </div>
         </div>
 
@@ -200,14 +209,17 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
+                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
+                            <th>Call COI (Day)</th>
+                            <th>Put COI (Day)</th>
                             <th>PCR</th>
                             <th>Intraday PCR</th>
-                            <th>Reason for Sentiment</th> <!-- ADDED -->
+                            <th>Reason for Sentiment</th>
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
+                            <!-- NEW: Added Diff. in OI (Day) to history table -->
+                            <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -220,7 +232,7 @@
                 <div class="chart-container"><canvas id="nifty-max-pain-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-oi-chart"></canvas></div>
-                <div class="chart-container"><canvas id="nifty-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
+                <div class="chart-container"><canvas id="nifty-iv-skew-chart"></canvas></div>
                 <!-- NEW CHARTS START -->
                 <div class="chart-container"><canvas id="nifty-ce-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-coi-day-chart"></canvas></div>
@@ -245,14 +257,17 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
+                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
+                            <th>Call COI (Day)</th>
+                            <th>Put COI (Day)</th>
                             <th>PCR</th>
                             <th>Intraday PCR</th>
-                            <th>Reason for Sentiment</th> <!-- ADDED -->
+                            <th>Reason for Sentiment</th>
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
+                            <!-- NEW: Added Diff. in OI (Day) to history table -->
+                            <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -268,14 +283,17 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
+                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
+                            <th>Call COI (Day)</th>
+                            <th>Put COI (Day)</th>
                             <th>PCR</th>
                             <th>Intraday PCR</th>
-                            <th>Reason for Sentiment</th> <!-- ADDED -->
+                            <th>Reason for Sentiment</th>
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
+                            <!-- NEW: Added Diff. in OI (Day) to history table -->
+                            <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -288,7 +306,7 @@
                 <div class="chart-container"><canvas id="finnifty-max-pain-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-oi-chart"></canvas></div>
-                <div class="chart-container"><canvas id="finnifty-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
+                <div class="chart-container"><canvas id="finnifty-iv-skew-chart"></canvas></div>
                 <!-- NEW CHARTS START -->
                 <div class="chart-container"><canvas id="finnifty-ce-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-coi-day-chart"></canvas></div>
@@ -313,14 +331,17 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
+                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
+                            <th>Call COI (Day)</th>
+                            <th>Put COI (Day)</th>
                             <th>PCR</th>
                             <th>Intraday PCR</th>
-                            <th>Reason for Sentiment</th> <!-- ADDED -->
+                            <th>Reason for Sentiment</th>
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
+                            <!-- NEW: Added Diff. in OI (Day) to history table -->
+                            <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -336,14 +357,17 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
+                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
+                            <th>Call COI (Day)</th>
+                            <th>Put COI (Day)</th>
                             <th>PCR</th>
                             <th>Intraday PCR</th>
-                            <th>Reason for Sentiment</th> <!-- ADDED -->
+                            <th>Reason for Sentiment</th>
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
+                            <!-- NEW: Added Diff. in OI (Day) to history table -->
+                            <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -356,7 +380,7 @@
                 <div class="chart-container"><canvas id="banknifty-max-pain-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-oi-chart"></canvas></div>
-                <div class="chart-container"><canvas id="banknifty-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
+                <div class="chart-container"><canvas id="banknifty-iv-skew-chart"></canvas></div>
                 <!-- NEW CHARTS START -->
                 <div class="chart-container"><canvas id="banknifty-ce-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-coi-day-chart"></canvas></div>
@@ -381,14 +405,17 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <th>Call COI</th>
-                            <th>Put COI</th>
+                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
+                            <th>Call COI (Day)</th>
+                            <th>Put COI (Day)</th>
                             <th>PCR</th>
                             <th>Intraday PCR</th>
-                            <th>Reason for Sentiment</th> <!-- ADDED -->
+                            <th>Reason for Sentiment</th>
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
+                            <!-- NEW: Added Diff. in OI (Day) to history table -->
+                            <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -396,14 +423,14 @@
             </div>
         </div>
         <div id="SENSEX_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">SENSEX Today's Updates (Newest First)</h3><div class="table-container"><table id="sensex-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div> <!-- ADDED Reason column -->
+            <h3 style="margin-top: 20px;">SENSEX Today's Updates (Newest First)</h3><div class="table-container"><table id="sensex-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">SENSEX Historical Data</h3><div class="history-controls"><label for="sensex-history-date">Date:</label><input type="date" id="sensex-history-date" class="history-date-picker"><button onclick="loadHistoricalData('SENSEX')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('SENSEX')">Clear Today's SENSEX History</button></div>
-            <div class="table-container"><table id="sensex-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div> <!-- ADDED Reason column -->
+            <div class="table-container"><table id="sensex-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div id="INDIAVIX_tab" class="tabcontent">
-            <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (Newest First)</h3><div class="table-container"><table id="indiavix-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div> <!-- ADDED Reason column -->
+            <h3 style="margin-top: 20px;">INDIAVIX Today's Updates (Newest First)</h3><div class="table-container"><table id="indiavix-todays-history-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">INDIAVIX Historical Data</h3><div class="history-controls"><label for="indiavix-history-date">Date:</label><input type="date" id="indiavix-history-date" class="history-date-picker"><button onclick="loadHistoricalData('INDIAVIX')">Load History</button><button class="clear-history-button-small" onclick="clearTodaysHistory('INDIAVIX')">Clear Today's INDIAVIX History</button></div>
-            <div class="table-container"><table id="indiavix-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div> <!-- ADDED Reason column -->
+            <div class="table-container"><table id="indiavix-historical-data-table"><thead><tr><th>Time</th><th>Value</th><th>Change</th><th>Pct Change</th><th>Sentiment (Rule-Based)</th><th>Sentiment (ML-Based)</th><th>Reason for Sentiment</th></tr></thead><tbody></tbody></table></div>
         </div>
 
         <div id="EQUITY_tab" class="tabcontent">
@@ -420,11 +447,16 @@
                         <h2>Summary</h2>
                         <p>SP: <span id="equity-sp">-</span></p>
                         <p>Value: <span id="equity-value">-</span></p>
+                        <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
+                        <p>Call COI (Day): <span id="equity-call-coi-daily">-K</span></p>
+                        <p>Put COI (Day): <span id="equity-put-coi-daily">-K</span></p>
                         <p>PCR: <span id="equity-pcr">-</span></p>
                         <p>Intraday PCR: <span id="equity-intraday-pcr">-</span></p>
                         <p>Sentiment (Rule-Based): <span id="equity-sentiment">-</span></p>
                         <p>Sentiment (ML-Based): <span id="equity-ml-sentiment">-</span></p>
-                        <p>Reason: <span id="equity-sentiment-reason">-</span></p> <!-- ADDED -->
+                        <p>Reason: <span id="equity-sentiment-reason">-</span></p>
+                        <!-- NEW: Display Diff. in OI for the day -->
+                        <p>Diff. in OI (Day): <span id="equity-diff-oi-daily">-</span></p>
                     </div>
                 </div>
                 <!-- Equity Charts -->
@@ -435,7 +467,7 @@
                     <div class="chart-container"><canvas id="equity-max-pain-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-ce-oi-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-oi-chart"></canvas></div>
-                    <div class="chart-container"><canvas id="equity-iv-skew-chart"></canvas></div> <!-- ADDED: IV Skew Chart -->
+                    <div class="chart-container"><canvas id="equity-iv-skew-chart"></canvas></div>
                     <!-- NEW CHARTS START -->
                     <div class="chart-container"><canvas id="equity-ce-coi-day-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-coi-day-chart"></canvas></div>
@@ -477,14 +509,17 @@
                                 <th>Time</th>
                                 <th>SP</th>
                                 <th>Value</th>
-                                <th>Call COI</th>
-                                <th>Put COI</th>
+                                <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
+                                <th>Call COI (Day)</th>
+                                <th>Put COI (Day)</th>
                                 <th>PCR</th>
                                 <th>Intraday PCR</th>
-                                <th>Reason for Sentiment</th> <!-- ADDED -->
+                                <th>Reason for Sentiment</th>
                                 <th>Sentiment (Rule-Based)</th>
                                 <th>Sentiment (ML-Based)</th>
                                 <th style="width: 30%;">OI Changes</th>
+                                <!-- NEW: Added Diff. in OI (Day) to history table -->
+                                <th>Diff. in OI (Day)</th>
                             </tr>
                         </thead>
                     <tbody></tbody>
@@ -993,7 +1028,7 @@
             return 'neutral';
         }
 
-        // MODIFIED: addHistoryItemToTable to include sentiment_reason
+        // MODIFIED: addHistoryItemToTable to include new keys for daily COI and Diff. in OI
         function addHistoryItemToTable(tbody, item, symbol, prepend = false) {
             const tr = document.createElement('tr');
             if (YF_ASSETS.includes(symbol)) { // For YFinance assets
@@ -1004,23 +1039,26 @@
                     <td class="${getChangeColorClass(item.pcr)}">${item.pcr >= 0 ? '+' : ''}${formatNumber(item.pcr)}%</td>
                     <td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td>
                     <td>${item.ml_sentiment || 'N/A'}</td>
-                    <td>${item.sentiment_reason || 'N/A'}</td> <!-- ADDED -->
+                    <td>${item.sentiment_reason || 'N/A'}</td>
                 `;
             } else { // For OI_SYMBOLS and Equity F&O
                 const intradayPcr = item.intraday_pcr || 0.0;
                 const intradayPcrClass = intradayPcr > 1.2 ? 'positive' : (intradayPcr < 0.8 && intradayPcr !== 0) ? 'negative' : 'neutral';
+                // NEW: Use call_coi_daily, put_coi_daily, and diff_oi_daily
+                const diffOiDailyClass = getChangeColorClass(item.diff_oi_daily);
                 tr.innerHTML = `
                     <td>${item.time}</td>
                     <td>${formatNumber(item.sp,0)}</td>
                     <td>${formatNumber(item.value)}</td>
-                    <td>${formatNumber(item.call_oi,1)}K</td>
-                    <td>${formatNumber(item.put_oi,1)}K</td>
+                    <td>${formatNumber(item.call_coi_daily,1)}K</td>
+                    <td>${formatNumber(item.put_coi_daily,1)}K</td>
                     <td>${formatNumber(item.pcr)}</td>
                     <td class="${intradayPcrClass}">${formatNumber(intradayPcr)}</td>
-                    <td>${item.sentiment_reason || 'N/A'}</td> <!-- ADDED -->
+                    <td>${item.sentiment_reason || 'N/A'}</td>
                     <td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td>
                     <td class="${item.ml_sentiment && item.ml_sentiment.includes('Bullish') ? 'positive' : (item.ml_sentiment && item.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.ml_sentiment || 'N/A'}</td>
                     <td>${item.add_exit || '-'}</td>
+                    <td class="${diffOiDailyClass}">${formatNumber(item.diff_oi_daily, 0)}</td> <!-- NEW: Display Diff. in OI (Day) -->
                 `;
             }
             if (prepend) tbody.prepend(tr); else tbody.appendChild(tr);
@@ -1044,8 +1082,8 @@
             const selectedDate = dateInput.value;
             if (!selectedDate) { alert("Please select a date."); return; }
 
-            // MODIFIED: Colspan adjusted for ml_sentiment and sentiment_reason
-            const colspan = YF_ASSETS.includes(symbol) ? 7 : 11; // 7 for YFinance, 11 for OI-based
+            // MODIFIED: Colspan adjusted for ml_sentiment, sentiment_reason, and diff_oi_daily
+            const colspan = YF_ASSETS.includes(symbol) ? 7 : 12; // 7 for YFinance, 12 for OI-based
             historicalTbody.innerHTML = `<tr><td colspan="${colspan}">Loading...</td></tr>`;
             try {
                 const response = await fetch(`/history/${effectiveSymbol}/${selectedDate}`);
@@ -1646,8 +1684,16 @@
                         if (summaryCard) {
                              if(document.getElementById(`${lower}-sp`)) document.getElementById(`${lower}-sp`).textContent = formatNumber(liveData.summary.sp, 0);
                              if(summaryCard.querySelector(`#${lower}-value`)) summaryCard.querySelector(`#${lower}-value`).textContent = formatNumber(liveData.summary.value);
-                             if(document.getElementById(`${lower}-call`)) document.getElementById(`${lower}-call`).textContent = formatNumber(liveData.summary.call_oi, 1);
-                             if(document.getElementById(`${lower}-put`)) document.getElementById(`${lower}-put`).textContent = formatNumber(liveData.summary.put_oi, 1);
+                             // MODIFIED: Update to use new call_coi_daily/put_coi_daily keys
+                             if(document.getElementById(`${lower}-call-coi-daily`)) document.getElementById(`${lower}-call-coi-daily`).textContent = formatNumber(liveData.summary.call_coi_daily, 1);
+                             if(document.getElementById(`${lower}-put-coi-daily`)) document.getElementById(`${lower}-put-coi-daily`).textContent = formatNumber(liveData.summary.put_coi_daily, 1);
+                             // NEW: Update diff_oi_daily
+                             if(document.getElementById(`${lower}-diff-oi-daily`)) {
+                                 const diffOiEl = document.getElementById(`${lower}-diff-oi-daily`);
+                                 diffOiEl.textContent = formatNumber(liveData.summary.diff_oi_daily, 0);
+                                 diffOiEl.classList.remove('positive', 'negative', 'neutral');
+                                 diffOiEl.classList.add(getChangeColorClass(liveData.summary.diff_oi_daily));
+                             }
                              if(document.getElementById(`${lower}-pcr`)) document.getElementById(`${lower}-pcr`).textContent = formatNumber(liveData.summary.pcr);
                              if(document.getElementById(`${lower}-sentiment`)) {
                                  const sentimentEl = document.getElementById(`${lower}-sentiment`);
@@ -1661,7 +1707,7 @@
                                 mlSentimentEl.classList.remove('positive', 'negative', 'neutral');
                                 mlSentimentEl.classList.add(liveData.summary.ml_sentiment && liveData.summary.ml_sentiment.includes('Bullish') ? 'positive' : (liveData.summary.ml_sentiment && liveData.summary.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral'));
                              }
-                             if(document.getElementById(`${lower}-sentiment-reason`)) { // ADDED
+                             if(document.getElementById(`${lower}-sentiment-reason`)) {
                                 const sentimentReasonEl = document.getElementById(`${lower}-sentiment-reason`);
                                 sentimentReasonEl.textContent = liveData.summary.sentiment_reason || 'N/A';
                              }
@@ -1779,13 +1825,15 @@
                 pulseContainer.appendChild(pulseCard);
             }
             const pulseSummary = equityData.pulse_summary;
-            const totalOI = pulseSummary.total_call_oi + pulseSummary.total_put_oi;
+            // MODIFIED: Use new pulse_summary keys for daily COI
+            const totalOI = pulseSummary.total_call_oi + pulseSummary.total_put_oi; // These are total OI, not COI
             const callOIPct = totalOI > 0 ? (pulseSummary.total_call_oi / totalOI * 100) : 50;
             document.getElementById('equity-total-call-oi-bar').style.width = `${callOIPct}%`;
             document.getElementById('equity-total-put-oi-bar').style.width = `${100 - callOIPct}%`;
             document.getElementById('equity-total-call-oi-label').textContent = formatNumber(pulseSummary.total_call_oi, 0);
             document.getElementById('equity-total-put-oi-label').textContent = formatNumber(pulseSummary.total_put_oi, 0);
 
+            // Using total_call_coi and total_put_coi from pulse_summary for daily change
             const totalCOI = Math.abs(pulseSummary.total_call_coi) + Math.abs(pulseSummary.total_put_coi);
             const callCOIPct = totalCOI > 0 ? (Math.abs(pulseSummary.total_call_coi) / totalCOI * 100) : 50;
             document.getElementById('equity-total-call-coi-bar').style.width = `${callCOIPct}%`;
@@ -1796,6 +1844,15 @@
             const summary = equityData.summary;
             document.getElementById('equity-sp').textContent = formatNumber(summary.sp, 0);
             document.getElementById('equity-value').textContent = formatNumber(summary.value);
+            // MODIFIED: Update to use new call_coi_daily/put_coi_daily keys
+            document.getElementById('equity-call-coi-daily').textContent = formatNumber(summary.call_coi_daily, 1);
+            document.getElementById('equity-put-coi-daily').textContent = formatNumber(summary.put_coi_daily, 1);
+            // NEW: Update diff_oi_daily
+            const equityDiffOiEl = document.getElementById('equity-diff-oi-daily');
+            equityDiffOiEl.textContent = formatNumber(summary.diff_oi_daily, 0);
+            equityDiffOiEl.classList.remove('positive', 'negative', 'neutral');
+            equityDiffOiEl.classList.add(getChangeColorClass(summary.diff_oi_daily));
+
             document.getElementById('equity-pcr').textContent = formatNumber(summary.pcr);
             document.getElementById('equity-intraday-pcr').textContent = formatNumber(summary.intraday_pcr);
             const equitySentimentEl = document.getElementById('equity-sentiment');

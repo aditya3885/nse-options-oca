@@ -519,17 +519,63 @@ class DeepSeekBot:
         now = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
         current_time_only = now.time()
 
-        # REMOVED THE MARKET HOURS CHECK HERE TO ALLOW BOT TO RUN ALWAYS
+        # --- MODIFICATION START (to run bot always) ---
+        # Removed the market hours check from here to allow continuous bot operation
         # if not (AI_BOT_TRADING_START_TIME <= current_time_only <= AI_BOT_TRADING_END_TIME):
-        #     # ... (existing exit logic for market close)
-        #     return {"recommendation": "Neutral", "rationale": "Outside trading hours.",
+        #     if symbol in self.active_trades:
+        #         entry_premium_ce = float(self.active_trades[symbol].get('entry_premium_ce', 0))
+        #         entry_premium_pe = float(self.active_trades[symbol].get('entry_premium_pe', 0))
+
+        #         lot_size = 50
+        #         if symbol == "NIFTY":
+        #             lot_size = 50
+        #         elif symbol == "BANKNIFTY":
+        #             lot_size = 15
+        #         elif symbol == "FINNIFTY":
+        #             lot_size = 40
+
+        #         active_otm_ce_strike = float(self.active_trades[symbol].get('otm_ce_strike', 0))  # Cast
+        #         active_otm_pe_strike = float(self.active_trades[symbol].get('otm_pe_strike', 0))  # Cast
+
+        #         premium_ce_exit = float(df_ce[df_ce['strikePrice'] == active_otm_ce_strike]['lastPrice'].iloc[0]) if not \
+        #         df_ce[
+        #             df_ce['strikePrice'] == active_otm_ce_strike].empty else 0.0  # Cast
+        #         premium_pe_exit = float(df_pe[df_pe['strikePrice'] == active_otm_pe_strike]['lastPrice'].iloc[0]) if not \
+        #         df_pe[
+        #             df_pe['strikePrice'] == active_otm_pe_strike].empty else 0.0  # Cast
+
+        #         current_pnl = 0.0
+        #         if "CE" in self.active_trades[symbol].get('strikes', '') and entry_premium_ce > 0:
+        #             current_pnl += (entry_premium_ce - premium_ce_exit) * lot_size
+        #         if "PE" in self.active_trades[symbol].get('strikes', '') and entry_premium_pe > 0:
+        #             current_pnl += (entry_premium_pe - premium_pe_exit) * lot_size
+
+        #         final_exit_rec = {
+        #             "recommendation": "EXIT", "rationale": "Market closed, exiting active trade.",
         #             "timestamp": now.isoformat(),
-        #             "trade": "-", "strikes": "-", "type": "-",
-        #             "risk_pct": "-",
-        #             "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Trade",
-        #             "pnl": 0.0, "action_price": 0.0,
+        #             "trade": "Exit " + self.active_trades[symbol].get('trade', 'previous trade'),
+        #             "strikes": self.active_trades[symbol].get('strikes', '-'),
+        #             "type": "Exit", "risk_pct": "-", "exit_rule": "Market Close",
+        #             "spot": float(self.active_trades[symbol].get('spot')),  # Cast
+        #             "pcr": float(self.active_trades[symbol].get('pcr')),  # Cast
+        #             "intraday_pcr": float(self.active_trades[symbol].get('intraday_pcr')),  # Cast
+        #             "status": "Exit", "pnl": round(float(current_pnl), 2),  # Cast
+        #             "action_price": round(float(premium_ce_exit + premium_pe_exit), 2),  # Cast
         #             "symbol": symbol
-        #             }
+        #         }
+        #         ai_bot_trade_history.append(final_exit_rec)
+        #         self.active_trades.pop(symbol, None)
+        #         return final_exit_rec
+        #     else:
+        #         return {"recommendation": "Neutral", "rationale": "Outside trading hours.",
+        #                 "timestamp": now.isoformat(),
+        #                 "trade": "-", "strikes": "-", "type": "-",
+        #                 "risk_pct": "-",
+        #                 "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Trade",
+        #                 "pnl": 0.0, "action_price": 0.0,
+        #                 "symbol": symbol
+        #                 }
+        # --- MODIFICATION END (to run bot always) ---
 
         if not history:
             return {"recommendation": "Neutral", "rationale": "No history data available.",
@@ -629,10 +675,12 @@ class DeepSeekBot:
                 exit_triggered = True
                 exit_reason = f"PCR reversed {abs(pcr - entry_pcr):.2f} from entry ({entry_pcr:.2f})."
 
-            # REMOVED THE MARKET HOURS EXIT LOGIC HERE
+            # --- MODIFICATION START (to run bot always) ---
+            # Removed the market hours exit logic here
             # if now.hour >= 15 and now.minute >= 15:
             #     exit_triggered = True
             #     exit_reason = "Approaching end of day (3:15 PM), time to exit."
+            # --- MODIFICATION END (to run bot always) ---
 
             if exit_triggered:
                 recommendation = "EXIT"
@@ -648,7 +696,7 @@ class DeepSeekBot:
 
                 pnl = round(float(current_pnl), 2)  # Cast
                 action_price = float(premium_ce + premium_pe) if "Strangle" in prev_trade.get('trade', '') else (
-                # Cast
+                    # Cast
                     float(premium_ce) if "CE" in prev_trade.get('strikes', '') else float(premium_pe))  # Cast
 
                 self.active_trades.pop(symbol, None)
@@ -953,7 +1001,8 @@ class NewsAnalyzer:
         now_ts = time.time()
         current_time_only = self.analyzer._get_ist_time().time()
 
-        # REMOVED MARKET HOURS CHECK FOR NEWS FETCHER
+        # --- MODIFICATION START (to run news always) ---
+        # Removed market hours check for news fetcher
         # if not (datetime.time(9, 0) <= current_time_only <= datetime.time(16, 0)):
         #     if self.analyzer.conn:
         #         cur = None
@@ -971,6 +1020,7 @@ class NewsAnalyzer:
         #             if cur:
         #                 cur.close()
         #     return
+        # --- MODIFICATION END (to run news always) ---
 
         if now_ts - self.last_news_check_time < NEWS_FETCH_INTERVAL:
             return
@@ -1403,7 +1453,6 @@ class NseBseAnalyzer:
                     shared_data[sym]['ce_coi_30min_chart_data'] = []
                     shared_data[sym]['pe_coi_30min_chart_data'] = []
 
-
     def _load_todays_history_from_db(self):
         if not self.conn:
             return
@@ -1521,15 +1570,33 @@ class NseBseAnalyzer:
             current_time_only = now_ist.time()
             symbols_to_process = AUTO_SYMBOLS
 
+            # --- MODIFICATION START (to run data fetch always) ---
+            # Removed the market hours check from here to allow continuous data fetching
+            # for sym in symbols_to_process:
+            #     if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list:
+            #         if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
+            #             if sym in self.deepseek_bot.active_trades:
+            #                 current_vix_value = float(
+            #                     shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
+            #                         "current_value", 15.0))
+            #                 active_trade_info = self.deepseek_bot.active_trades[sym]
+            #                 dummy_df_ce = pd.DataFrame(
+            #                     [{'strikePrice': float(active_trade_info.get('otm_ce_strike', 0)), 'openInterest': 0,
+            #                       # Cast
+            #                       'lastPrice': float(active_trade_info.get('entry_premium_ce', 0))}])  # Cast
+            #                 dummy_df_pe = pd.DataFrame(
+            #                     [{'strikePrice': float(active_trade_info.get('otm_pe_strike', 0)), 'openInterest': 0,
+            #                       # Cast
+            #                       'lastPrice': float(active_trade_info.get('entry_premium_pe', 0))}])  # Cast
+            #                 self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []),
+            #                                                         current_vix_value,
+            #                                                         dummy_df_ce, dummy_df_pe)
+            #                 broadcast_live_update()
+            #             print(
+            #                 f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
+            #             continue
+            # --- MODIFICATION END (to run data fetch always) ---
             for sym in symbols_to_process:
-                # Removed the market hours check from here to allow continuous data fetching
-                # if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list:
-                #     if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
-                #         if sym in self.deepseek_bot.active_trades:
-                #             # ... (existing bot exit logic for market close)
-                #         print(
-                #             f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
-                #         continue
                 try:
                     self.fetch_and_process_symbol(sym)
                 except Exception as e:
@@ -1546,6 +1613,7 @@ class NseBseAnalyzer:
             now_ist = self._get_ist_time()
             current_time_only = now_ist.time()
 
+            # --- MODIFICATION START (to run equity fetch always) ---
             # Removed the market hours check from here to allow continuous data fetching
             # if NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME:
             print(f"Starting F&O equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
@@ -1563,22 +1631,33 @@ class NseBseAnalyzer:
             self.rank_and_emit_movers()
             print(f"F&O Equity fetch cycle finished. Sleeping for {EQUITY_FETCH_INTERVAL} seconds.")
             time.sleep(EQUITY_FETCH_INTERVAL)
-            # else: # This else block is now removed as we always run
+            # else:
             #     print(
             #         f"Market is closed. F&O Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}. Retaining last data.")
             #     for sym in fno_stocks_list:
             #         if sym in self.deepseek_bot.active_trades:
-            #             # ... (existing bot exit logic for market close)
+            #             current_vix_value = float(
+            #                 shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
+            #                     "current_value", 15.0))
+            #             active_trade_info = self.deepseek_bot.active_trades[sym]
+            #             dummy_df_ce = pd.DataFrame(
+            #                 [{'strikePrice': float(active_trade_info.get('otm_ce_strike', 0)), 'openInterest': 0,
+            #                   # Cast
+            #                   'lastPrice': float(active_trade_info.get('entry_premium_ce', 0))}])  # Cast
+            #             dummy_df_pe = pd.DataFrame(
+            #                 [{'strikePrice': float(active_trade_info.get('otm_pe_strike', 0)), 'openInterest': 0,
+            #                   # Cast
+            #                   'lastPrice': float(active_trade_info.get('entry_premium_pe', 0))}])  # Cast
             #             self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
             #                                                     dummy_df_ce, dummy_df_pe)
             #             broadcast_live_update()
             #     time.sleep(60)
+            # --- MODIFICATION END (to run equity fetch always) ---
 
     def bhavcopy_scanner_thread(self):
         print("Bhavcopy scanner thread started.")
         while not self.stop.is_set():
             now_ist = self._get_ist_time()
-            # This check for 21:00 (9 PM) is fine, as bhavcopy is typically released after market close
             if now_ist.hour >= 21 and (self.bhavcopy_last_run_date != now_ist.date().isoformat()):
                 print(f"--- Triggering daily Bhavcopy scan for {now_ist.date().isoformat()} ---")
                 scan_successful = False
@@ -2021,7 +2100,7 @@ class NseBseAnalyzer:
                                 int(fno_item['Volume']),  # Cast to int
                                 float(fno_item['Close']),  # Cast to float
                                 float(fno_item['Delivery %']) if fno_item['Delivery %'] is not None else None
-                            # Cast to float
+                                # Cast to float
                             )
                         )
                     print(f"Saved {len(all_fno_data_for_date)} F&O bhavcopy records for {db_date_str} to the database.")
@@ -2730,7 +2809,7 @@ class NseBseAnalyzer:
                     'expiry': 'N/A',
                     'ml_sentiment': 'N/A',
                     'symbol': sym,
-                    'sentiment_reason': sentiment_yfinance,
+                    'sentiment_reason': sentiment_reason_yfinance,
                     'implied_volatility': 0.0,  # Placeholder for IV for YFinance symbols
                     'change': round(float(change), 2),  # Explicitly add change
                     'percentage_change': round(float(pct_change), 2)  # Explicitly add percentage change
@@ -2748,7 +2827,6 @@ class NseBseAnalyzer:
                 shared_data[sym]['pe_coi_15min_chart_data'] = []
                 shared_data[sym]['ce_coi_30min_chart_data'] = []
                 shared_data[sym]['pe_coi_30min_chart_data'] = []
-
 
             print(f"{sym} YFINANCE DATA UPDATED | Value: {current_price:.2f}")
             broadcast_live_update()
@@ -2793,9 +2871,9 @@ class NseBseAnalyzer:
         """
         url = self.url_equities + sym if is_equity else self.url_indices + sym
 
-        print(f"DEBUG: Attempting to fetch NSE Option Chain for {sym} from URL: {url}")  # Added logging
+        print(f"DEBUG: Attempting to fetch NSE Option Chain for {sym} from URL: {url}")
 
-        response = None  # Initialize response outside the loop
+        response = None
         for attempt in range(2):
             try:
                 response = self.session.get(url, headers=self.nse_headers, timeout=10, verify=False)
@@ -2808,8 +2886,6 @@ class NseBseAnalyzer:
                     break
                 else:
                     print(f"DEBUG: HTTP Error {response.status_code} for {sym} (Attempt {attempt + 1}).")
-                    # Only raise for status if it's the final attempt or not 403
-                    # (and only if response is not None, though it should be here)
                     if response is not None:
                         response.raise_for_status()
             except requests.exceptions.RequestException as e:
@@ -2820,96 +2896,83 @@ class NseBseAnalyzer:
                     time.sleep(1)
                 else:
                     print(f"DEBUG: Failed to fetch {sym} after retry. Returning None.")
-                    return None  # Return None if requests fail after retries
+                    return None
 
-        if response is None or response.status_code != 200:  # Final check after loop, if response was never set or not 200
+        if response is None or response.status_code != 200:
             print(
                 f"DEBUG: Final HTTP status for {sym} is {response.status_code if response else 'N/A'}. Returning None.")
             return None
 
         try:
             data = response.json()
-        except ValueError as e:  # Catch JSON decoding errors
+        except ValueError as e:
             print(
                 f"DEBUG: JSON decoding error for {sym}: {e}. Response content: {response.text[:200]}... Returning None.")
             return None
 
         if not data.get('records') or not data['records'].get('data'):
-            print(f"DEBUG: No 'records' or 'data' found in JSON response for {sym}. Returning None.")  # Added logging
-            return None  # <--- PROBLEM POINT 1
+            print(f"DEBUG: No 'records' or 'data' found in JSON response for {sym}. Returning None.")
+            return None
 
         expiry_dates = data['records']['expiryDates']
         if not expiry_dates:
-            print(f"DEBUG: No expiry dates found for {sym} in JSON response. Returning None.")  # Added logging
-            return None  # <--- PROBLEM POINT 2
+            print(f"DEBUG: No expiry dates found for {sym} in JSON response. Returning None.")
+            return None
 
-        # Ensure expiry is a valid date string from the list
         expiry = expiry_dates[0]
-        # Check if underlyingValue exists before trying to cast
         if 'underlyingValue' not in data['records'] or data['records']['underlyingValue'] is None:
             print(f"DEBUG: 'underlyingValue' not found or is None for {sym}. Returning None.")
             return None
 
-        underlying = float(data['records']['underlyingValue'])  # Cast to float
-        print(f"DEBUG: Found expiry: {expiry}, Underlying: {underlying} for {sym}.")  # Added logging
+        underlying = float(data['records']['underlyingValue'])
+        print(f"DEBUG: Found expiry: {expiry}, Underlying: {underlying} for {sym}.")
 
         prev_price = initial_underlying_values.get(sym)
 
-        # Calculate change and percentage change for NSE symbols
         current_change = 0.0
         current_pct_change = 0.0
         if prev_price is None:
-            # If no previous price, initialize it for the next run
             initial_underlying_values[sym] = underlying
             print(f"DEBUG: Initializing underlying value for {sym}: {underlying}")
         else:
             current_change = underlying - prev_price
             current_pct_change = (current_change / prev_price) * 100 if prev_price != 0 else 0.0
-            initial_underlying_values[sym] = underlying  # Update previous price for next calculation
+            initial_underlying_values[sym] = underlying
             print(f"DEBUG: Calculated change for {sym}: {current_change:.2f} ({current_pct_change:.2f}%)")
 
-        # Extract impliedVolatility directly from the API response
         ce_values = [d['CE'] for d in data['records']['data'] if 'CE' in d and d['expiryDate'] == expiry]
         pe_values = [d['PE'] for d in data['records']['data'] if 'PE' in d and d['expiryDate'] == expiry]
 
         if not ce_values or not pe_values:
             print(
-                f"DEBUG: No CE ({len(ce_values)}) or PE ({len(pe_values)}) values found for {sym} for expiry {expiry}. Returning None.")  # Added logging
-            return None  # <--- PROBLEM POINT 3
+                f"DEBUG: No CE ({len(ce_values)}) or PE ({len(pe_values)}) values found for {sym} for expiry {expiry}. Returning None.")
+            return None
 
-        # Include 'impliedVolatility' in DataFrame creation
         df_ce = pd.DataFrame(ce_values)
         df_pe = pd.DataFrame(pe_values)
 
-        # Initialize ce_dt_for_charts and pe_dt_for_charts here to avoid NameError
         ce_dt_for_charts = pd.DataFrame()
         pe_dt_for_charts = pd.DataFrame()
 
-        # Populate them if df_ce and df_pe are not empty
         if not df_ce.empty:
-            # Ensure 'strikePrice' and 'impliedVolatility' are present and numeric before sorting/copying
             for col in ['strikePrice', 'impliedVolatility', 'openInterest', 'changeinOpenInterest', 'lastPrice',
                         'totalTradedVolume']:
                 if col not in df_ce.columns:
-                    df_ce[col] = 0.0  # Add missing columns with default value
-                df_ce[col] = pd.to_numeric(df_ce[col], errors='coerce').fillna(0)  # Convert to numeric, handle NaNs
+                    df_ce[col] = 0.0
+                df_ce[col] = pd.to_numeric(df_ce[col], errors='coerce').fillna(0)
             ce_dt_for_charts = df_ce.sort_values(by='strikePrice', ascending=True).copy()
         if not df_pe.empty:
-            # Ensure 'strikePrice' and 'impliedVolatility' are present and numeric before sorting/copying
             for col in ['strikePrice', 'impliedVolatility', 'openInterest', 'changeinOpenInterest', 'lastPrice',
                         'totalTradedVolume']:
                 if col not in df_pe.columns:
-                    df_pe[col] = 0.0  # Add missing columns with default value
-                df_pe[col] = pd.to_numeric(df_pe[col], errors='coerce').fillna(0)  # Convert to numeric, handle NaNs
+                    df_pe[col] = 0.0
+                df_pe[col] = pd.to_numeric(df_pe[col], errors='coerce').fillna(0)
             pe_dt_for_charts = df_pe.sort_values(by='strikePrice', ascending=True).copy()
 
-        # Check if ce_dt_for_charts or pe_dt_for_charts became empty after cleaning/conversion
         if ce_dt_for_charts.empty or pe_dt_for_charts.empty:
             print(f"DEBUG: CE or PE dataframes became empty after cleaning/conversion for {sym}. Returning None.")
             return None
 
-        # The merge uses ce_dt_for_charts and pe_dt_for_charts
-        # Ensure all columns exist before merging, providing default if not
         required_cols_ce = ['strikePrice', 'openInterest', 'changeinOpenInterest', 'lastPrice', 'impliedVolatility',
                             'totalTradedVolume']
         required_cols_pe = ['strikePrice', 'openInterest', 'changeinOpenInterest', 'lastPrice', 'impliedVolatility',
@@ -2927,23 +2990,19 @@ class NseBseAnalyzer:
                       on='strikePrice', how='outer',
                       suffixes=('_call', '_put')).fillna(0)
 
-        # Ensure strikePrice column is numeric before passing to get_atm_strike
         df['strikePrice'] = pd.to_numeric(df['strikePrice'], errors='coerce').fillna(0)
 
         sp = self.get_atm_strike(df, underlying)
 
         if not sp:
-            print(f"DEBUG: Could not determine ATM strike for {sym}. Returning None.")  # Added logging
+            print(f"DEBUG: Could not determine ATM strike for {sym}. Returning None.")
             return None
 
-        # Ensure 'strikePrice' column is numeric before comparison
         df['strikePrice'] = pd.to_numeric(df['strikePrice'], errors='coerce')
 
-        # Find the row where strikePrice is closest to sp
         if sp not in df['strikePrice'].values:
-            # If the exact ATM strike is not found, find the closest one in the DataFrame for indexing
             idx_series = (df['strikePrice'] - sp).abs().idxmin()
-            idx = df.loc[idx_series].name  # Get the index of the closest row
+            idx = df.loc[idx_series].name
             print(
                 f"DEBUG: Exact ATM strike {sp} not found for {sym}. Using closest strike {df.loc[idx, 'strikePrice']} at index {idx}.")
         else:
@@ -2960,17 +3019,19 @@ class NseBseAnalyzer:
             if not (0 <= idx + i < len(df)):
                 continue
             row = df.iloc[idx + i]
-            # Safely get values, converting to int/float and handling potential NaNs from merge/fillna
             strike = int(row['strikePrice'])
             call_oi = int(row.get('openInterest_call', 0))
             put_oi = int(row.get('openInterest_put', 0))
-            call_coi = int(row.get('changeinOpenInterest_call', 0))
-            put_coi = int(row.get('changeinOpenInterest_put', 0))
+            # IMPORTANT: Use changeinOpenInterest_call/put from the API for the daily cumulative COI
+            call_coi_daily = int(row.get('changeinOpenInterest_call', 0))
+            put_coi_daily = int(row.get('changeinOpenInterest_put', 0))
 
-            call_buildup = self._get_oi_buildup(current_change, call_coi)  # Use current_change here
-            put_buildup = self._get_oi_buildup(current_change, put_coi)  # Use current_change here
-            call_action = "ADD" if call_coi > 0 else "EXIT" if call_coi < 0 else ""
-            put_action = "ADD" if put_oi > 0 else "EXIT" if put_coi < 0 else ""
+            call_buildup = self._get_oi_buildup(current_change, call_coi_daily)
+            put_buildup = self._get_oi_buildup(current_change, put_coi_daily)
+            call_action = "ADD" if call_coi_daily > 0 else "EXIT" if call_coi_daily < 0 else ""
+            # --- FIX: Changed 'put_coi' to 'put_coi_daily' ---
+            put_action = "ADD" if put_oi > 0 else "EXIT" if put_coi_daily < 0 else ""
+            # --- END FIX ---
 
             if call_action == "ADD":
                 ce_add_strikes.append(str(strike))
@@ -2981,32 +3042,38 @@ class NseBseAnalyzer:
             elif put_action == "EXIT":
                 pe_exit_strikes.append(str(strike))
 
-            # Get IV for this strike directly from the DataFrame
-            call_iv = float(row.get('impliedVolatility_call', 0.0))  # Cast to float
-            put_iv = float(row.get('impliedVolatility_put', 0.0))  # Cast to float
+            call_iv = float(row.get('impliedVolatility_call', 0.0))
+            put_iv = float(row.get('impliedVolatility_put', 0.0))
 
             strikes_data.append(
-                {'strike': strike, 'call_oi': call_oi, 'call_coi': call_coi, 'call_action': call_action,
-                 'put_oi': put_oi, 'put_coi': put_coi, 'put_action': put_action, 'is_atm': i == 0,
+                {'strike': strike, 'call_oi': call_oi, 'call_coi': call_coi_daily, 'call_action': call_action,
+                 'put_oi': put_oi, 'put_coi': put_coi_daily, 'put_action': put_action, 'is_atm': i == 0,
                  'call_buildup': call_buildup, 'put_buildup': put_buildup,
                  'call_iv': round(call_iv, 2), 'put_iv': round(put_iv, 2)
                  })
 
-        total_call_oi = int(df['openInterest_call'].sum())  # Cast to int
-        total_put_oi = int(df['openInterest_put'].sum())  # Cast to int
-        total_call_coi = int(df['changeinOpenInterest_call'].sum())  # Cast to int
-        total_put_coi = int(df['changeinOpenInterest_put'].sum())  # Cast to int
+        total_call_oi = int(df['openInterest_call'].sum())  # Total current OI, not change
+        total_put_oi = int(df['openInterest_put'].sum())  # Total current OI, not change
 
-        pcr = round(float(total_put_oi) / float(total_call_oi), 2) if total_call_oi else 0.0  # Cast to float
-        intraday_pcr = round(float(total_put_coi) / float(total_call_coi),
-                             2) if total_call_coi != 0 else 0.0  # Cast to float
+        # --- MODIFICATION START: Renamed variables for clarity of daily COI ---
+        total_call_coi_daily = int(df['changeinOpenInterest_call'].sum())  # This is the daily cumulative COI from API
+        total_put_coi_daily = int(df['changeinOpenInterest_put'].sum())  # This is the daily cumulative COI from API
 
-        # Find ATM strike data for IV calculation
+        # --- NEW: Calculate Diff. in OI for the day ---
+        diff_oi_daily = total_call_coi_daily - total_put_coi_daily  # Calculate the difference
+        # --- MODIFICATION END ---
+
+        pcr = round(float(total_put_oi) / float(total_call_oi), 2) if total_call_oi else 0.0
+        # --- MODIFICATION START: Use daily COI for intraday PCR if that's the intention ---
+        # Assuming 'intraday_pcr' is meant to be based on the day's *change* in OI, not total OI
+        intraday_pcr = round(float(total_put_coi_daily) / float(total_call_coi_daily),
+                             2) if total_call_coi_daily != 0 else 0.0
+        # --- MODIFICATION END ---
+
         atm_strike_data = next((s for s in strikes_data if s['is_atm']), None)
-        atm_call_iv = float(atm_strike_data.get('call_iv', 0.0)) if atm_strike_data else 0.0  # Cast to float
-        atm_put_iv = float(atm_strike_data.get('put_iv', 0.0)) if atm_strike_data else 0.0  # Cast to float
+        atm_call_iv = float(atm_strike_data.get('call_iv', 0.0)) if atm_strike_data else 0.0
+        atm_put_iv = float(atm_strike_data.get('put_iv', 0.0)) if atm_strike_data else 0.0
 
-        # Simple average of ATM Call and Put IVs, considering if one is zero
         average_iv = 0.0
         if atm_call_iv > 0 and atm_put_iv > 0:
             average_iv = (atm_call_iv + atm_put_iv) / 2
@@ -3015,57 +3082,51 @@ class NseBseAnalyzer:
         elif atm_put_iv > 0:
             average_iv = atm_put_iv
 
-        # New sentiment analysis inputs
         max_pain_df_calc = self._calculate_max_pain(df_ce, df_pe)
         max_pain_strike = float(max_pain_df_calc.loc[max_pain_df_calc['TotalMaxPain'].idxmin()][
-                                    'StrikePrice']) if not max_pain_df_calc.empty else None  # Cast to float
+                                    'StrikePrice']) if not max_pain_df_calc.empty else None
 
-        # Calculate IV Skew (Put IV - Call IV for ATM strikes, as per definition)
         iv_skew = round(atm_put_iv - atm_call_iv, 2)
 
-        # Highest Put/Call OI Strikes
         highest_put_oi_strike = float(
-            df_pe.loc[df_pe['openInterest'].idxmax()]['strikePrice']) if not df_pe.empty else None  # Cast to float
+            df_pe.loc[df_pe['openInterest'].idxmax()]['strikePrice']) if not df_pe.empty else None
         highest_call_oi_strike = float(
-            df_ce.loc[df_ce['openInterest'].idxmax()]['strikePrice']) if not df_ce.empty else None  # Cast to float
+            df_ce.loc[df_ce['openInterest'].idxmax()]['strikePrice']) if not df_ce.empty else None
 
-        # Volume PCR
         total_call_volume = int(
-            df['totalTradedVolume_call'].sum()) if 'totalTradedVolume_call' in df.columns else 0  # Cast to int
+            df['totalTradedVolume_call'].sum()) if 'totalTradedVolume_call' in df.columns else 0
         total_put_volume = int(
-            df['totalTradedVolume_put'].sum()) if 'totalTradedVolume_put' in df.columns else 0  # Cast to int
+            df['totalTradedVolume_put'].sum()) if 'totalTradedVolume_put' in df.columns else 0
         volume_pcr = round(float(total_put_volume) / float(total_call_volume),
-                           2) if total_call_volume > 0 else 0.0  # Cast to float
+                           2) if total_call_volume > 0 else 0.0
 
-        # Historical Average IV (from cache or calculation)
-        # For a more robust solution, you'd fetch this from historical data
-        # For now, let's use a dummy value or a VIX-derived value
-        historical_avg_iv = 15.0  # This needs to be dynamically calculated or fetched
+        historical_avg_iv = 15.0
         current_vix = float(
-            shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get("current_value", 15.0))  # Cast to float
+            shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get("current_value", 15.0))
 
-        # Determine appropriate historical_avg_iv based on VIX range and symbol
         symbol_key_for_iv = sym if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] else "EQUITY"
         vix_iv_ranges = self.mean_iv_ranges.get(symbol_key_for_iv, self.mean_iv_ranges["EQUITY"])
 
-        effective_historical_avg_iv = historical_avg_iv  # Default if no match
+        effective_historical_avg_iv = historical_avg_iv
         for vix_range, iv_range in vix_iv_ranges.items():
-            if float(vix_range[0]) <= float(current_vix) < float(vix_range[1]):  # Cast
+            if float(vix_range[0]) <= float(current_vix) < float(vix_range[1]):
                 effective_historical_avg_iv = (float(iv_range[0]) + float(
-                    iv_range[1])) / 2  # Midpoint of the IV range, cast
+                    iv_range[1])) / 2
                 break
 
         current_history_for_sym = todays_history.get(sym, [])
 
+        # --- MODIFICATION START: Pass correct daily COI variables to get_sentiment ---
         rule_based_sentiment, sentiment_reason = self.get_sentiment(
-            pcr, intraday_pcr, total_call_coi, total_put_coi, sym,
+            pcr, intraday_pcr, total_call_coi_daily, total_put_coi_daily, sym,
             current_history_for_sym, underlying, max_pain_strike,
             average_iv, iv_skew, highest_put_oi_strike, highest_call_oi_strike,
             volume_pcr, effective_historical_avg_iv, current_vix
         )
 
-        ml_sentiment = self.get_ml_sentiment(pcr, intraday_pcr, total_call_coi, total_put_coi, sym,
+        ml_sentiment = self.get_ml_sentiment(pcr, intraday_pcr, total_call_coi_daily, total_put_coi_daily, sym,
                                              current_history_for_sym)
+        # --- MODIFICATION END ---
 
         add_exit_str = " | ".join(filter(None,
                                          [f"CE Add: {', '.join(sorted(ce_add_strikes))}" if ce_add_strikes else "",
@@ -3073,57 +3134,67 @@ class NseBseAnalyzer:
                                           f"CE Exit: {', '.join(sorted(ce_exit_strikes))}" if ce_exit_strikes else "",
                                           f"PE Exit: {', '.join(sorted(pe_exit_strikes))}" if pe_exit_strikes else ""])) or "No Change"
 
-        summary = {'time': self._get_ist_time().strftime("%H:%M"), 'sp': int(sp), 'value': int(round(underlying)),
-                   'call_oi': round(float(total_call_coi) / 1000, 1), 'put_oi': round(float(total_put_coi) / 1000, 1),
-                   'pcr': float(pcr),  # Cast
-                   'sentiment': rule_based_sentiment, 'expiry': expiry, 'add_exit': add_exit_str,
-                   'intraday_pcr': float(intraday_pcr),  # Cast
-                   'total_call_coi': int(total_call_coi), 'total_put_coi': int(total_put_coi),  # Cast
+        # --- MODIFICATION START: The 'summary' dictionary ---
+        summary = {'time': self._get_ist_time().strftime("%H:%M"),
+                   'sp': int(sp),
+                   'value': int(round(underlying)),
+                   'call_oi': round(float(total_call_oi) / 1000, 1),  # Total OI for display
+                   'put_oi': round(float(total_put_oi) / 1000, 1),  # Total OI for display
+                   'call_coi_daily': round(float(total_call_coi_daily) / 1000, 1),  # Daily cumulative Call COI (in K)
+                   'put_coi_daily': round(float(total_put_coi_daily) / 1000, 1),  # Daily cumulative Put COI (in K)
+                   'pcr': float(pcr),
+                   'sentiment': rule_based_sentiment,
+                   'expiry': expiry,
+                   'add_exit': add_exit_str,
+                   'intraday_pcr': float(intraday_pcr),
+                   'total_call_coi': int(total_call_coi_daily),  # Raw total daily cumulative Call COI
+                   'total_put_coi': int(total_put_coi_daily),  # Raw total daily cumulative Put COI
+                   'diff_oi_daily': int(diff_oi_daily),  # Explicitly add the daily OI difference
                    'ml_sentiment': ml_sentiment,
                    'sentiment_reason': sentiment_reason,
                    'symbol': sym,
-                   'implied_volatility': round(float(average_iv), 2),  # Cast
-                   'change': round(current_change, 2),  # ADDED: Change
-                   'percentage_change': round(current_pct_change, 2)  # ADDED: Percentage Change
+                   'implied_volatility': round(float(average_iv), 2),
+                   'change': round(current_change, 2),
+                   'percentage_change': round(current_pct_change, 2)
                    }
+        # --- MODIFICATION END ---
 
-        pulse_summary = {'total_call_oi': int(total_call_coi), 'total_put_oi': int(total_put_coi),  # Cast
-                         'total_call_coi': int(total_call_coi), 'total_put_oi': int(total_put_coi),  # Cast
-                         'implied_volatility': round(float(average_iv), 2)  # Cast
+        # --- MODIFICATION START: The 'pulse_summary' dictionary ---
+        pulse_summary = {'total_call_oi': int(total_call_coi_daily),
+                         'total_put_oi': int(total_put_coi_daily),
+                         'diff_oi_daily': int(diff_oi_daily),  # Add this here too if needed
+                         'implied_volatility': round(float(average_iv), 2)
                          }
+        # --- MODIFICATION END ---
 
-        # Convert max_pain_chart_data elements to standard Python types
         max_pain_chart_data = []
         if not max_pain_df_calc.empty:
             for _, row in max_pain_df_calc.iterrows():
                 max_pain_chart_data.append({
-                    'StrikePrice': float(row['StrikePrice']),  # Cast to float
-                    'TotalMaxPain': float(row['TotalMaxPain'])  # Cast to float
+                    'StrikePrice': float(row['StrikePrice']),
+                    'TotalMaxPain': float(row['TotalMaxPain'])
                 })
 
-        # Convert ce_oi_chart_data elements to standard Python types (TOTAL OI)
         final_ce_oi_data = []
         if not ce_dt_for_charts.empty:
-            # Sort by strikePrice to ensure consistent order for charts
             ce_dt_for_charts_sorted = ce_dt_for_charts.sort_values(by='strikePrice').copy()
             for _, row in ce_dt_for_charts_sorted.iterrows():
                 final_ce_oi_data.append({
-                    'strikePrice': float(row['strikePrice']),  # Cast to float
-                    'openInterest': int(row['openInterest'])  # Cast to int
+                    'strikePrice': float(row['strikePrice']),
+                    'openInterest': int(row['openInterest'])
                 })
 
-        # Convert pe_oi_chart_data elements to standard Python types (TOTAL OI)
         final_pe_oi_data = []
         if not pe_dt_for_charts.empty:
-            # Sort by strikePrice to ensure consistent order for charts
             pe_dt_for_charts_sorted = pe_dt_for_charts.sort_values(by='strikePrice').copy()
             for _, row in pe_dt_for_charts_sorted.iterrows():
                 final_pe_oi_data.append({
-                    'strikePrice': float(row['strikePrice']),  # Cast to float
-                    'openInterest': int(row['openInterest'])  # Cast to int
+                    'strikePrice': float(row['strikePrice']),
+                    'openInterest': int(row['openInterest'])
                 })
 
         # --- NEW CHARTS: COI for the Day ---
+        # This should use the changeinOpenInterest directly from the API, which is daily cumulative
         final_ce_coi_day_data = []
         final_pe_coi_day_data = []
         if not df.empty:
@@ -3150,57 +3221,65 @@ class NseBseAnalyzer:
         if sym in self.oi_coi_history:
             # Iterate from oldest to newest to find the first snapshot that meets the time criteria
             for snapshot in self.oi_coi_history[sym]:
-                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(minutes=15) and snapshot_15_min_ago is None:
+                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(
+                        minutes=15) and snapshot_15_min_ago is None:
                     snapshot_15_min_ago = snapshot
-                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(minutes=30) and snapshot_30_min_ago is None:
+                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(
+                        minutes=30) and snapshot_30_min_ago is None:
                     snapshot_30_min_ago = snapshot
 
-        # Store current COI snapshot for future calculations
-        current_coi_snapshot = {
+        # Store current ABSOLUTE OI snapshot for future calculations
+        current_oi_snapshot = {
             'timestamp': self._get_ist_time(),
-            'data': {} # {strike: {'call_coi': val, 'put_coi': val}}
+            'data': {}  # {strike: {'call_oi': val, 'put_oi': val}}
         }
 
         if not df.empty:
             df_sorted = df.sort_values(by='strikePrice').copy()
             for _, row in df_sorted.iterrows():
                 strike = int(row['strikePrice'])
-                current_call_coi = int(row.get('changeinOpenInterest_call', 0))
-                current_put_coi = int(row.get('changeinOpenInterest_put', 0))
+                current_call_oi_abs = int(row.get('openInterest_call', 0))  # Absolute OI
+                current_put_oi_abs = int(row.get('openInterest_put', 0))  # Absolute OI
 
-                current_coi_snapshot['data'][strike] = {
-                    'call_coi': current_call_coi,
-                    'put_coi': current_put_coi
+                current_oi_snapshot['data'][strike] = {
+                    'call_oi': current_call_oi_abs,
+                    'put_oi': current_put_oi_abs
                 }
 
-                # Calculate 15 min COI
-                prev_call_coi_15m = snapshot_15_min_ago['data'].get(strike, {}).get('call_coi', 0) if snapshot_15_min_ago else 0
-                prev_put_coi_15m = snapshot_15_min_ago['data'].get(strike, {}).get('put_coi', 0) if snapshot_15_min_ago else 0
+                # Calculate 15 min COI using absolute OI
+                prev_call_oi_abs_15m = snapshot_15_min_ago['data'].get(strike, {}).get('call_oi',
+                                                                                       0) if snapshot_15_min_ago else 0
+                prev_put_oi_abs_15m = snapshot_15_min_ago['data'].get(strike, {}).get('put_oi',
+                                                                                      0) if snapshot_15_min_ago else 0
+
                 ce_coi_15min_chart_data.append({
                     'strikePrice': float(strike),
-                    'changeinOpenInterest': current_call_coi - prev_call_coi_15m
+                    'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_15m
                 })
                 pe_coi_15min_chart_data.append({
                     'strikePrice': float(strike),
-                    'changeinOpenInterest': current_put_coi - prev_put_coi_15m
+                    'changeinOpenInterest': current_put_oi_abs - prev_put_oi_abs_15m
                 })
 
-                # Calculate 30 min COI
-                prev_call_coi_30m = snapshot_30_min_ago['data'].get(strike, {}).get('call_coi', 0) if snapshot_30_min_ago else 0
-                prev_put_coi_30m = snapshot_30_min_ago['data'].get(strike, {}).get('put_coi', 0) if snapshot_30_min_ago else 0
+                # Calculate 30 min COI using absolute OI
+                prev_call_oi_abs_30m = snapshot_30_min_ago['data'].get(strike, {}).get('call_oi',
+                                                                                       0) if snapshot_30_min_ago else 0
+                prev_put_oi_abs_30m = snapshot_30_min_ago['data'].get(strike, {}).get('put_oi',
+                                                                                      0) if snapshot_30_min_ago else 0
+
                 ce_coi_30min_chart_data.append({
                     'strikePrice': float(strike),
-                    'changeinOpenInterest': current_call_coi - prev_call_coi_30m
+                    'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_30m
                 })
                 pe_coi_30min_chart_data.append({
                     'strikePrice': float(strike),
-                    'changeinOpenInterest': current_put_coi - prev_put_coi_30m
+                    'changeinOpenInterest': current_put_oi_abs - prev_put_oi_abs_30m
                 })
 
         # Add the current snapshot to history
         if sym not in self.oi_coi_history:
             self.oi_coi_history[sym] = []
-        self.oi_coi_history[sym].append(current_coi_snapshot)
+        self.oi_coi_history[sym].append(current_oi_snapshot)  # Append the absolute OI snapshot
 
         # Keep history clean (e.g., last 35 minutes, to allow for 30 min calculation)
         time_threshold_35_min = self._get_ist_time() - datetime.timedelta(minutes=35)
@@ -3209,26 +3288,24 @@ class NseBseAnalyzer:
             if snapshot['timestamp'] >= time_threshold_35_min
         ]
 
-
         return {
             'summary': summary,
-            'strikes': strikes_data,  # Already explicitly cast within the loop
+            'strikes': strikes_data,
             'pulse_summary': pulse_summary,
-            'pcr_chart_data': [{"TIME": summary['time'], "PCR": float(pcr), "IntradayPCR": float(summary['intraday_pcr'])}],
-            # Cast
+            'pcr_chart_data': [
+                {"TIME": summary['time'], "PCR": float(pcr), "IntradayPCR": float(summary['intraday_pcr'])}],
             'max_pain_chart_data': max_pain_chart_data,
-            'ce_oi_chart_data': final_ce_oi_data, # Total OI
-            'pe_oi_chart_data': final_pe_oi_data, # Total OI
-            'iv_skew_chart_data': strikes_data,  # Already explicitly cast within the loop
-            'raw_df_ce': df_ce,  # Keep as DataFrame for bot logic
-            'raw_df_pe': df_pe,  # Keep as DataFrame for bot logic
-            # NEW CHART DATA
-            'ce_coi_day_chart_data': final_ce_coi_day_data,
-            'pe_coi_day_chart_data': final_pe_coi_day_data,
-            'ce_coi_15min_chart_data': ce_coi_15min_chart_data,
-            'pe_coi_15min_chart_data': pe_coi_15min_chart_data,
-            'ce_coi_30min_chart_data': ce_coi_30min_chart_data,
-            'pe_coi_30min_chart_data': pe_coi_30min_chart_data,
+            'ce_oi_chart_data': final_ce_oi_data,
+            'pe_oi_chart_data': final_pe_oi_data,
+            'iv_skew_chart_data': strikes_data,
+            'raw_df_ce': df_ce,
+            'raw_df_pe': df_pe,
+            'ce_coi_day_chart_data': final_ce_coi_day_data,  # Daily cumulative COI from API
+            'pe_coi_day_chart_data': final_pe_coi_day_data,  # Daily cumulative COI from API
+            'ce_coi_15min_chart_data': ce_coi_15min_chart_data,  # COI over last 15 mins
+            'pe_coi_15min_chart_data': pe_coi_15min_chart_data,  # COI over last 15 mins
+            'ce_coi_30min_chart_data': ce_coi_30min_chart_data,  # COI over last 30 mins
+            'pe_coi_30min_chart_data': pe_coi_30min_chart_data,  # COI over last 30 mins
         }
 
     def _process_nse_data(self, sym: str):
@@ -3239,7 +3316,7 @@ class NseBseAnalyzer:
             processed_data = self._get_nse_option_chain_data(sym, is_equity=False)
 
             if processed_data is None:
-                print(f"INFO: _get_nse_option_chain_data returned None for {sym}. No data to update.")  # Added logging
+                print(f"INFO: _get_nse_option_chain_data returned None for {sym}. No data to update.")
                 # The bot's active trade exit logic will still run even if no fresh OC data is available
                 # This ensures active trades are handled at the end of the day or on specific exit triggers
                 # regardless of new data availability.
@@ -3279,10 +3356,9 @@ class NseBseAnalyzer:
                     'strikes': strikes_data,
                     'pulse_summary': pulse_summary,
                     'max_pain_chart_data': processed_data['max_pain_chart_data'],
-                    'ce_oi_chart_data': processed_data['ce_oi_chart_data'], # Total OI
-                    'pe_oi_chart_data': processed_data['pe_oi_chart_data'], # Total OI
+                    'ce_oi_chart_data': processed_data['ce_oi_chart_data'],
+                    'pe_oi_chart_data': processed_data['pe_oi_chart_data'],
                     'iv_skew_chart_data': processed_data['iv_skew_chart_data'],
-                    # NEW CHARTS
                     'ce_coi_day_chart_data': processed_data['ce_coi_day_chart_data'],
                     'pe_coi_day_chart_data': processed_data['pe_coi_day_chart_data'],
                     'ce_coi_15min_chart_data': processed_data['ce_coi_15min_chart_data'],
@@ -3353,11 +3429,11 @@ class NseBseAnalyzer:
             processed_data = self._get_nse_option_chain_data(symbol, is_equity=True)
             if processed_data is None:
                 print(
-                    f"INFO: _get_nse_option_chain_data returned None for {symbol} (equity). No data to update.")  # Added logging
+                    f"INFO: _get_nse_option_chain_data returned None for {symbol} (equity). No data to update.")
                 if symbol in equity_data_cache:
                     socketio.emit('equity_data_update',
                                   {'symbol': symbol, 'data': convert_numpy_types(equity_data_cache[symbol]['current'])},
-                                  to=sid)  # Convert here
+                                  to=sid)
                 else:
                     socketio.emit('equity_data_update',
                                   {'symbol': symbol, 'error': 'No current data available or outside market hours.'},
@@ -3368,7 +3444,7 @@ class NseBseAnalyzer:
                 previous_data = equity_data_cache.get(symbol, {}).get('current')
                 equity_data_cache[symbol] = {'current': processed_data, 'previous': previous_data}
             socketio.emit('equity_data_update', {'symbol': symbol, 'data': convert_numpy_types(processed_data)},
-                          to=sid)  # Convert here
+                          to=sid)
 
             with data_lock:
                 if symbol not in shared_data:
@@ -3376,7 +3452,6 @@ class NseBseAnalyzer:
                 shared_data[symbol].update({
                     'summary': processed_data['summary'],
                     'pulse_summary': processed_data['pulse_summary'],
-                    # NEW CHARTS for equity (even if empty, ensure keys exist for consistency)
                     'ce_oi_chart_data': processed_data.get('ce_oi_chart_data', []),
                     'pe_oi_chart_data': processed_data.get('pe_oi_chart_data', []),
                     'ce_coi_day_chart_data': processed_data.get('ce_coi_day_chart_data', []),
@@ -3398,7 +3473,7 @@ class NseBseAnalyzer:
         processed_data = self._get_nse_option_chain_data(sym, is_equity=True)
         if processed_data is None:
             print(
-                f"INFO: _get_nse_option_chain_data returned None for {sym} (equity _process_equity_data). No data to update.")  # Added logging
+                f"INFO: _get_nse_option_chain_data returned None for {sym} (equity _process_equity_data). No data to update.")
             if sym in self.deepseek_bot.active_trades:
                 current_vix_value = float(shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
                     "current_value", 15.0))
@@ -3617,7 +3692,7 @@ class NseBseAnalyzer:
 
         # 1. Ultra Bullish
         if (float(pcr) > 1.2 and pe_oi_delta_positive and float(current_price) > (
-        float(max_pain_strike) if max_pain_strike is not None else float(current_price)) and  # Cast
+                float(max_pain_strike) if max_pain_strike is not None else float(current_price)) and  # Cast
                 float(iv_skew) < 5.0):  # Low IV skew indicates less fear # Cast
             return "Ultra Bullish", "High PCR with put writing support, price above Max Pain magnet, low fear skew—strong upside momentum. Buy ATM calls or bull call spreads. SL below Max Pain."
 
@@ -3628,7 +3703,7 @@ class NseBseAnalyzer:
 
         # 3. Mild Bullish Trap
         if (float(pcr) < 0.8 and pe_oi_delta_positive and float(current_price) < (
-        float(max_pain_strike) if max_pain_strike is not None else float(current_price))):  # Cast
+                float(max_pain_strike) if max_pain_strike is not None else float(current_price))):  # Cast
             return "Mild Bullish Trap", "Bearish PCR but adding puts below Max Pain—possible short squeeze or reversal from oversold. Buy OTM calls; watch for breakout above Max Pain. Avoid if volume PCR >1 (conflicting)."
 
         # 4. Ultra Bearish
@@ -3652,7 +3727,7 @@ class NseBseAnalyzer:
         if (
                 len(history) >= TREND_LOOKBACK and pcr_is_falling and cumulative_put_coi_history < -OI_CHANGE_THRESHOLD_FOR_TREND and
                 float(current_price) > (
-        float(max_pain_strike) if max_pain_strike is not None else float(current_price))):  # Cast
+                float(max_pain_strike) if max_pain_strike is not None else float(current_price))):  # Cast
             return "Bullish Reversal Confirmed", "Falling PCR (less bearish) with put unwinding above Max Pain—shift to upside, fear reducing. Aggressive call buying; target 1–2% above current. Monitor IV crush post-reversal."
 
         # 8. Bearish Reversal Confirmed
@@ -3805,7 +3880,7 @@ class NseBseAnalyzer:
     def _total_option_pain_for_strike(self, strike_price_list: List[float], oi_call_list: List[int],
                                       oi_put_list: List[int], mxpn_strike: float) -> float:
         total_cash_value = sum((max(0, float(mxpn_strike) - float(strike)) * int(call_oi)) + (
-                    max(0, float(strike) - float(mxpn_strike)) * int(put_oi)) for  # Cast
+                max(0, float(strike) - float(mxpn_strike)) * int(put_oi)) for  # Cast
                                strike, call_oi, put_oi in zip(strike_price_list, oi_call_list, oi_put_list))
         return float(total_cash_value)  # Cast
 
