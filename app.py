@@ -53,7 +53,9 @@ TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"  # Replace with your chat ID
 SEND_TEXT_UPDATES = True
 UPDATE_INTERVAL = 180
 MAX_HISTORY_ROWS_DB = 10000
-LIVE_DATA_INTERVAL = 180
+# IMPORTANT: Temporarily reducing this for faster COI history build-up for debugging.
+# Revert to 180 or higher for production to avoid hitting API limits.
+LIVE_DATA_INTERVAL = 30 # Changed from 180 to 30 for faster debugging of COI history
 EQUITY_FETCH_INTERVAL = 300  # 5 minutes
 
 # AI Bot Configuration
@@ -222,6 +224,12 @@ def convert_numpy_types(obj):
         return {k: convert_numpy_types(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_numpy_types(elem) for elem in obj]
+    # ADDED: Handle Pandas Series as lists
+    elif isinstance(obj, pd.Series):
+        return obj.tolist()
+    # ADDED: Handle Pandas DataFrame as list of dicts (rows)
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict(orient='records')
     else:
         return obj
 
@@ -977,7 +985,7 @@ class NewsAnalyzer:
             return
         cur = None
         try:
-            cur = self.analyzer.conn.cursor()
+            cur = self.conn.cursor()
             ts_iso = news_item.get('timestamp')  # Keep as ISO string for SQLite
             cur.execute(
                 """INSERT INTO news_alerts (timestamp, Headline, Source, "Key Details", Impact, URL) VALUES (?,?,?,?,?,?)""",
@@ -988,10 +996,10 @@ class NewsAnalyzer:
                     datetime.datetime.now(pytz.utc) - datetime.timedelta(days=NEWS_RETENTION_DAYS)).isoformat()
             cur.execute("DELETE FROM news_alerts WHERE timestamp < ?",
                         (time_threshold,))
-            self.analyzer.conn.commit()
+            self.conn.commit()
         except sqlite3.Error as e:
             print(f"SQLite DB save error for news alert: {e}")
-            self.analyzer.conn.rollback()
+            self.conn.rollback()
         finally:
             if cur:
                 cur.close()
@@ -1129,7 +1137,7 @@ class NseBseAnalyzer:
         self._populate_initial_shared_chart_data()
         self._load_latest_bhavcopy_from_db()
 
-        # NEW: Dictionary to store historical OI/COI snapshots for 15/30 min calculations
+        # NEW: Dictionary to store historical OI/COI snapshots for 15/30/60 min calculations
         self.oi_coi_history: Dict[str, List[Dict[str, Any]]] = {}
 
         # New: Define mean IV ranges based on VIX for Nifty/Equity, FinNifty, BankNifty
@@ -1450,6 +1458,8 @@ class NseBseAnalyzer:
                     shared_data[sym]['pe_coi_day_chart_data'] = []
                     shared_data[sym]['ce_coi_15min_chart_data'] = []
                     shared_data[sym]['pe_coi_15min_chart_data'] = []
+                    shared_data[sym]['ce_coi_60min_chart_data'] = []
+                    shared_data[sym]['pe_coi_60min_chart_data'] = []
                     shared_data[sym]['ce_coi_30min_chart_data'] = []
                     shared_data[sym]['pe_coi_30min_chart_data'] = []
 
@@ -2396,16 +2406,19 @@ class NseBseAnalyzer:
 
                 if all(x is not None for x in [volume, close_price, open_price, high_price,
                                                low_price]) and delivery_pct is not None and volume > 0:
+                    today_delivery_pct_float = float(
+                        delivery_pct)
+
                     vwap = (high_price + low_price + close_price) / 3.0
                     if vwap > 0:
                         close_vs_vwap_pct = ((close_price - vwap) / vwap * 100)
-                        if close_vs_vwap_pct > 7 and delivery_pct is not None and delivery_pct < 12:
+                        if close_vs_vwap_pct > 7 and today_delivery_pct_float < 12:
                             signals.append({
                                 "Symbol": symbol,
                                 "Close Price": f"{close_price:.2f}",
                                 "VWAP": f"{vwap:.2f}",
                                 "Close vs VWAP %": f"{close_vs_vwap_pct:.2f}%",
-                                "Delivery %": f"{delivery_pct:.2f}%",
+                                "Delivery %": f"{today_delivery_pct_float:.2f}%",
                                 "Signal": "VWAP Anchor Reversion: Short next day open."
                             })
         except Exception as e:
@@ -2562,7 +2575,7 @@ class NseBseAnalyzer:
                                 "Today's Volume": f"{today_volume:,}",
                                 "10-Day Avg Volume": f"{avg_volume:,.0f}",
                                 "Volume Multiple": f"{(today_volume / avg_volume):.2f}x",
-                                "Delivery %": f"{today_delivery_pct:.2f}%",
+                                "Delivery %": f"{today_delivery_pct_float:.2f}%",
                                 "Price Change %": f"{today_pct_change:.2f}%",
                                 "Signal": "Volume Surge: Potential Swing Breakout"
                             })
@@ -2827,6 +2840,8 @@ class NseBseAnalyzer:
                 shared_data[sym]['pe_coi_15min_chart_data'] = []
                 shared_data[sym]['ce_coi_30min_chart_data'] = []
                 shared_data[sym]['pe_coi_30min_chart_data'] = []
+                shared_data[sym]['ce_coi_60min_chart_data'] = []
+                shared_data[sym]['pe_coi_60min_chart_data'] = []
 
             print(f"{sym} YFINANCE DATA UPDATED | Value: {current_price:.2f}")
             broadcast_live_update()
@@ -2882,7 +2897,7 @@ class NseBseAnalyzer:
                     self._set_nse_session_cookies()
                     time.sleep(1)
                 elif response.status_code == 200:
-                    print(f"DEBUG: Successfully fetched data for {sym} (Attempt {attempt + 1}).")
+                    print(f"DEBUG: Successfully fetched data for {sym} (Attempt 1).")
                     break
                 else:
                     print(f"DEBUG: HTTP Error {response.status_code} for {sym} (Attempt {attempt + 1}).")
@@ -3029,9 +3044,7 @@ class NseBseAnalyzer:
             call_buildup = self._get_oi_buildup(current_change, call_coi_daily)
             put_buildup = self._get_oi_buildup(current_change, put_coi_daily)
             call_action = "ADD" if call_coi_daily > 0 else "EXIT" if call_coi_daily < 0 else ""
-            # --- FIX: Changed 'put_coi' to 'put_coi_daily' ---
-            put_action = "ADD" if put_oi > 0 else "EXIT" if put_coi_daily < 0 else ""
-            # --- END FIX ---
+            put_action = "ADD" if put_coi_daily > 0 else "EXIT" if put_coi_daily < 0 else ""
 
             if call_action == "ADD":
                 ce_add_strikes.append(str(strike))
@@ -3055,20 +3068,14 @@ class NseBseAnalyzer:
         total_call_oi = int(df['openInterest_call'].sum())  # Total current OI, not change
         total_put_oi = int(df['openInterest_put'].sum())  # Total current OI, not change
 
-        # --- MODIFICATION START: Renamed variables for clarity of daily COI ---
         total_call_coi_daily = int(df['changeinOpenInterest_call'].sum())  # This is the daily cumulative COI from API
-        total_put_coi_daily = int(df['changeinOpenInterest_put'].sum())  # This is the daily cumulative COI from API
+        total_put_coi_daily = int(df['changeinOpenInterest_put'].sum())  # This is the daily cumulative Put COI from API
 
-        # --- NEW: Calculate Diff. in OI for the day ---
         diff_oi_daily = total_call_coi_daily - total_put_coi_daily  # Calculate the difference
-        # --- MODIFICATION END ---
 
         pcr = round(float(total_put_oi) / float(total_call_oi), 2) if total_call_oi else 0.0
-        # --- MODIFICATION START: Use daily COI for intraday PCR if that's the intention ---
-        # Assuming 'intraday_pcr' is meant to be based on the day's *change* in OI, not total OI
         intraday_pcr = round(float(total_put_coi_daily) / float(total_call_coi_daily),
                              2) if total_call_coi_daily != 0 else 0.0
-        # --- MODIFICATION END ---
 
         atm_strike_data = next((s for s in strikes_data if s['is_atm']), None)
         atm_call_iv = float(atm_strike_data.get('call_iv', 0.0)) if atm_strike_data else 0.0
@@ -3102,7 +3109,8 @@ class NseBseAnalyzer:
 
         historical_avg_iv = 15.0
         current_vix = float(
-            shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get("current_value", 15.0))
+            shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
+                        "current_value", 15.0))
 
         symbol_key_for_iv = sym if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] else "EQUITY"
         vix_iv_ranges = self.mean_iv_ranges.get(symbol_key_for_iv, self.mean_iv_ranges["EQUITY"])
@@ -3116,7 +3124,6 @@ class NseBseAnalyzer:
 
         current_history_for_sym = todays_history.get(sym, [])
 
-        # --- MODIFICATION START: Pass correct daily COI variables to get_sentiment ---
         rule_based_sentiment, sentiment_reason = self.get_sentiment(
             pcr, intraday_pcr, total_call_coi_daily, total_put_coi_daily, sym,
             current_history_for_sym, underlying, max_pain_strike,
@@ -3126,7 +3133,6 @@ class NseBseAnalyzer:
 
         ml_sentiment = self.get_ml_sentiment(pcr, intraday_pcr, total_call_coi_daily, total_put_coi_daily, sym,
                                              current_history_for_sym)
-        # --- MODIFICATION END ---
 
         add_exit_str = " | ".join(filter(None,
                                          [f"CE Add: {', '.join(sorted(ce_add_strikes))}" if ce_add_strikes else "",
@@ -3134,7 +3140,6 @@ class NseBseAnalyzer:
                                           f"CE Exit: {', '.join(sorted(ce_exit_strikes))}" if ce_exit_strikes else "",
                                           f"PE Exit: {', '.join(sorted(pe_exit_strikes))}" if pe_exit_strikes else ""])) or "No Change"
 
-        # --- MODIFICATION START: The 'summary' dictionary ---
         summary = {'time': self._get_ist_time().strftime("%H:%M"),
                    'sp': int(sp),
                    'value': int(round(underlying)),
@@ -3157,15 +3162,12 @@ class NseBseAnalyzer:
                    'change': round(current_change, 2),
                    'percentage_change': round(current_pct_change, 2)
                    }
-        # --- MODIFICATION END ---
 
-        # --- MODIFICATION START: The 'pulse_summary' dictionary ---
         pulse_summary = {'total_call_oi': int(total_call_coi_daily),
                          'total_put_oi': int(total_put_coi_daily),
                          'diff_oi_daily': int(diff_oi_daily),  # Add this here too if needed
                          'implied_volatility': round(float(average_iv), 2)
                          }
-        # --- MODIFICATION END ---
 
         max_pain_chart_data = []
         if not max_pain_df_calc.empty:
@@ -3194,7 +3196,6 @@ class NseBseAnalyzer:
                 })
 
         # --- NEW CHARTS: COI for the Day ---
-        # This should use the changeinOpenInterest directly from the API, which is daily cumulative
         final_ce_coi_day_data = []
         final_pe_coi_day_data = []
         if not df.empty:
@@ -3209,28 +3210,20 @@ class NseBseAnalyzer:
                     'changeinOpenInterest': int(row.get('changeinOpenInterest_put', 0))
                 })
 
-        # --- NEW CHARTS: COI for Last 15/30 mins ---
+        # --- NEW CHARTS: COI for Last 15/30/60 mins ---
         ce_coi_15min_chart_data = []
         pe_coi_15min_chart_data = []
         ce_coi_30min_chart_data = []
         pe_coi_30min_chart_data = []
+        ce_coi_60min_chart_data = []
+        pe_coi_60min_chart_data = []
 
-        # Get the earliest snapshot for 15 and 30 min comparisons
-        snapshot_15_min_ago = None
-        snapshot_30_min_ago = None
-        if sym in self.oi_coi_history:
-            # Iterate from oldest to newest to find the first snapshot that meets the time criteria
-            for snapshot in self.oi_coi_history[sym]:
-                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(
-                        minutes=15) and snapshot_15_min_ago is None:
-                    snapshot_15_min_ago = snapshot
-                if self._get_ist_time() - snapshot['timestamp'] >= datetime.timedelta(
-                        minutes=30) and snapshot_30_min_ago is None:
-                    snapshot_30_min_ago = snapshot
+        now_ist = self._get_ist_time()
+        print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: Processing {sym}")
 
         # Store current ABSOLUTE OI snapshot for future calculations
         current_oi_snapshot = {
-            'timestamp': self._get_ist_time(),
+            'timestamp': now_ist,
             'data': {}  # {strike: {'call_oi': val, 'put_oi': val}}
         }
 
@@ -3238,20 +3231,79 @@ class NseBseAnalyzer:
             df_sorted = df.sort_values(by='strikePrice').copy()
             for _, row in df_sorted.iterrows():
                 strike = int(row['strikePrice'])
-                current_call_oi_abs = int(row.get('openInterest_call', 0))  # Absolute OI
-                current_put_oi_abs = int(row.get('openInterest_put', 0))  # Absolute OI
+                current_call_oi_abs = int(row.get('openInterest_call', 0))
+                current_put_oi_abs = int(row.get('openInterest_put', 0))
 
                 current_oi_snapshot['data'][strike] = {
                     'call_oi': current_call_oi_abs,
-                    'put_oi': current_put_oi_abs
+                    'put_oi': current_put_oi_abs # DEBUG: Corrected typo 'current_put_put_abs' to 'current_put_oi_abs'
                 }
 
-                # Calculate 15 min COI using absolute OI
-                prev_call_oi_abs_15m = snapshot_15_min_ago['data'].get(strike, {}).get('call_oi',
-                                                                                       0) if snapshot_15_min_ago else 0
-                prev_put_oi_abs_15m = snapshot_15_min_ago['data'].get(strike, {}).get('put_oi',
-                                                                                      0) if snapshot_15_min_ago else 0
+            print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Current OI Snapshot created for {len(current_oi_snapshot['data'])} strikes.")
+            if sym not in self.oi_coi_history:
+                self.oi_coi_history[sym] = []
+                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Initializing oi_coi_history.")
 
+            self.oi_coi_history[sym].append(current_oi_snapshot)
+            print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Added current snapshot. History length: {len(self.oi_coi_history[sym])}")
+
+            time_threshold_65_min = now_ist - datetime.timedelta(minutes=65)
+            original_history_length = len(self.oi_coi_history[sym])
+            self.oi_coi_history[sym] = [
+                snapshot for snapshot in self.oi_coi_history[sym]
+                if snapshot['timestamp'] >= time_threshold_65_min
+            ]
+            if len(self.oi_coi_history[sym]) < original_history_length:
+                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Cleaned history. New length: {len(self.oi_coi_history[sym])}")
+
+            # Find the appropriate historical snapshot for 15 min
+            snapshot_15_min_ago = None
+            for snapshot in reversed(self.oi_coi_history.get(sym, [])):
+                time_diff_seconds = (now_ist - snapshot['timestamp']).total_seconds()
+                if time_diff_seconds >= (15 * 60):
+                    snapshot_15_min_ago = snapshot
+                    print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Found 15-min snapshot at {snapshot['timestamp'].strftime('%H:%M:%S')} ({time_diff_seconds:.0f}s ago).")
+                    break
+            if not snapshot_15_min_ago:
+                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} No 15-min snapshot found (history too short).")
+
+            # Find the appropriate historical snapshot for 30 min
+            snapshot_30_min_ago = None
+            for snapshot in reversed(self.oi_coi_history.get(sym, [])):
+                time_diff_seconds = (now_ist - snapshot['timestamp']).total_seconds()
+                if time_diff_seconds >= (30 * 60):
+                    snapshot_30_min_ago = snapshot
+                    print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Found 30-min snapshot at {snapshot['timestamp'].strftime('%H:%M:%S')} ({time_diff_seconds:.0f}s ago).")
+                    break
+            if not snapshot_30_min_ago:
+                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} No 30-min snapshot found (history too short).")
+
+            # Find the appropriate historical snapshot for 60 min
+            snapshot_60_min_ago = None
+            for snapshot in reversed(self.oi_coi_history.get(sym, [])):
+                time_diff_seconds = (now_ist - snapshot['timestamp']).total_seconds()
+                if time_diff_seconds >= (60 * 60):
+                    snapshot_60_min_ago = snapshot
+                    print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Found 60-min snapshot at {snapshot['timestamp'].strftime('%H:%M:%S')} ({time_diff_seconds:.0f}s ago).")
+                    break
+            if not snapshot_60_min_ago:
+                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} No 60-min snapshot found (history too short).")
+
+            # Iterate again to calculate COI for each strike
+            for _, row in df_sorted.iterrows():
+                strike = int(row['strikePrice'])
+                current_call_oi_abs = int(row.get('openInterest_call', 0))
+                current_put_oi_abs = int(row.get('openInterest_put', 0))
+
+                # Calculate 15 min COI
+                prev_call_oi_abs_15m = 0
+                prev_put_oi_abs_15m = 0
+                if snapshot_15_min_ago:
+                    ## FIX START: Corrected access to historical OI data
+                    strike_data_15m = snapshot_15_min_ago['data'].get(strike, {})
+                    prev_call_oi_abs_15m = int(strike_data_15m.get('call_oi', 0))
+                    prev_put_oi_abs_15m = int(strike_data_15m.get('put_oi', 0))
+                    ## FIX END
                 ce_coi_15min_chart_data.append({
                     'strikePrice': float(strike),
                     'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_15m
@@ -3261,12 +3313,15 @@ class NseBseAnalyzer:
                     'changeinOpenInterest': current_put_oi_abs - prev_put_oi_abs_15m
                 })
 
-                # Calculate 30 min COI using absolute OI
-                prev_call_oi_abs_30m = snapshot_30_min_ago['data'].get(strike, {}).get('call_oi',
-                                                                                       0) if snapshot_30_min_ago else 0
-                prev_put_oi_abs_30m = snapshot_30_min_ago['data'].get(strike, {}).get('put_oi',
-                                                                                      0) if snapshot_30_min_ago else 0
-
+                # Calculate 30 min COI
+                prev_call_oi_abs_30m = 0
+                prev_put_oi_abs_30m = 0
+                if snapshot_30_min_ago:
+                    ## FIX START: Corrected access to historical OI data
+                    strike_data_30m = snapshot_30_min_ago['data'].get(strike, {})
+                    prev_call_oi_abs_30m = int(strike_data_30m.get('call_oi', 0))
+                    prev_put_oi_abs_30m = int(strike_data_30m.get('put_oi', 0))
+                    ## FIX END
                 ce_coi_30min_chart_data.append({
                     'strikePrice': float(strike),
                     'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_30m
@@ -3276,17 +3331,23 @@ class NseBseAnalyzer:
                     'changeinOpenInterest': current_put_oi_abs - prev_put_oi_abs_30m
                 })
 
-        # Add the current snapshot to history
-        if sym not in self.oi_coi_history:
-            self.oi_coi_history[sym] = []
-        self.oi_coi_history[sym].append(current_oi_snapshot)  # Append the absolute OI snapshot
-
-        # Keep history clean (e.g., last 35 minutes, to allow for 30 min calculation)
-        time_threshold_35_min = self._get_ist_time() - datetime.timedelta(minutes=35)
-        self.oi_coi_history[sym] = [
-            snapshot for snapshot in self.oi_coi_history[sym]
-            if snapshot['timestamp'] >= time_threshold_35_min
-        ]
+                # Calculate 60 min COI
+                prev_call_oi_abs_60m = 0
+                prev_put_oi_abs_60m = 0
+                if snapshot_60_min_ago:
+                    ## FIX START: Corrected access to historical OI data
+                    strike_data_60m = snapshot_60_min_ago['data'].get(strike, {})
+                    prev_call_oi_abs_60m = int(strike_data_60m.get('call_oi', 0))
+                    prev_put_oi_abs_60m = int(strike_data_60m.get('put_oi', 0))
+                    ## FIX END
+                ce_coi_60min_chart_data.append({
+                    'strikePrice': float(strike),
+                    'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_60m
+                })
+                pe_coi_60min_chart_data.append({
+                    'strikePrice': float(strike),
+                    'changeinOpenInterest': current_put_oi_abs - prev_put_oi_abs_60m
+                })
 
         return {
             'summary': summary,
@@ -3300,12 +3361,14 @@ class NseBseAnalyzer:
             'iv_skew_chart_data': strikes_data,
             'raw_df_ce': df_ce,
             'raw_df_pe': df_pe,
-            'ce_coi_day_chart_data': final_ce_coi_day_data,  # Daily cumulative COI from API
-            'pe_coi_day_chart_data': final_pe_coi_day_data,  # Daily cumulative COI from API
-            'ce_coi_15min_chart_data': ce_coi_15min_chart_data,  # COI over last 15 mins
-            'pe_coi_15min_chart_data': pe_coi_15min_chart_data,  # COI over last 15 mins
-            'ce_coi_30min_chart_data': ce_coi_30min_chart_data,  # COI over last 30 mins
-            'pe_coi_30min_chart_data': pe_coi_30min_chart_data,  # COI over last 30 mins
+            'ce_coi_day_chart_data': final_ce_coi_day_data,
+            'pe_coi_day_chart_data': final_pe_coi_day_data,
+            'ce_coi_15min_chart_data': ce_coi_15min_chart_data,
+            'pe_coi_15min_chart_data': pe_coi_15min_chart_data,
+            'ce_coi_30min_chart_data': ce_coi_30min_chart_data,
+            'pe_coi_30min_chart_data': pe_coi_30min_chart_data,
+            'ce_coi_60min_chart_data': ce_coi_60min_chart_data,
+            'pe_coi_60min_chart_data': pe_coi_60min_chart_data,
         }
 
     def _process_nse_data(self, sym: str):
@@ -3365,6 +3428,8 @@ class NseBseAnalyzer:
                     'pe_coi_15min_chart_data': processed_data['pe_coi_15min_chart_data'],
                     'ce_coi_30min_chart_data': processed_data['ce_coi_30min_chart_data'],
                     'pe_coi_30min_chart_data': processed_data['pe_coi_30min_chart_data'],
+                    'ce_coi_60min_chart_data': processed_data['ce_coi_60min_chart_data'],
+                    'pe_coi_60min_chart_data': processed_data['pe_coi_60min_chart_data'],
                 })
                 if sym not in self.pcr_graph_data:
                     self.pcr_graph_data[sym] = []
@@ -3393,6 +3458,7 @@ class NseBseAnalyzer:
             if (now_ts_float - last_ai_bot_run_time.get(sym, 0) >= AI_BOT_UPDATE_INTERVAL):
                 current_vix_value = float(shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
                     "current_value", 15.0))
+                # Pass raw_df_ce and raw_df_pe directly to the bot, as it expects DataFrames
                 bot_recommendation = self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []),
                                                                              current_vix_value,
                                                                              processed_data['raw_df_ce'],
@@ -3431,8 +3497,14 @@ class NseBseAnalyzer:
                 print(
                     f"INFO: _get_nse_option_chain_data returned None for {symbol} (equity). No data to update.")
                 if symbol in equity_data_cache:
+                    # Fix: Ensure the data sent from cache is also cleaned of DataFrames
+                    cleaned_cached_data = processed_data.copy() if processed_data else {}
+                    if 'raw_df_ce' in cleaned_cached_data:
+                        del cleaned_cached_data['raw_df_ce']
+                    if 'raw_df_pe' in cleaned_cached_data:
+                        del cleaned_cached_data['raw_df_pe']
                     socketio.emit('equity_data_update',
-                                  {'symbol': symbol, 'data': convert_numpy_types(equity_data_cache[symbol]['current'])},
+                                  {'symbol': symbol, 'data': convert_numpy_types(cleaned_cached_data)},
                                   to=sid)
                 else:
                     socketio.emit('equity_data_update',
@@ -3440,10 +3512,19 @@ class NseBseAnalyzer:
                                   to=sid)
                 return
 
+            # Store the full processed_data including raw_df_ce/pe for internal use (e.g., AI bot)
             if processed_data:
                 previous_data = equity_data_cache.get(symbol, {}).get('current')
                 equity_data_cache[symbol] = {'current': processed_data, 'previous': previous_data}
-            socketio.emit('equity_data_update', {'symbol': symbol, 'data': convert_numpy_types(processed_data)},
+
+            # Create a copy of processed_data and remove DataFrames before sending to frontend
+            data_to_emit = processed_data.copy()
+            if 'raw_df_ce' in data_to_emit:
+                del data_to_emit['raw_df_ce']
+            if 'raw_df_pe' in data_to_emit:
+                del data_to_emit['raw_df_pe']
+
+            socketio.emit('equity_data_update', {'symbol': symbol, 'data': convert_numpy_types(data_to_emit)},
                           to=sid)
 
             with data_lock:
@@ -3460,6 +3541,8 @@ class NseBseAnalyzer:
                     'pe_coi_15min_chart_data': processed_data.get('pe_coi_15min_chart_data', []),
                     'ce_coi_30min_chart_data': processed_data.get('ce_coi_30min_chart_data', []),
                     'pe_coi_30min_chart_data': processed_data.get('pe_coi_30min_chart_data', []),
+                    'ce_coi_60min_chart_data': processed_data.get('ce_coi_60min_chart_data', []),
+                    'pe_coi_60min_chart_data': processed_data.get('pe_coi_60min_chart_data', []),
                 })
         except Exception as e:
             import traceback

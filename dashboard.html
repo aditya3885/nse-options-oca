@@ -240,6 +240,10 @@
                 <div class="chart-container"><canvas id="nifty-pe-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-ce-coi-30min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-coi-30min-chart"></canvas></div>
+                <!-- FIX: Added 60-min COI charts for NIFTY -->
+                <div class="chart-container"><canvas id="nifty-ce-coi-60min-chart"></canvas></div>
+                <div class="chart-container"><canvas id="nifty-pe-coi-60min-chart"></canvas></div>
+                <!-- END FIX -->
                 <!-- NEW CHARTS END -->
             </div>
             <h3>NIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="nifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
@@ -314,6 +318,10 @@
                 <div class="chart-container"><canvas id="finnifty-pe-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-ce-coi-30min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-coi-30min-chart"></canvas></div>
+                <!-- FIX: Added 60-min COI charts for FINNIFTY -->
+                <div class="chart-container"><canvas id="finnifty-ce-coi-60min-chart"></canvas></div>
+                <div class="chart-container"><canvas id="finnifty-pe-coi-60min-chart"></canvas></div>
+                <!-- END FIX -->
                 <!-- NEW CHARTS END -->
             </div>
             <h3>FINNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="finnifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
@@ -388,6 +396,10 @@
                 <div class="chart-container"><canvas id="banknifty-pe-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-ce-coi-30min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-coi-30min-chart"></canvas></div>
+                <!-- FIX: Added 60-min COI charts for BANKNIFTY -->
+                <div class="chart-container"><canvas id="banknifty-ce-coi-60min-chart"></canvas></div>
+                <div class="chart-container"><canvas id="banknifty-pe-coi-60min-chart"></canvas></div>
+                <!-- END FIX -->
                 <!-- NEW CHARTS END -->
             </div>
             <h3>BANKNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="banknifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
@@ -475,6 +487,10 @@
                     <div class="chart-container"><canvas id="equity-pe-coi-15min-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-ce-coi-30min-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-coi-30min-chart"></canvas></div>
+                    <!-- FIX: Added 60-min COI charts for EQUITY -->
+                    <div class="chart-container"><canvas id="equity-ce-coi-60min-chart"></canvas></div>
+                    <div class="chart-container"><canvas id="equity-pe-coi-60min-chart"></canvas></div>
+                    <!-- END FIX -->
                     <!-- NEW CHARTS END -->
                 </div>
                 <h3>Option Chain (ATM ±10)</h3>
@@ -1001,6 +1017,17 @@
             const peCoi30MinLabels = liveData.pe_coi_30min_chart_data.map(d => d.strikePrice);
             const peCoi30MinData = liveData.pe_coi_30min_chart_data.map(d => d.changeinOpenInterest);
             renderChart(`${lower}-pe-coi-30min-chart`, 'bar', peCoi30MinLabels, peCoi30MinData, `${symbol} PE COI (30 min)`, 'rgba(50, 200, 50, 0.5)', 'rgba(50, 200, 50, 1)');
+
+            // FIX: NEW CHARTS: CE Change in OI (last 60 mins)
+            const ceCoi60MinLabels = liveData.ce_coi_60min_chart_data.map(d => d.strikePrice);
+            const ceCoi60MinData = liveData.ce_coi_60min_chart_data.map(d => d.changeinOpenInterest);
+            renderChart(`${lower}-ce-coi-60min-chart`, 'bar', ceCoi60MinLabels, ceCoi60MinData, `${symbol} CE COI (60 min)`, 'rgba(150, 150, 250, 0.5)', 'rgba(150, 150, 250, 1)');
+
+            // FIX: NEW CHARTS: PE Change in OI (last 60 mins)
+            const peCoi60MinLabels = liveData.pe_coi_60min_chart_data.map(d => d.strikePrice);
+            const peCoi60MinData = liveData.pe_coi_60min_chart_data.map(d => d.changeinOpenInterest);
+            renderChart(`${lower}-pe-coi-60min-chart`, 'bar', peCoi60MinLabels, peCoi60MinData, `${symbol} PE COI (60 min)`, 'rgba(250, 150, 150, 0.5)', 'rgba(250, 150, 150, 1)');
+            // END FIX
         }
 
 
