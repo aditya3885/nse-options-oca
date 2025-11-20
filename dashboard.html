@@ -824,8 +824,8 @@
         }
         if (symbol === "OI_SUMMARIES") {
             // Render live OI summaries first
-            if (shared_data_cache.oi_change_summaries) { // Check if live OI summaries are in cache
-                renderLiveOiSummaries(shared_data_cache.oi_change_summaries);
+            if (shared_data_cache.live_oi_summary) { // Check if live OI summaries are in cache
+                renderLiveOiSummaries(shared_data_cache.live_oi_summary);
             } else {
                 const liveOiContainer = document.getElementById('live-oi-summaries-container');
                 if (liveOiContainer) liveOiContainer.innerHTML = `<p style="text-align: center;">Waiting for live OI summary data...</p>`;
@@ -1129,11 +1129,11 @@
             }
             return parsedNum.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
         }
-        return num;
+        return num; // Return original if not a valid number after all checks
     }
 
     function getChangeColorClass(value) {
-        if (value === null || value === undefined || isNaN(value)) return 'neutral';
+        if (value === null || value === undefined || isNaN(value) || value === 'N/A') return 'neutral';
         const parsedValue = parseFloat(value);
         if (parsedValue > 0) return 'positive';
         if (parsedValue < 0) return 'negative';
@@ -1683,7 +1683,7 @@
         }
     }
 
-    // NEW: Function to render live OI summaries
+    // NEW: Function to render live OI summaries (MODIFIED)
     function renderLiveOiSummaries(oiSummariesData) {
         const container = document.getElementById('live-oi-summaries-container');
         if (!container) return;
@@ -1723,9 +1723,17 @@
             const timeframes = ['15min', '30min', '60min'];
 
             timeframes.forEach(tf => {
-                const tfData = symbolData[tf];
-                if (tfData && tfData.length > 0) {
-                    tfData.forEach(item => {
+                const tfSummary = symbolData[tf]; // This is the dict {major_shifts: [], net_summary: {}}
+                const majorShifts = tfSummary ? tfSummary.major_shifts : null;
+                const netSummary = tfSummary ? tfSummary.net_summary : null;
+
+                // Add a header row for the interval (e.g., "15MIN Interval")
+                const intervalHeaderRow = document.createElement('tr');
+                intervalHeaderRow.innerHTML = `<td colspan="5" style="background-color: #282828; font-weight: bold; text-align: left;">${tf.toUpperCase()} Interval</td>`;
+                tbody.appendChild(intervalHeaderRow);
+
+                if (majorShifts && majorShifts.length > 0 && majorShifts[0].status !== "No data for this interval.") {
+                    majorShifts.forEach(item => {
                         const tr = document.createElement('tr');
                         const statusClass = item.status.includes('Long Buildup') || item.status.includes('Fresh OI Added') ? 'positive' :
                                             (item.status.includes('Short Buildup') || item.status.includes('OI Exited') ? 'negative' : 'neutral');
@@ -1739,7 +1747,7 @@
                         tbody.appendChild(tr);
                     });
                 } else {
-                    // Add a row indicating no data for this timeframe
+                    // Add a row indicating no data for this timeframe's major shifts
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td>${tf}</td>
@@ -1747,13 +1755,30 @@
                     `;
                     tbody.appendChild(tr);
                 }
+
+                // Add the net summary row for each interval
+                if (netSummary) {
+                    const netOiChangeFormatted = netSummary.net_oi_total_change !== "N/A" ? (netSummary.net_oi_total_change > 0 ? `+${netSummary.net_oi_total_change.toLocaleString()}` : netSummary.net_oi_total_change.toLocaleString()) : "N/A";
+                    const netStatusClass = netSummary.net_status.includes('Bullish') ? 'positive' :
+                                           (netSummary.net_status.includes('Bearish') ? 'negative' : 'neutral');
+                    const netRow = document.createElement('tr');
+                    netRow.classList.add('table-info');
+                    netRow.innerHTML = `
+                        <td><strong>${netSummary.interval}</strong></td>
+                        <td><strong>Net (${netSummary.net_type})</strong></td>
+                        <td>-</td> <!-- No specific strike for net -->
+                        <td class="${netStatusClass}"><strong>${netOiChangeFormatted}</strong></td>
+                        <td class="${netStatusClass}"><strong>${netSummary.net_status}</strong></td>
+                    `;
+                    tbody.appendChild(netRow);
+                }
             });
             symbolDiv.appendChild(table);
             container.appendChild(symbolDiv);
         }
     }
 
-    // NEW: Function to render historical OI first/last hour summaries
+    // NEW: Function to render historical OI first/last hour summaries (MODIFIED)
     function renderHistoricalOiSummaries(historicalData) {
         const container = document.getElementById('historical-oi-summaries-container');
         if (!container) return;
@@ -1764,7 +1789,7 @@
             return;
         }
 
-        // historicalData is structured as {date: {symbol: {type: summary_list}}}
+        // historicalData is structured as {date: {symbol: {type: summary_dict}}}
         for (const date in historicalData) {
             const dateData = historicalData[date];
             for (const symbol in dateData) {
@@ -1794,9 +1819,17 @@
                 const types = ['TODAY_FIRST_15', 'TODAY_FIRST_30', 'TODAY_FIRST_60', 'TOMORROW_LAST_15', 'TOMORROW_LAST_30', 'TOMORROW_LAST_60'];
 
                 types.forEach(typeKey => {
-                    const summaryList = symbolData[typeKey]; // Access the array directly
-                    if (summaryList && summaryList.length > 0) {
-                        summaryList.forEach(item => {
+                    const tfSummary = symbolData[typeKey]; // This is now the dict with major_shifts and net_summary
+                    const majorShifts = tfSummary ? tfSummary.major_shifts : null;
+                    const netSummary = tfSummary ? tfSummary.net_summary : null;
+
+                    // Add a header row for the typeKey
+                    const typeHeaderRow = document.createElement('tr');
+                    typeHeaderRow.innerHTML = `<td colspan="5" style="background-color: #282828; font-weight: bold; text-align: left;">${typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'Today\'s First').replace('TOMORROW LAST', 'Tomorrow\'s Last')}</td>`;
+                    tbody.appendChild(typeHeaderRow);
+
+                    if (majorShifts && majorShifts.length > 0 && majorShifts[0].status !== "No data for this interval.") {
+                        majorShifts.forEach(item => {
                             const tr = document.createElement('tr');
                             const statusClass = item.status.includes('Long Buildup') || item.status.includes('Fresh OI Added') ? 'positive' :
                                                 (item.status.includes('Short Buildup') || item.status.includes('OI Exited') ? 'negative' : 'neutral');
@@ -1816,6 +1849,23 @@
                              <td colspan="4">No significant shifts</td>
                          `;
                          tbody.appendChild(tr);
+                    }
+
+                    // Add the net summary row for each interval
+                    if (netSummary) {
+                        const netOiChangeFormatted = netSummary.net_oi_total_change !== "N/A" ? (netSummary.net_oi_total_change > 0 ? `+${netSummary.net_oi_total_change.toLocaleString()}` : netSummary.net_oi_total_change.toLocaleString()) : "N/A";
+                        const netStatusClass = netSummary.net_status.includes('Bullish') ? 'positive' :
+                                               (netSummary.net_status.includes('Bearish') ? 'negative' : 'neutral');
+                        const netRow = document.createElement('tr');
+                        netRow.classList.add('table-info');
+                        netRow.innerHTML = `
+                            <td><strong>${typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'Today\'s First').replace('TOMORROW LAST', 'Tomorrow\'s Last')}</strong></td>
+                            <td><strong>Net (${netSummary.net_type})</strong></td>
+                            <td>-</td>
+                            <td class="${netStatusClass}"><strong>${netOiChangeFormatted}</strong></td>
+                            <td class="${netStatusClass}"><strong>${netSummary.net_status}</strong></td>
+                        `;
+                        tbody.appendChild(netRow);
                     }
                 });
                 symbolDateDiv.appendChild(table);
@@ -1880,17 +1930,22 @@
         console.log("Received initial_todays_history:", data);
         if (!data.history) return;
         Object.keys(data.history).forEach(sym => {
-            const historyTbody = document.querySelector(`#${sym.toLowerCase()}-todays-history-table tbody`);
-            if (historyTbody) {
-                historyTbody.innerHTML = '';
-                // Sorting by time in ascending order for initial load to ensure correct order
-                const sortedHistory = data.history[sym].sort((a, b) => {
-                    // Assuming item.time is in "HH:MM" format
-                    const timeA = moment(a.time, "HH:mm");
-                    const timeB = moment(b.time, "HH:mm");
-                    return timeA.diff(timeB);
-                });
-                sortedHistory.forEach(item => addHistoryItemToTable(historyTbody, item, sym, false));
+            // Only attempt to update tables for symbols that have a dedicated HTML element
+            // This includes NIFTY, FINNIFTY, BANKNIFTY
+            // Equity tab's history is handled separately when a stock is selected
+            if (OI_SYMBOLS.includes(sym)) {
+                const historyTbody = document.querySelector(`#${sym.toLowerCase()}-todays-history-table tbody`);
+                if (historyTbody) {
+                    historyTbody.innerHTML = '';
+                    // Sorting by time in ascending order for initial load to ensure correct order
+                    const sortedHistory = data.history[sym].sort((a, b) => {
+                        // Assuming item.time is in "HH:MM" format
+                        const timeA = moment(a.time, "HH:mm");
+                        const timeB = moment(b.time, "HH:mm");
+                        return timeA.diff(timeB);
+                    });
+                    sortedHistory.forEach(item => addHistoryItemToTable(historyTbody, item, sym, false));
+                }
             }
         });
     });
@@ -1898,8 +1953,17 @@
     socket.on('todays_history_append', (data) => {
         console.log("Received todays_history_append:", data);
         if (data.symbol && data.item) {
-            const historyTbody = document.querySelector(`#${data.symbol.toLowerCase()}-todays-history-table tbody`);
-            if (historyTbody) addHistoryItemToTable(historyTbody, data.item, data.symbol, true);
+            // Only append to history tables for symbols that have a dedicated HTML element
+            if (OI_SYMBOLS.includes(data.symbol)) {
+                const historyTbody = document.querySelector(`#${data.symbol.toLowerCase()}-todays-history-table tbody`);
+                if (historyTbody) addHistoryItemToTable(historyTbody, data.item, data.symbol, true);
+            }
+            // If the symbol is the currently selected equity, also update its history table
+            const currentEquitySymbol = $('#equity-symbol-selector').val();
+            if (data.symbol === currentEquitySymbol) {
+                 const equityHistoryTbody = document.querySelector('#equity-historical-data-table tbody');
+                 if (equityHistoryTbody) addHistoryItemToTable(equityHistoryTbody, data.item, data.symbol, true);
+            }
         }
     });
 
@@ -2195,7 +2259,11 @@
         }
         // NEW: Update live OI summaries
         if (data.oi_change_summaries) {
-            renderLiveOiSummaries(data.oi_change_summaries);
+            shared_data_cache.live_oi_summary = data.oi_change_summaries; // Cache the live OI summaries
+            const oiSummariesTabContent = document.getElementById('OI_SUMMARIES_tab');
+            if (oiSummariesTabContent && oiSummariesTabContent.style.display === 'block') {
+                renderLiveOiSummaries(data.oi_change_summaries);
+            }
         }
     });
 

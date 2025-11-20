@@ -689,6 +689,53 @@ footer {
     font-size: 0.9em;
 }
 
+/* NEW: OI Summary Grid and Table Styling */
+.oi-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.oi-summary-symbol-card {
+    background: #1e1e1e;
+    border-radius: 12px;
+    padding: 15px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.oi-summary-symbol-card h4 {
+    text-align: center;
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #03a9f4;
+}
+
+.oi-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+}
+
+.oi-summary-table th,
+.oi-summary-table td {
+    padding: 8px;
+    text-align: center;
+    border-bottom: 1px solid #333;
+    vertical-align: middle;
+}
+
+.oi-summary-table th {
+    background: #333;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.oi-summary-table .table-info {
+    background-color: rgba(0, 123, 255, 0.2); /* Light blue for net row */
+    font-weight: bold;
+}
 
 /* Responsive adjustments for smaller screens */
 @media (max-width: 768px) {
@@ -712,7 +759,9 @@ footer {
     #strategy-results-container table th,
     #strategy-results-container table td,
     #news-table th,
-    #news-table td {
+    #news-table td,
+    .oi-summary-table th,
+    .oi-summary-table td {
         font-size: 0.75em;
         padding: 5px;
     }
@@ -739,4 +788,13 @@ footer {
     #news-table th:nth-child(5) { width: 20%; } /* Impact */
     #news-table th:nth-child(6) { display: none; } /* Hide Link column on small screens */
 
+    /* OI Summary table responsive adjustments */
+    .oi-summary-grid {
+        grid-template-columns: 1fr; /* Stack cards on small screens */
+    }
+    .oi-summary-table th:nth-child(1) { width: 20%; } /* Interval */
+    .oi-summary-table th:nth-child(2) { width: 15%; } /* Type */
+    .oi-summary-table th:nth-child(3) { width: 15%; } /* Strike */
+    .oi-summary-table th:nth-child(4) { width: 20%; } /* OI Change */
+    .oi-summary-table th:nth-child(5) { width: 30%; } /* Status */
 }

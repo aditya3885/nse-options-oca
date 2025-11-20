@@ -481,7 +481,7 @@ def get_historical_data(symbol: str, date_str: str):
             cur.execute(
                 """SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, intraday_pcr, ml_sentiment, sentiment_reason, implied_volatility
                    FROM history WHERE symbol = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC""",
-                (symbol, utc_start_dt_str, utc_day_end_str))
+                (symbol, utc_day_start_str, utc_day_end_str))
             rows = cur.fetchall()
             for r in rows:
                 # Convert stored ISO string back to datetime object for timezone conversion
@@ -3281,12 +3281,18 @@ class NseBseAnalyzer:
             # df_sorted is already initialized as empty DataFrame above this block
             with data_lock:
                 oi_change_summaries[sym] = {
-                    '15min': [{"interval": "15 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
-                               "status": "No data for this interval."}],
-                    '30min': [{"interval": "30 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
-                               "status": "No data for this interval."}],
-                    '60min': [{"interval": "60 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
-                               "status": "No data for this interval."}],
+                    '15min': {
+                        'major_shifts': [{"interval": "15 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A", "status": "No data for this interval."}],
+                        'net_summary': {"interval": "15 minutes", "net_type": "N/A", "net_oi_change": "N/A", "net_status": "No data for this interval."}
+                    },
+                    '30min': {
+                        'major_shifts': [{"interval": "30 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A", "status": "No data for this interval."}],
+                        'net_summary': {"interval": "30 minutes", "net_type": "N/A", "net_oi_change": "N/A", "net_status": "No data for this interval."}
+                    },
+                    '60min': {
+                        'major_shifts': [{"interval": "60 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A", "status": "No data for this interval."}],
+                        'net_summary': {"interval": "60 minutes", "net_type": "N/A", "net_oi_change": "N/A", "net_status": "No data for this interval."}
+                    },
                 }
             # Still call _capture_first_last_oi_summaries even if df is empty, it will handle empty df_current_strikes
             self._capture_first_last_oi_summaries(sym, now_ist, underlying, df_sorted)
@@ -3939,31 +3945,51 @@ class NseBseAnalyzer:
 
 
     def _calculate_oi_summary_for_interval(self, sym: str, current_time: datetime.datetime, interval_minutes: int,
-                                           current_underlying: float, df_current_strikes: pd.DataFrame) -> List[
-        Dict[str, Any]]:
+                                           current_underlying: float, df_current_strikes: pd.DataFrame) -> Dict[str, Any]:
         """
-        Calculates OI summary for a given interval, returning a list of major shifts.
+        Calculates OI summary for a given interval, returning a dictionary containing:
+        - 'major_shifts': a list of major shifts (as currently implemented)
+        - 'net_summary': a dictionary with net OI change and status for the interval.
         """
-        summary_list = []
+        major_shifts = []
+        net_call_oi_change = 0
+        net_put_oi_change = 0
 
         # Get snapshot at the beginning of the interval
         start_snapshot = self._get_snapshot_for_interval(sym, current_time, interval_minutes)
 
         if not start_snapshot:
             # Return a default entry indicating no data
-            return [{"interval": f"{interval_minutes} minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
-                     "status": f"No data for {interval_minutes} min interval."}]
+            return {
+                'major_shifts': [{"interval": f"{interval_minutes} minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A", "status": f"No data for {interval_minutes} min interval."}],
+                'net_summary': {
+                    "interval": f"{interval_minutes} minutes",
+                    "net_type": "N/A",
+                    "net_oi_change_call": 0, # Added default
+                    "net_oi_change_put": 0,  # Added default
+                    "net_oi_total_change": "N/A", # Ensure this key exists
+                    "net_status": "No data for this interval."
+                }
+            }
 
         start_underlying = start_snapshot.get('underlying_value', current_underlying)
         price_change_interval = current_underlying - start_underlying
 
-        major_shifts = []
-
         # Ensure df_current_strikes is not empty and has the expected columns
         if df_current_strikes.empty or 'strikePrice' not in df_current_strikes.columns:
-            return [{"interval": f"{interval_minutes} minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
-                     "status": f"No current strike data for {interval_minutes} min interval."}]
+            return {
+                'major_shifts': [{"interval": f"{interval_minutes} minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A", "status": f"No current strike data for {interval_minutes} min interval."}],
+                'net_summary': {
+                    "interval": f"{interval_minutes} minutes",
+                    "net_type": "N/A",
+                    "net_oi_change_call": 0, # Added default
+                    "net_oi_change_put": 0,  # Added default
+                    "net_oi_total_change": "N/A", # Ensure this key exists
+                    "net_status": "No current strike data."
+                }
+            }
 
+        # Calculate net OI changes across all strikes for the interval
         for _, row in df_current_strikes.iterrows():
             strike = int(row['strikePrice'])
             current_call_oi = int(row.get('openInterest_call', 0))
@@ -3975,7 +4001,10 @@ class NseBseAnalyzer:
             call_oi_change = current_call_oi - prev_call_oi
             put_oi_change = current_put_oi - prev_put_oi
 
-            # Only consider changes that are significant
+            net_call_oi_change += call_oi_change
+            net_put_oi_change += put_oi_change
+
+            # Only consider changes that are significant for major_shifts list
             OI_SHIFT_THRESHOLD = 500  # Adjust as needed
             if abs(call_oi_change) > OI_SHIFT_THRESHOLD:
                 major_shifts.append({
@@ -3997,11 +4026,45 @@ class NseBseAnalyzer:
         # Sort major shifts by absolute change and take top N
         major_shifts = sorted(major_shifts, key=lambda x: abs(x['oi_change']), reverse=True)[:5]
 
-        if not major_shifts:
-            return [{"interval": f"{interval_minutes} mins", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
-                     "status": "No significant shifts"}]
+        # Determine net status
+        net_status = "Neutral"
+        net_oi_total_change = net_call_oi_change + net_put_oi_change
+        net_type = "Overall"
 
-        return major_shifts
+        if net_call_oi_change > 0 and net_put_oi_change < 0: # More call writing, put unwinding
+            net_status = "Bearish (Call Build-up, Put Unwinding)"
+        elif net_call_oi_change < 0 and net_put_oi_change > 0: # More put writing, call unwinding
+            net_status = "Bullish (Put Build-up, Call Unwinding)"
+        elif net_call_oi_change > 0 and net_put_oi_change > 0: # Both call and put writing
+            if net_call_oi_change > net_put_oi_change:
+                net_status = "Mildly Bearish (Higher Call Build-up)"
+            else:
+                net_status = "Mildly Bullish (Higher Put Build-up)"
+        elif net_call_oi_change < 0 and net_put_oi_change < 0: # Both call and put unwinding
+            if abs(net_call_oi_change) > abs(net_put_oi_change):
+                net_status = "Mildly Bullish (Higher Call Unwinding)"
+            else:
+                net_status = "Mildly Bearish (Higher Put Unwinding)"
+        elif net_call_oi_change > 0:
+            net_status = "Bearish (Call Build-up)"
+        elif net_put_oi_change > 0:
+            net_status = "Bullish (Put Build-up)"
+        elif net_call_oi_change < 0:
+            net_status = "Bullish (Call Unwinding)"
+        elif net_put_oi_change < 0:
+            net_status = "Bearish (Put Unwinding)"
+
+        return {
+            'major_shifts': major_shifts if major_shifts else [{"interval": f"{interval_minutes} mins", "type": "N/A", "strike": "N/A", "oi_change": "N/A", "status": "No significant shifts"}],
+            'net_summary': {
+                "interval": f"{interval_minutes} minutes",
+                "net_type": net_type,
+                "net_oi_change_call": net_call_oi_change,
+                "net_oi_change_put": net_put_oi_change,
+                "net_oi_total_change": net_oi_total_change,
+                "net_status": net_status
+            }
+        }
 
     def _capture_first_last_oi_summaries(self, sym: str, current_time: datetime.datetime,
                                          current_underlying: float, df_current_strikes: pd.DataFrame):
@@ -4149,19 +4212,20 @@ class NseBseAnalyzer:
                 if sym not in all_summaries[date]:
                     all_summaries[date][sym] = {}
 
-                # Extract the actual summary list from the dict
+                # Extract the actual summary dict from the dict
+                # Changed default to {} instead of {'major_shifts':[], 'net_summary':{}}
                 if summary_type == 'today_15min':
-                    all_summaries[date][sym]['TODAY_FIRST_15'] = summary_data_raw.get('TODAY_FIRST_15', [])
+                    all_summaries[date][sym]['TODAY_FIRST_15'] = summary_data_raw.get('TODAY_FIRST_15', {})
                 elif summary_type == 'today_30min':
-                    all_summaries[date][sym]['TODAY_FIRST_30'] = summary_data_raw.get('TODAY_FIRST_30', [])
+                    all_summaries[date][sym]['TODAY_FIRST_30'] = summary_data_raw.get('TODAY_FIRST_30', {})
                 elif summary_type == 'today_60min':
-                    all_summaries[date][sym]['TODAY_FIRST_60'] = summary_data_raw.get('TODAY_FIRST_60', [])
+                    all_summaries[date][sym]['TODAY_FIRST_60'] = summary_data_raw.get('TODAY_FIRST_60', {})
                 elif summary_type == 'tomorrow_15min':
-                    all_summaries[date][sym]['TOMORROW_LAST_15'] = summary_data_raw.get('TOMORROW_LAST_15', [])
+                    all_summaries[date][sym]['TOMORROW_LAST_15'] = summary_data_raw.get('TOMORROW_LAST_15', {})
                 elif summary_type == 'tomorrow_30min':
-                    all_summaries[date][sym]['TOMORROW_LAST_30'] = summary_data_raw.get('TOMORROW_LAST_30', [])
+                    all_summaries[date][sym]['TOMORROW_LAST_30'] = summary_data_raw.get('TOMORROW_LAST_30', {})
                 elif summary_type == 'tomorrow_60min':
-                    all_summaries[date][sym]['TOMORROW_LAST_60'] = summary_data_raw.get('TOMORROW_LAST_60', [])
+                    all_summaries[date][sym]['TOMORROW_LAST_60'] = summary_data_raw.get('TOMORROW_LAST_60', {})
 
             return all_summaries
         except sqlite3.Error as e:
@@ -4176,4 +4240,3 @@ if __name__ == '__main__':
     analyzer = NseBseAnalyzer()
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     socketio.run(app, host='0.0.0.0', port=5000)
-
