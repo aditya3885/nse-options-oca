@@ -40,6 +40,7 @@ import joblib
 import re
 import feedparser
 from dotenv import load_dotenv
+import json  # Import json for serializing OI summaries
 
 requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning)
@@ -55,7 +56,7 @@ UPDATE_INTERVAL = 180
 MAX_HISTORY_ROWS_DB = 10000
 # IMPORTANT: Temporarily reducing this for faster COI history build-up for debugging.
 # Revert to 180 or higher for production to avoid hitting API limits.
-LIVE_DATA_INTERVAL = 30 # Changed from 180 to 30 for faster debugging of COI history
+LIVE_DATA_INTERVAL = 30  # Changed from 180 to 30 for faster debugging of COI history
 EQUITY_FETCH_INTERVAL = 300  # 5 minutes
 
 # AI Bot Configuration
@@ -124,7 +125,7 @@ def fetch_market_news(top_n: int = 20) -> List[Dict[str, Any]]:
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/555.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/555.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8,application/signed-exchange;v=b3;q=0.7',
     })
     for url in RSS_FEEDS:
         try:
@@ -160,7 +161,7 @@ def fetch_market_news(top_n: int = 20) -> List[Dict[str, Any]]:
                 time_ist_display = published_dt_utc.astimezone(pytz.timezone('Asia/Kolkata')).strftime("%H:%M")
                 title = e.title.strip()
                 summary_raw = (e.get("summary") or e.get("description") or "")
-                clean_summary = re.sub(r'<.*?>', '', summary_raw).strip()
+                clean_summary = re.sub(r'<.?>', '', summary_raw).strip()
                 display_summary = (clean_summary[:120] + "...") if len(clean_summary) > 120 else clean_summary
                 impact = _estimate_impact(title, clean_summary)
                 link = e.link if hasattr(e, 'link') else '#'
@@ -192,6 +193,7 @@ def fetch_market_news(top_n: int = 20) -> List[Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 app = Flask(__name__, template_folder='.', static_folder='static')
+# Changed cors_allowed_origins to "*" for broader compatibility
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 shared_data: Dict[str, Dict[str, Any]] = {}
@@ -210,6 +212,12 @@ ai_bot_trades: Dict[str, Any] = {}
 ai_bot_trade_history: List[Dict[str, Any]] = []
 last_ai_bot_run_time: Dict[str, float] = {}
 news_alerts: List[Dict[str, Any]] = []
+
+## NEW ## Global variables for OI summaries
+oi_change_summaries: Dict[str, Dict[str, Any]] = {sym: {} for sym in AUTO_SYMBOLS}
+
+
+# first_last_oi_summaries: Dict[str, Dict[str, Any]] = {sym: {} for sym in AUTO_SYMBOLS} # This will be loaded from DB
 
 
 # Helper to convert NumPy types to standard Python types for JSON serialization
@@ -294,6 +302,25 @@ def get_bhavcopy_strategies(date_str: str) -> Dict[str, Any]:
     return convert_numpy_types(results)  # Convert here
 
 
+## NEW ## Route to fetch historical OI summary data
+@app.route('/api/oi_summary_history/<symbol>/<date_str>')
+def get_oi_summary_history(symbol: str, date_str: str):
+    if not analyzer.conn:
+        return jsonify({"error": "Database connection not available."}), 500
+    try:
+        datetime.datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "Invalid date format. Please use YYYY-MM-DD."}), 400
+    try:
+        data = analyzer.get_oi_summary_from_db_for_date(symbol, date_str)
+        if not data:
+            return jsonify({"error": f"No OI summary data found for {symbol} on {date_str}."}), 404
+        return jsonify(convert_numpy_types(data))
+    except Exception as e:
+        print(f"Error fetching historical OI summary for {symbol} on {date_str}: {e}")
+        return jsonify({"error": "An internal error occurred while fetching OI summary data."}), 500
+
+
 @socketio.on('connect')
 def handle_connect(sid):  # Added sid argument
     global site_visits
@@ -321,12 +348,17 @@ def handle_connect(sid):  # Added sid argument
         serializable_ai_bot_trade_history = convert_numpy_types(ai_bot_trade_history)
         serializable_todays_history = convert_numpy_types(todays_history)
         serializable_news_alerts = convert_numpy_types(news_alerts)
+        serializable_oi_change_summaries = convert_numpy_types(oi_change_summaries)  # ## NEW ##
+        serializable_first_last_oi_summaries = convert_numpy_types(
+            analyzer.get_oi_summary_from_db_for_date(None, None))  # ## NEW ## Load all from DB for initial connect
 
         emit('update', {
             'live': serializable_shared_data,
             'live_feed_summary': serializable_live_feed_summary,
             'ai_bot_trades': serializable_ai_bot_trades,
-            'ai_bot_trade_history': serializable_ai_bot_trade_history
+            'ai_bot_trade_history': serializable_ai_bot_trade_history,
+            'oi_change_summaries': serializable_oi_change_summaries,  # ## NEW ##
+            'first_last_oi_summaries': serializable_first_last_oi_summaries  # ## NEW ##
         }, to=sid)  # Used sid
         emit('initial_todays_history', {'history': serializable_todays_history}, to=sid)  # Used sid
         analyzer.rank_and_emit_movers()  # This emits separately, ensure its data is clean
@@ -404,12 +436,18 @@ def broadcast_live_update():
         serializable_live_feed_summary = convert_numpy_types(live_feed_summary)
         serializable_ai_bot_trades = convert_numpy_types(ai_bot_trades)
         serializable_ai_bot_trade_history = convert_numpy_types(ai_bot_trade_history)
+        serializable_oi_change_summaries = convert_numpy_types(oi_change_summaries)  # ## NEW ##
+        serializable_first_last_oi_summaries = convert_numpy_types(
+            analyzer.get_oi_summary_from_db_for_date(None, None))  # ## NEW ##
 
         socketio.emit('update',
                       {'live': serializable_shared_data,
                        'live_feed_summary': serializable_live_feed_summary,
                        'ai_bot_trades': serializable_ai_bot_trades,
-                       'ai_bot_trade_history': serializable_ai_bot_trade_history})
+                       'ai_bot_trade_history': serializable_ai_bot_trade_history,
+                       'oi_change_summaries': serializable_oi_change_summaries,  # ## NEW ##
+                       'first_last_oi_summaries': serializable_first_last_oi_summaries  # ## NEW ##
+                       })
 
 
 def broadcast_history_append(sym: str, new_history_item: Dict[str, Any]):
@@ -443,7 +481,7 @@ def get_historical_data(symbol: str, date_str: str):
             cur.execute(
                 """SELECT timestamp, sp, value, call_oi, put_oi, pcr, sentiment, add_exit, intraday_pcr, ml_sentiment, sentiment_reason, implied_volatility
                    FROM history WHERE symbol = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC""",
-                (symbol, utc_day_start_str, utc_day_end_str))
+                (symbol, utc_start_dt_str, utc_day_end_str))
             rows = cur.fetchall()
             for r in rows:
                 # Convert stored ISO string back to datetime object for timezone conversion
@@ -481,7 +519,7 @@ def clear_history_endpoint():
 
 
 class DeepSeekBot:
-    def __init__(self):
+    def __init__(self):  # Changed to __init__
         self.recommendations: Dict[str, Dict[str, Any]] = {}
         self.active_trades: Dict[str, Dict[str, Any]] = {}
         self.last_vix: float = 15.0
@@ -528,61 +566,10 @@ class DeepSeekBot:
         current_time_only = now.time()
 
         # --- MODIFICATION START (to run bot always) ---
-        # Removed the market hours check from here to allow continuous bot operation
-        # if not (AI_BOT_TRADING_START_TIME <= current_time_only <= AI_BOT_TRADING_END_TIME):
-        #     if symbol in self.active_trades:
-        #         entry_premium_ce = float(self.active_trades[symbol].get('entry_premium_ce', 0))
-        #         entry_premium_pe = float(self.active_trades[symbol].get('entry_premium_pe', 0))
-
-        #         lot_size = 50
-        #         if symbol == "NIFTY":
-        #             lot_size = 50
-        #         elif symbol == "BANKNIFTY":
-        #             lot_size = 15
-        #         elif symbol == "FINNIFTY":
-        #             lot_size = 40
-
-        #         active_otm_ce_strike = float(self.active_trades[symbol].get('otm_ce_strike', 0))  # Cast
-        #         active_otm_pe_strike = float(self.active_trades[symbol].get('otm_pe_strike', 0))  # Cast
-
-        #         premium_ce_exit = float(df_ce[df_ce['strikePrice'] == active_otm_ce_strike]['lastPrice'].iloc[0]) if not \
-        #         df_ce[
-        #             df_ce['strikePrice'] == active_otm_ce_strike].empty else 0.0  # Cast
-        #         premium_pe_exit = float(df_pe[df_pe['strikePrice'] == active_otm_pe_strike]['lastPrice'].iloc[0]) if not \
-        #         df_pe[
-        #             df_pe['strikePrice'] == active_otm_pe_strike].empty else 0.0  # Cast
-
-        #         current_pnl = 0.0
-        #         if "CE" in self.active_trades[symbol].get('strikes', '') and entry_premium_ce > 0:
-        #             current_pnl += (entry_premium_ce - premium_ce_exit) * lot_size
-        #         if "PE" in self.active_trades[symbol].get('strikes', '') and entry_premium_pe > 0:
-        #             current_pnl += (entry_premium_pe - premium_pe_exit) * lot_size
-
-        #         final_exit_rec = {
-        #             "recommendation": "EXIT", "rationale": "Market closed, exiting active trade.",
-        #             "timestamp": now.isoformat(),
-        #             "trade": "Exit " + self.active_trades[symbol].get('trade', 'previous trade'),
-        #             "strikes": self.active_trades[symbol].get('strikes', '-'),
-        #             "type": "Exit", "risk_pct": "-", "exit_rule": "Market Close",
-        #             "spot": float(self.active_trades[symbol].get('spot')),  # Cast
-        #             "pcr": float(self.active_trades[symbol].get('pcr')),  # Cast
-        #             "intraday_pcr": float(self.active_trades[symbol].get('intraday_pcr')),  # Cast
-        #             "status": "Exit", "pnl": round(float(current_pnl), 2),  # Cast
-        #             "action_price": round(float(premium_ce_exit + premium_pe_exit), 2),  # Cast
-        #             "symbol": symbol
-        #         }
-        #         ai_bot_trade_history.append(final_exit_rec)
-        #         self.active_trades.pop(symbol, None)
-        #         return final_exit_rec
-        #     else:
-        #         return {"recommendation": "Neutral", "rationale": "Outside trading hours.",
-        #                 "timestamp": now.isoformat(),
-        #                 "trade": "-", "strikes": "-", "type": "-",
-        #                 "risk_pct": "-",
-        #                 "exit_rule": "-", "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0, "status": "No Trade",
-        #                 "pnl": 0.0, "action_price": 0.0,
-        #                 "symbol": symbol
-        #                 }
+        # Removed the problematic 'market closed' exit logic. The bot will now attempt to run its analysis
+        # continuously. If market data is not available, it should handle that gracefully.
+        # The 'EXIT' recommendation will now only trigger based on internal logic (e.g., stop loss, PCR reversal)
+        # and not simply because of market close. A separate end-of-day process might be needed for forced exits.
         # --- MODIFICATION END (to run bot always) ---
 
         if not history:
@@ -682,13 +669,6 @@ class DeepSeekBot:
             if abs(pcr - entry_pcr) > 0.3:
                 exit_triggered = True
                 exit_reason = f"PCR reversed {abs(pcr - entry_pcr):.2f} from entry ({entry_pcr:.2f})."
-
-            # --- MODIFICATION START (to run bot always) ---
-            # Removed the market hours exit logic here
-            # if now.hour >= 15 and now.minute >= 15:
-            #     exit_triggered = True
-            #     exit_reason = "Approaching end of day (3:15 PM), time to exit."
-            # --- MODIFICATION END (to run bot always) ---
 
             if exit_triggered:
                 recommendation = "EXIT"
@@ -944,7 +924,7 @@ class DeepSeekBot:
 
 
 class NewsAnalyzer:
-    def __init__(self, nse_bse_analyzer_instance):
+    def __init__(self, nse_bse_analyzer_instance):  # Changed to __init__
         self.analyzer = nse_bse_analyzer_instance
         self.last_news_check_time = 0
 
@@ -985,7 +965,7 @@ class NewsAnalyzer:
             return
         cur = None
         try:
-            cur = self.conn.cursor()
+            cur = self.analyzer.conn.cursor()  # Corrected from self.conn
             ts_iso = news_item.get('timestamp')  # Keep as ISO string for SQLite
             cur.execute(
                 """INSERT INTO news_alerts (timestamp, Headline, Source, "Key Details", Impact, URL) VALUES (?,?,?,?,?,?)""",
@@ -996,10 +976,10 @@ class NewsAnalyzer:
                     datetime.datetime.now(pytz.utc) - datetime.timedelta(days=NEWS_RETENTION_DAYS)).isoformat()
             cur.execute("DELETE FROM news_alerts WHERE timestamp < ?",
                         (time_threshold,))
-            self.conn.commit()
+            self.analyzer.conn.commit()  # Corrected from self.conn
         except sqlite3.Error as e:
             print(f"SQLite DB save error for news alert: {e}")
-            self.conn.rollback()
+            self.analyzer.conn.rollback()  # Corrected from self.conn
         finally:
             if cur:
                 cur.close()
@@ -1010,24 +990,8 @@ class NewsAnalyzer:
         current_time_only = self.analyzer._get_ist_time().time()
 
         # --- MODIFICATION START (to run news always) ---
-        # Removed market hours check for news fetcher
-        # if not (datetime.time(9, 0) <= current_time_only <= datetime.time(16, 0)):
-        #     if self.analyzer.conn:
-        #         cur = None
-        #         try:
-        #             cur = self.analyzer.conn.cursor()
-        #             time_threshold = (datetime.datetime.now(pytz.utc) - datetime.timedelta(
-        #                 days=NEWS_RETENTION_DAYS)).isoformat()
-        #             cur.execute("DELETE FROM news_alerts WHERE timestamp < ?",
-        #                         (time_threshold,))
-        #             self.analyzer.conn.commit()
-        #         except sqlite3.Error as e:
-        #             print(f"SQLite Error clearing old news alerts: {e}")
-        #             self.analyzer.conn.rollback()
-        #         finally:
-        #             if cur:
-        #                 cur.close()
-        #     return
+        # News fetching now runs continuously, independent of market hours.
+        # Old news cleanup remains active.
         # --- MODIFICATION END (to run news always) ---
 
         if now_ts - self.last_news_check_time < NEWS_FETCH_INTERVAL:
@@ -1092,14 +1056,14 @@ class NewsAnalyzer:
 # ANALYZER CLASS
 # --------------------------------------------------------------------------- #
 class NseBseAnalyzer:
-    def __init__(self):
+    def __init__(self):  # Changed to __init__
         self.stop = threading.Event()
         self.session = requests.Session()
         self.nse_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Accept': 'application/json, text/plain, */*',
+            'Accept': 'application/json, text/plain, /',
             'Connection': 'keep-alive',
             'Referer': 'https://www.nseindia.com/option-chain'
         }
@@ -1197,6 +1161,8 @@ class NseBseAnalyzer:
         global fno_stocks_list
         global ai_bot_trades
         global last_ai_bot_run_time
+        global oi_change_summaries  # ## NEW ##
+
         try:
             if not self._set_nse_session_cookies():
                 print("Could not get fresh cookies, falling back to hardcoded symbols.")
@@ -1209,6 +1175,8 @@ class NseBseAnalyzer:
                                               "spot": 0.0, "pcr": 0.0, "intraday_pcr": 0.0,
                                               "symbol": sym}
                         last_ai_bot_run_time[sym] = 0
+                    if sym not in oi_change_summaries:  # ## NEW ##
+                        oi_change_summaries[sym] = {}  # ## NEW ##
                 return
 
             response = self.session.get(self.url_symbols, headers=self.nse_headers, timeout=10, verify=False)
@@ -1224,6 +1192,8 @@ class NseBseAnalyzer:
                                           "pcr": 0.0, "intraday_pcr": 0.0,
                                           "symbol": sym}
                     last_ai_bot_run_time[sym] = 0
+                if sym not in oi_change_summaries:  # ## NEW ##
+                    oi_change_summaries[sym] = {}  # ## NEW ##
         except requests.exceptions.RequestException as e:
             print(f"Fatal error: Could not fetch stock symbols. {e}. Falling back to hardcoded symbols.")
             fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
@@ -1235,6 +1205,8 @@ class NseBseAnalyzer:
                                           "pcr": 0.0, "intraday_pcr": 0.0,
                                           "symbol": sym}
                     last_ai_bot_run_time[sym] = 0
+                if sym not in oi_change_summaries:  # ## NEW ##
+                    oi_change_summaries[sym] = {}  # ## NEW ##
         except Exception as e:
             print(f"An unexpected error occurred while fetching stock symbols: {e}. Falling back to hardcoded symbols.")
             fno_stocks_list = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN"]
@@ -1246,6 +1218,8 @@ class NseBseAnalyzer:
                                           "pcr": 0.0, "intraday_pcr": 0.0,
                                           "symbol": sym}
                     last_ai_bot_run_time[sym] = 0
+                if sym not in oi_change_summaries:  # ## NEW ##
+                    oi_change_summaries[sym] = {}  # ## NEW ##
 
     def _init_db(self):
         cur = None
@@ -1285,7 +1259,7 @@ class NseBseAnalyzer:
                 cur.execute("ALTER TABLE history ADD COLUMN ml_sentiment TEXT")
                 print("Added 'ml_sentiment' column to 'history' table.")
             if 'sentiment_reason' not in columns:
-                cur.execute("ALTER TABLE history ADD COLUMN sentiment_reason TEXT")
+                cur.execute("ALTER TABLE history ADD COLUMN sentiment_reason TEXT")  # Corrected column name
                 print("Added 'sentiment_reason' column to 'history' table.")
             if 'implied_volatility' not in columns:  # Check and add IV column
                 cur.execute("ALTER TABLE history ADD COLUMN implied_volatility REAL DEFAULT 0.0")
@@ -1365,6 +1339,18 @@ class NseBseAnalyzer:
                     URL TEXT
                 )
             """)
+
+            ## NEW TABLE ## oi_first_last_summaries for persisting "Today's Interest" and "Tomorrow's Interest"
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS oi_first_last_summaries (
+                    date TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    type TEXT NOT NULL, -- 'today_15min', 'today_30min', 'today_60min', 'tomorrow_15min', 'tomorrow_30min', 'tomorrow_60min'
+                    summary TEXT, -- JSON string of the summary
+                    PRIMARY KEY (date, symbol, type)
+                )
+            """)
+
             self.conn.commit()
         except sqlite3.Error as e:  # Catch sqlite3.Error
             print(f"SQLite DB error: {e}")
@@ -1581,30 +1567,8 @@ class NseBseAnalyzer:
             symbols_to_process = AUTO_SYMBOLS
 
             # --- MODIFICATION START (to run data fetch always) ---
-            # Removed the market hours check from here to allow continuous data fetching
-            # for sym in symbols_to_process:
-            #     if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] + fno_stocks_list:
-            #         if not (NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME):
-            #             if sym in self.deepseek_bot.active_trades:
-            #                 current_vix_value = float(
-            #                     shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
-            #                         "current_value", 15.0))
-            #                 active_trade_info = self.deepseek_bot.active_trades[sym]
-            #                 dummy_df_ce = pd.DataFrame(
-            #                     [{'strikePrice': float(active_trade_info.get('otm_ce_strike', 0)), 'openInterest': 0,
-            #                       # Cast
-            #                       'lastPrice': float(active_trade_info.get('entry_premium_ce', 0))}])  # Cast
-            #                 dummy_df_pe = pd.DataFrame(
-            #                     [{'strikePrice': float(active_trade_info.get('otm_pe_strike', 0)), 'openInterest': 0,
-            #                       # Cast
-            #                       'lastPrice': float(active_trade_info.get('entry_premium_pe', 0))}])  # Cast
-            #                 self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []),
-            #                                                         current_vix_value,
-            #                                                         dummy_df_ce, dummy_df_pe)
-            #                 broadcast_live_update()
-            #             print(
-            #                 f"Skipping NSE data fetch for {sym} outside of market hours ({current_time_only.strftime('%H:%M')}). Retaining last data.")
-            #             continue
+            # Data fetching now runs continuously.
+            # Bot's active trade exit logic will continue to run even if NSE data fetch is problematic.
             # --- MODIFICATION END (to run data fetch always) ---
             for sym in symbols_to_process:
                 try:
@@ -1624,14 +1588,14 @@ class NseBseAnalyzer:
             current_time_only = now_ist.time()
 
             # --- MODIFICATION START (to run equity fetch always) ---
-            # Removed the market hours check from here to allow continuous data fetching
-            # if NSE_FETCH_START_TIME <= current_time_only <= NSE_FETCH_END_TIME:
+            # Equity fetching now runs continuously, independent of market hours.
+            # Bot's active trade exit logic will continue to run.
             print(f"Starting F&O equity fetch cycle at {now_ist.strftime('%H:%M:%S')}")
             self._set_nse_session_cookies()
             for i, symbol in enumerate(fno_stocks_list):
                 try:
                     print(f"Fetching F&O Equity {i + 1}/{len(fno_stocks_list)}: {symbol}")
-                    equity_data = self._process_equity_data(symbol)
+                    equity_data = self._process_equity_data(symbol)  # Changed to _process_equity_data
                     if equity_data:
                         previous_data = equity_data_cache.get(symbol, {}).get('current')
                         equity_data_cache[symbol] = {'current': equity_data, 'previous': previous_data}
@@ -1641,33 +1605,12 @@ class NseBseAnalyzer:
             self.rank_and_emit_movers()
             print(f"F&O Equity fetch cycle finished. Sleeping for {EQUITY_FETCH_INTERVAL} seconds.")
             time.sleep(EQUITY_FETCH_INTERVAL)
-            # else:
-            #     print(
-            #         f"Market is closed. F&O Equity fetcher sleeping. Current time: {now_ist.strftime('%H:%M:%S')}. Retaining last data.")
-            #     for sym in fno_stocks_list:
-            #         if sym in self.deepseek_bot.active_trades:
-            #             current_vix_value = float(
-            #                 shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(  # Cast
-            #                     "current_value", 15.0))
-            #             active_trade_info = self.deepseek_bot.active_trades[sym]
-            #             dummy_df_ce = pd.DataFrame(
-            #                 [{'strikePrice': float(active_trade_info.get('otm_ce_strike', 0)), 'openInterest': 0,
-            #                   # Cast
-            #                   'lastPrice': float(active_trade_info.get('entry_premium_ce', 0))}])  # Cast
-            #             dummy_df_pe = pd.DataFrame(
-            #                 [{'strikePrice': float(active_trade_info.get('otm_pe_strike', 0)), 'openInterest': 0,
-            #                   # Cast
-            #                   'lastPrice': float(active_trade_info.get('entry_premium_pe', 0))}])  # Cast
-            #             self.deepseek_bot.analyze_and_recommend(sym, todays_history.get(sym, []), current_vix_value,
-            #                                                     dummy_df_ce, dummy_df_pe)
-            #             broadcast_live_update()
-            #     time.sleep(60)
             # --- MODIFICATION END (to run equity fetch always) ---
 
     def bhavcopy_scanner_thread(self):
         print("Bhavcopy scanner thread started.")
         while not self.stop.is_set():
-            now_ist = self._get_ist_time()
+            now_ist = self._get_ist_time()  # Corrected from get_ist_time
             if now_ist.hour >= 21 and (self.bhavcopy_last_run_date != now_ist.date().isoformat()):
                 print(f"--- Triggering daily Bhavcopy scan for {now_ist.date().isoformat()} ---")
                 scan_successful = False
@@ -1763,7 +1706,7 @@ class NseBseAnalyzer:
                     print(f"Error downloading {full_url}: {e}")
         return None
 
-    def _run_bhavcopy_and_analyze_wrapper(self, date_obj, sid):
+    def _run_bhavcopy_and_analyze_wrapper(self, date_obj, sid):  # Changed to _run_bhavcopy_and_analyze_wrapper
         date_str = date_obj.strftime('%Y-%m-%d')
         socketio.emit('bhavcopy_analysis_status',
                       {'success': True, 'message': f'Attempting to download and process Bhavcopy for {date_str}...'},
@@ -1791,7 +1734,7 @@ class NseBseAnalyzer:
             except Exception as e:
                 print(f"Error analyzing strategies for {date_str}: {e}")
                 socketio.emit('bhavcopy_analysis_status',
-                              {'success': False, 'message': f'Error analyzing strategies: {e}'}, to=sid)
+                              {'success': False, 'message': f'Error triggering analysis: {e}'}, to=sid)
         else:
             socketio.emit('bhavcopy_analysis_status',
                           {'success': False, 'message': f'Failed to download or process Bhavcopy for {date_str}.'},
@@ -1804,7 +1747,7 @@ class NseBseAnalyzer:
         print(f"Attempting to download Bhavcopy for {target_date_str_dmy}...")
         self.bhavcopy_running.set()
         try:
-            self._set_nse_session_cookies()
+            self._set_nse_session_cookies()  # Corrected from set_nse_session_cookies
             cm_file_path_local = None
             fno_file_path_local = None
             index_file_path_local = None
@@ -1813,11 +1756,11 @@ class NseBseAnalyzer:
 
             print(f"Trying to find CM Bhavcopy for {target_date_str_dmy}...")
             cm_file_path_local = self.download_bhavcopy_file_by_name(date_obj,
-                                                                     f"sec_bhavdata_full_{target_date_str_dmy}.csv",
+                                                                     f"sec_bhavdata_full{target_date_str_dmy}.csv",
                                                                      "Bhavcopy_Downloads/NSE")
             if not cm_file_path_local:
                 cm_file_path_local = self.download_bhavcopy_file_by_name(date_obj,
-                                                                         f"BhavCopy_NSE_CM_0_0_0_{date_obj.strftime('%Y%m%d')}_F_0000.csv.zip",
+                                                                         f"BhavCopy_NSE_CM_0_0_0{date_obj.strftime('%Y%m%d')}F_0000.csv.zip",
                                                                          "Bhavcopy_Downloads/NSE", is_zip=True)
                 if cm_file_path_local:
                     print(f"Found alternative CM Bhavcopy: {os.path.basename(cm_file_path_local)}")
@@ -1834,7 +1777,7 @@ class NseBseAnalyzer:
                                                                           "Bhavcopy_Downloads/NSE", is_zip=True)
             if not fno_file_path_local:
                 fno_file_path_local = self.download_bhavcopy_file_by_name(date_obj,
-                                                                          f"BhavCopy_NSE_FO_0_0_0_{date_obj.strftime('%Y%m%d')}_F_0000.csv.zip",
+                                                                          f"BhavCopy_NSE_FO_0_0_0{date_obj.strftime('%Y%m%d')}F_0000.csv.zip",
                                                                           "Bhavcopy_Downloads/NSE", is_zip=True)
             if not fno_file_path_local:
                 fno_file_path_local = self.download_bhavcopy_file_by_name(date_obj,
@@ -1845,7 +1788,7 @@ class NseBseAnalyzer:
 
             print(f"Trying to find Index Bhavcopy for {target_date_str_dmy}...")
             index_file_path_local = self.download_bhavcopy_file_by_name(date_obj,
-                                                                        f"ind_close_all_{target_date_str_dmy}.csv",
+                                                                        f"ind_close_all{target_date_str_dmy}.csv",
                                                                         "Bhavcopy_Downloads/NSE")
             if not index_file_path_local:
                 print(
@@ -1962,10 +1905,10 @@ class NseBseAnalyzer:
 
                 for index, r_idx in df_idx.iterrows():
                     index_name_raw = r_idx.get('INDEX NAME', r_idx.get('INDEX', '')).strip()
-                    index_name_processed = index_name_raw.replace(' ', '_').upper()
+                    index_name_processed = index_name_raw.replace(' ', '').upper()
                     mapped_symbol = None
                     for sym_key, map_value in self.BHAVCOPY_INDICES_MAP.items():
-                        if map_value.replace(' ', '_').upper() == index_name_processed:
+                        if map_value.replace(' ', '').upper() == index_name_processed:
                             mapped_symbol = sym_key
                             break
 
@@ -2148,7 +2091,7 @@ class NseBseAnalyzer:
         try:
             cur = self.conn.cursor()
             cur.execute(
-                """SELECT symbol, close, volume, pct_change, delivery_pct, "open", high, low, prev_close, trading_type FROM bhavcopy_data WHERE date = ? AND trading_type = 'EQ'""",
+                """SELECT symbol, close, volume, pct_change, delivery_pct, "open", high, low, prev_close FROM bhavcopy_data WHERE date = ? AND trading_type = 'EQ'""",
                 (date_str,)
             )
             equities = [{
@@ -2219,7 +2162,7 @@ class NseBseAnalyzer:
             List[Dict[str, Any]]:
         """
         Fetches historical equity bhavcopy data for a specific stock over a period.
-        `limit` is the maximum number of records to return.
+        limit is the maximum number of records to return.
         """
         cur = None
         try:
@@ -2822,7 +2765,7 @@ class NseBseAnalyzer:
                     'expiry': 'N/A',
                     'ml_sentiment': 'N/A',
                     'symbol': sym,
-                    'sentiment_reason': sentiment_reason_yfinance,
+                    'sentiment_reason': sentiment_yfinance, # Changed to sentiment_yfinance for YFinance symbols
                     'implied_volatility': 0.0,  # Placeholder for IV for YFinance symbols
                     'change': round(float(change), 2),  # Explicitly add change
                     'percentage_change': round(float(pct_change), 2)  # Explicitly add percentage change
@@ -2863,21 +2806,22 @@ class NseBseAnalyzer:
         except Exception as e:
             print(f"{sym} yfinance processing error: {e}")
 
-    def _get_oi_buildup(self, price_change, oi_change):
-        if abs(price_change) > 0.01:
-            if price_change > 0 and oi_change > 0:
+    ## MODIFIED ## Added threshold argument for OI buildup
+    def _get_oi_buildup(self, price_change: float, oi_change: int, threshold: int = 100) -> str:
+        if abs(price_change) > 0.01:  # Check for significant price change
+            if price_change > 0 and oi_change > threshold:
                 return "Long Buildup"
-            if price_change > 0 and oi_change < 0:
+            if price_change > 0 and oi_change < -threshold:
                 return "Short Covering"
-            if price_change < 0 and oi_change > 0:
+            if price_change < 0 and oi_change > threshold:
                 return "Short Buildup"
-            if price_change < 0 and oi_change < 0:
+            if price_change < 0 and oi_change < -threshold:
                 return "Long Unwinding"
-        if oi_change > 100:
+        if oi_change > threshold:
             return "Fresh OI Added"
-        if oi_change < -100:
+        if oi_change < -threshold:
             return "OI Exited"
-        return ""
+        return "Neutral"  # Changed from "" to "Neutral"
 
     def _get_nse_option_chain_data(self, sym: str, is_equity: bool = False) -> Optional[Dict]:
         """
@@ -3041,6 +2985,7 @@ class NseBseAnalyzer:
             call_coi_daily = int(row.get('changeinOpenInterest_call', 0))
             put_coi_daily = int(row.get('changeinOpenInterest_put', 0))
 
+            # Using current_change (overall session change) for OI buildup status for now
             call_buildup = self._get_oi_buildup(current_change, call_coi_daily)
             put_buildup = self._get_oi_buildup(current_change, put_coi_daily)
             call_action = "ADD" if call_coi_daily > 0 else "EXIT" if call_coi_daily < 0 else ""
@@ -3068,8 +3013,8 @@ class NseBseAnalyzer:
         total_call_oi = int(df['openInterest_call'].sum())  # Total current OI, not change
         total_put_oi = int(df['openInterest_put'].sum())  # Total current OI, not change
 
-        total_call_coi_daily = int(df['changeinOpenInterest_call'].sum())  # This is the daily cumulative COI from API
-        total_put_coi_daily = int(df['changeinOpenInterest_put'].sum())  # This is the daily cumulative Put COI from API
+        total_call_coi_daily = int(df['changeinOpenInterest_call'].sum())  # This is the daily cumulative Call COI (from API)
+        total_put_coi_daily = int(df['changeinOpenInterest_put'].sum())  # This is the daily cumulative Put COI (from API)
 
         diff_oi_daily = total_call_coi_daily - total_put_coi_daily  # Calculate the difference
 
@@ -3110,16 +3055,16 @@ class NseBseAnalyzer:
         historical_avg_iv = 15.0
         current_vix = float(
             shared_data.get("INDIAVIX", {}).get("live_feed_summary", {}).get(
-                        "current_value", 15.0))
+                "current_value", 15.0))
 
         symbol_key_for_iv = sym if sym in ["NIFTY", "FINNIFTY", "BANKNIFTY"] else "EQUITY"
         vix_iv_ranges = self.mean_iv_ranges.get(symbol_key_for_iv, self.mean_iv_ranges["EQUITY"])
 
-        effective_historical_avg_iv = historical_avg_iv
+        effective_historical_avg_iv = historical_avg_iv  # Default if no match
         for vix_range, iv_range in vix_iv_ranges.items():
-            if float(vix_range[0]) <= float(current_vix) < float(vix_range[1]):
+            if float(vix_range[0]) <= float(current_vix) < float(vix_range[1]):  # Cast
                 effective_historical_avg_iv = (float(iv_range[0]) + float(
-                    iv_range[1])) / 2
+                    iv_range[1])) / 2  # Midpoint of the IV range, cast
                 break
 
         current_history_for_sym = todays_history.get(sym, [])
@@ -3198,6 +3143,7 @@ class NseBseAnalyzer:
         # --- NEW CHARTS: COI for the Day ---
         final_ce_coi_day_data = []
         final_pe_coi_day_data = []
+        df_sorted = pd.DataFrame()  # Initialize df_sorted outside the if block
         if not df.empty:
             df_sorted = df.sort_values(by='strikePrice').copy()
             for _, row in df_sorted.iterrows():
@@ -3224,72 +3170,58 @@ class NseBseAnalyzer:
         # Store current ABSOLUTE OI snapshot for future calculations
         current_oi_snapshot = {
             'timestamp': now_ist,
+            'underlying_value': underlying,  # Store underlying value for interval price change
             'data': {}  # {strike: {'call_oi': val, 'put_oi': val}}
         }
 
-        if not df.empty:
-            df_sorted = df.sort_values(by='strikePrice').copy()
-            for _, row in df_sorted.iterrows():
+        if not df.empty:  # This block handles populating current_oi_snapshot and related logic
+            for _, row in df_sorted.iterrows():  # Use df_sorted, which is defined if df is not empty
                 strike = int(row['strikePrice'])
                 current_call_oi_abs = int(row.get('openInterest_call', 0))
                 current_put_oi_abs = int(row.get('openInterest_put', 0))
 
                 current_oi_snapshot['data'][strike] = {
                     'call_oi': current_call_oi_abs,
-                    'put_oi': current_put_oi_abs # DEBUG: Corrected typo 'current_put_put_abs' to 'current_put_oi_abs'
+                    'put_oi': current_put_oi_abs
                 }
 
-            print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Current OI Snapshot created for {len(current_oi_snapshot['data'])} strikes.")
+            print(
+                f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Current OI Snapshot created for {len(current_oi_snapshot['data'])} strikes.")
             if sym not in self.oi_coi_history:
                 self.oi_coi_history[sym] = []
                 print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Initializing oi_coi_history.")
 
             self.oi_coi_history[sym].append(current_oi_snapshot)
-            print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Added current snapshot. History length: {len(self.oi_coi_history[sym])}")
+            print(
+                f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Added current snapshot. History length: {len(self.oi_coi_history[sym])}")
 
-            time_threshold_65_min = now_ist - datetime.timedelta(minutes=65)
+            # Clean history to keep only what's needed for 60 min lookback + some buffer
+            time_threshold_70_min = now_ist - datetime.timedelta(minutes=70)  # 60 min + buffer
             original_history_length = len(self.oi_coi_history[sym])
             self.oi_coi_history[sym] = [
                 snapshot for snapshot in self.oi_coi_history[sym]
-                if snapshot['timestamp'] >= time_threshold_65_min
+                if snapshot['timestamp'] >= time_threshold_70_min
             ]
             if len(self.oi_coi_history[sym]) < original_history_length:
-                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Cleaned history. New length: {len(self.oi_coi_history[sym])}")
+                print(
+                    f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Cleaned history. New length: {len(self.oi_coi_history[sym])}")
 
-            # Find the appropriate historical snapshot for 15 min
-            snapshot_15_min_ago = None
-            for snapshot in reversed(self.oi_coi_history.get(sym, [])):
-                time_diff_seconds = (now_ist - snapshot['timestamp']).total_seconds()
-                if time_diff_seconds >= (15 * 60):
-                    snapshot_15_min_ago = snapshot
-                    print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Found 15-min snapshot at {snapshot['timestamp'].strftime('%H:%M:%S')} ({time_diff_seconds:.0f}s ago).")
-                    break
-            if not snapshot_15_min_ago:
-                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} No 15-min snapshot found (history too short).")
+            ## NEW ## Calculate and store OI change summaries for the intervals (Table 1)
+            oi_summary_15min_data = self._calculate_oi_summary_for_interval(sym, now_ist, 15, underlying, df_sorted)
+            oi_summary_30min_data = self._calculate_oi_summary_for_interval(sym, now_ist, 30, underlying, df_sorted)
+            oi_summary_60min_data = self._calculate_oi_summary_for_interval(sym, now_ist, 60, underlying, df_sorted)
 
-            # Find the appropriate historical snapshot for 30 min
-            snapshot_30_min_ago = None
-            for snapshot in reversed(self.oi_coi_history.get(sym, [])):
-                time_diff_seconds = (now_ist - snapshot['timestamp']).total_seconds()
-                if time_diff_seconds >= (30 * 60):
-                    snapshot_30_min_ago = snapshot
-                    print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Found 30-min snapshot at {snapshot['timestamp'].strftime('%H:%M:%S')} ({time_diff_seconds:.0f}s ago).")
-                    break
-            if not snapshot_30_min_ago:
-                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} No 30-min snapshot found (history too short).")
+            with data_lock:
+                oi_change_summaries[sym] = {
+                    '15min': oi_summary_15min_data,
+                    '30min': oi_summary_30min_data,
+                    '60min': oi_summary_60min_data,
+                }
 
-            # Find the appropriate historical snapshot for 60 min
-            snapshot_60_min_ago = None
-            for snapshot in reversed(self.oi_coi_history.get(sym, [])):
-                time_diff_seconds = (now_ist - snapshot['timestamp']).total_seconds()
-                if time_diff_seconds >= (60 * 60):
-                    snapshot_60_min_ago = snapshot
-                    print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} Found 60-min snapshot at {snapshot['timestamp'].strftime('%H:%M:%S')} ({time_diff_seconds:.0f}s ago).")
-                    break
-            if not snapshot_60_min_ago:
-                print(f"[{now_ist.strftime('%H:%M:%S')}] DEBUG: {sym} No 60-min snapshot found (history too short).")
+            ## NEW ## Capture "Today's Interest" and "Tomorrow's Interest" (Table 2 & 3)
+            self._capture_first_last_oi_summaries(sym, now_ist, underlying, df_sorted)
 
-            # Iterate again to calculate COI for each strike
+            # Iterate again to calculate COI for each strike for charts
             for _, row in df_sorted.iterrows():
                 strike = int(row['strikePrice'])
                 current_call_oi_abs = int(row.get('openInterest_call', 0))
@@ -3298,12 +3230,11 @@ class NseBseAnalyzer:
                 # Calculate 15 min COI
                 prev_call_oi_abs_15m = 0
                 prev_put_oi_abs_15m = 0
+                snapshot_15_min_ago = self._get_snapshot_for_interval(sym, now_ist, 15)
                 if snapshot_15_min_ago:
-                    ## FIX START: Corrected access to historical OI data
                     strike_data_15m = snapshot_15_min_ago['data'].get(strike, {})
                     prev_call_oi_abs_15m = int(strike_data_15m.get('call_oi', 0))
                     prev_put_oi_abs_15m = int(strike_data_15m.get('put_oi', 0))
-                    ## FIX END
                 ce_coi_15min_chart_data.append({
                     'strikePrice': float(strike),
                     'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_15m
@@ -3316,12 +3247,11 @@ class NseBseAnalyzer:
                 # Calculate 30 min COI
                 prev_call_oi_abs_30m = 0
                 prev_put_oi_abs_30m = 0
+                snapshot_30_min_ago = self._get_snapshot_for_interval(sym, now_ist, 30)
                 if snapshot_30_min_ago:
-                    ## FIX START: Corrected access to historical OI data
                     strike_data_30m = snapshot_30_min_ago['data'].get(strike, {})
                     prev_call_oi_abs_30m = int(strike_data_30m.get('call_oi', 0))
                     prev_put_oi_abs_30m = int(strike_data_30m.get('put_oi', 0))
-                    ## FIX END
                 ce_coi_30min_chart_data.append({
                     'strikePrice': float(strike),
                     'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_30m
@@ -3334,12 +3264,11 @@ class NseBseAnalyzer:
                 # Calculate 60 min COI
                 prev_call_oi_abs_60m = 0
                 prev_put_oi_abs_60m = 0
+                snapshot_60_min_ago = self._get_snapshot_for_interval(sym, now_ist, 60)
                 if snapshot_60_min_ago:
-                    ## FIX START: Corrected access to historical OI data
                     strike_data_60m = snapshot_60_min_ago['data'].get(strike, {})
                     prev_call_oi_abs_60m = int(strike_data_60m.get('call_oi', 0))
                     prev_put_oi_abs_60m = int(strike_data_60m.get('put_oi', 0))
-                    ## FIX END
                 ce_coi_60min_chart_data.append({
                     'strikePrice': float(strike),
                     'changeinOpenInterest': current_call_oi_abs - prev_call_oi_abs_60m
@@ -3348,6 +3277,19 @@ class NseBseAnalyzer:
                     'strikePrice': float(strike),
                     'changeinOpenInterest': current_put_oi_abs - prev_put_oi_abs_60m
                 })
+        else:  # If df is empty, ensure default values for oi_change_summaries and call _capture_first_last_oi_summaries
+            # df_sorted is already initialized as empty DataFrame above this block
+            with data_lock:
+                oi_change_summaries[sym] = {
+                    '15min': [{"interval": "15 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
+                               "status": "No data for this interval."}],
+                    '30min': [{"interval": "30 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
+                               "status": "No data for this interval."}],
+                    '60min': [{"interval": "60 minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
+                               "status": "No data for this interval."}],
+                }
+            # Still call _capture_first_last_oi_summaries even if df is empty, it will handle empty df_current_strikes
+            self._capture_first_last_oi_summaries(sym, now_ist, underlying, df_sorted)
 
         return {
             'summary': summary,
@@ -3369,6 +3311,7 @@ class NseBseAnalyzer:
             'pe_coi_30min_chart_data': pe_coi_30min_chart_data,
             'ce_coi_60min_chart_data': ce_coi_60min_chart_data,
             'pe_coi_60min_chart_data': pe_coi_60min_chart_data,
+            'live_oi_summary': oi_change_summaries[sym]
         }
 
     def _process_nse_data(self, sym: str):
@@ -3430,6 +3373,7 @@ class NseBseAnalyzer:
                     'pe_coi_30min_chart_data': processed_data['pe_coi_30min_chart_data'],
                     'ce_coi_60min_chart_data': processed_data['ce_coi_60min_chart_data'],
                     'pe_coi_60min_chart_data': processed_data['pe_coi_60min_chart_data'],
+                    'live_oi_summary': processed_data['live_oi_summary']  ## NEW ##
                 })
                 if sym not in self.pcr_graph_data:
                     self.pcr_graph_data[sym] = []
@@ -3543,6 +3487,7 @@ class NseBseAnalyzer:
                     'pe_coi_30min_chart_data': processed_data.get('pe_coi_30min_chart_data', []),
                     'ce_coi_60min_chart_data': processed_data.get('ce_coi_60min_chart_data', []),
                     'pe_coi_60min_chart_data': processed_data.get('pe_coi_60min_chart_data', []),
+                    'live_oi_summary': processed_data['live_oi_summary']  ## NEW ##
                 })
         except Exception as e:
             import traceback
@@ -3625,7 +3570,7 @@ class NseBseAnalyzer:
 
             strikes = df_strikes.unique()
             if len(strikes) > 0:
-                # Find the closest strike from the *available* strikes
+                # Find the closest strike from the available strikes
                 closest_strike = min(strikes, key=lambda x: abs(x - underlying))
 
                 # Keep your existing 20% check, it's a good sanity check
@@ -3967,8 +3912,268 @@ class NseBseAnalyzer:
                                strike, call_oi, put_oi in zip(strike_price_list, oi_call_list, oi_put_list))
         return float(total_cash_value)  # Cast
 
+    # NEW METHODS FOR OI SUMMARIES
+
+    def _get_snapshot_for_interval(self, sym: str, current_time: datetime.datetime, minutes_ago: int) -> Optional[Dict]:
+        """
+        Retrieves the OI snapshot closest to `minutes_ago` from `current_time`.
+        """
+        target_time = current_time - datetime.timedelta(minutes=minutes_ago)
+        closest_snapshot = None
+        min_time_diff = float('inf')
+
+        # Iterate through the history in reverse to find the most recent snapshot before or at target_time
+        # This is more robust against gaps in data
+        for snapshot in reversed(self.oi_coi_history.get(sym, [])):
+            if snapshot['timestamp'] <= current_time: # Ensure snapshot is not from the future
+                time_diff = (current_time - snapshot['timestamp']).total_seconds()
+                if time_diff >= (minutes_ago * 60) - (LIVE_DATA_INTERVAL / 2) and time_diff <= (minutes_ago * 60) + (LIVE_DATA_INTERVAL / 2):
+                    # Found a snapshot within a reasonable window of the target time
+                    return snapshot
+                elif snapshot['timestamp'] < target_time:
+                    # If we passed the target time and didn't find a close match, the last one before it is the best we have
+                    if closest_snapshot is None or (target_time - snapshot['timestamp']).total_seconds() < (target_time - closest_snapshot['timestamp']).total_seconds():
+                        closest_snapshot = snapshot
+
+        return closest_snapshot
+
+
+    def _calculate_oi_summary_for_interval(self, sym: str, current_time: datetime.datetime, interval_minutes: int,
+                                           current_underlying: float, df_current_strikes: pd.DataFrame) -> List[
+        Dict[str, Any]]:
+        """
+        Calculates OI summary for a given interval, returning a list of major shifts.
+        """
+        summary_list = []
+
+        # Get snapshot at the beginning of the interval
+        start_snapshot = self._get_snapshot_for_interval(sym, current_time, interval_minutes)
+
+        if not start_snapshot:
+            # Return a default entry indicating no data
+            return [{"interval": f"{interval_minutes} minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
+                     "status": f"No data for {interval_minutes} min interval."}]
+
+        start_underlying = start_snapshot.get('underlying_value', current_underlying)
+        price_change_interval = current_underlying - start_underlying
+
+        major_shifts = []
+
+        # Ensure df_current_strikes is not empty and has the expected columns
+        if df_current_strikes.empty or 'strikePrice' not in df_current_strikes.columns:
+            return [{"interval": f"{interval_minutes} minutes", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
+                     "status": f"No current strike data for {interval_minutes} min interval."}]
+
+        for _, row in df_current_strikes.iterrows():
+            strike = int(row['strikePrice'])
+            current_call_oi = int(row.get('openInterest_call', 0))
+            current_put_oi = int(row.get('openInterest_put', 0))
+
+            prev_call_oi = start_snapshot['data'].get(strike, {}).get('call_oi', 0)
+            prev_put_oi = start_snapshot['data'].get(strike, {}).get('put_oi', 0)
+
+            call_oi_change = current_call_oi - prev_call_oi
+            put_oi_change = current_put_oi - prev_put_oi
+
+            # Only consider changes that are significant
+            OI_SHIFT_THRESHOLD = 500  # Adjust as needed
+            if abs(call_oi_change) > OI_SHIFT_THRESHOLD:
+                major_shifts.append({
+                    "interval": f"{interval_minutes} mins",
+                    "type": "CE",
+                    "strike": strike,
+                    "oi_change": call_oi_change,
+                    "status": self._get_oi_buildup(price_change_interval, call_oi_change, threshold=OI_SHIFT_THRESHOLD)
+                })
+            if abs(put_oi_change) > OI_SHIFT_THRESHOLD:
+                major_shifts.append({
+                    "interval": f"{interval_minutes} mins",
+                    "type": "PE",
+                    "strike": strike,
+                    "oi_change": put_oi_change,
+                    "status": self._get_oi_buildup(price_change_interval, put_oi_change, threshold=OI_SHIFT_THRESHOLD)
+                })
+
+        # Sort major shifts by absolute change and take top N
+        major_shifts = sorted(major_shifts, key=lambda x: abs(x['oi_change']), reverse=True)[:5]
+
+        if not major_shifts:
+            return [{"interval": f"{interval_minutes} mins", "type": "N/A", "strike": "N/A", "oi_change": "N/A",
+                     "status": "No significant shifts"}]
+
+        return major_shifts
+
+    def _capture_first_last_oi_summaries(self, sym: str, current_time: datetime.datetime,
+                                         current_underlying: float, df_current_strikes: pd.DataFrame):
+        """
+        Captures and stores "Today's Interest" and "Tomorrow's Interest" summaries.
+        """
+        current_date_str = current_time.strftime('%Y-%m-%d')
+        current_hour = current_time.hour
+        current_minute = current_time.minute
+
+        # Ensure df_current_strikes is not empty before proceeding
+        if df_current_strikes.empty:
+            print(f"DEBUG: _capture_first_last_oi_summaries: df_current_strikes is empty for {sym}. Skipping OI summary capture.")
+            return
+
+        # Check if today's market is open (or within trading hours)
+        is_market_open_today = (NSE_FETCH_START_TIME <= current_time.time() <= NSE_FETCH_END_TIME)
+
+        # Today's Interest - Only capture if market is open
+        if is_market_open_today:
+            # 9:15 to 9:30 IST (15 mins from market open)
+            if current_hour == 9 and current_minute == 30:
+                summary = self._calculate_oi_summary_for_interval(sym, current_time, 15, current_underlying,
+                                                                  df_current_strikes)
+                summary_data_to_save = {"TODAY_FIRST_15": summary}
+                self._save_oi_summary_to_db(current_date_str, sym, 'today_15min', summary_data_to_save)
+                print(f"Captured Today's 15min OI for {sym}.")
+
+            # 9:15 to 9:45 IST (30 mins from market open)
+            if current_hour == 9 and current_minute == 45:
+                summary = self._calculate_oi_summary_for_interval(sym, current_time, 30, current_underlying,
+                                                                  df_current_strikes)
+                summary_data_to_save = {"TODAY_FIRST_30": summary}
+                self._save_oi_summary_to_db(current_date_str, sym, 'today_30min', summary_data_to_save)
+                print(f"Captured Today's 30min OI for {sym}.")
+
+            # 9:15 to 10:15 IST (60 mins from market open)
+            if current_hour == 10 and current_minute == 15:
+                summary = self._calculate_oi_summary_for_interval(sym, current_time, 60, current_underlying,
+                                                                  df_current_strikes)
+                summary_data_to_save = {"TODAY_FIRST_60": summary}
+                self._save_oi_summary_to_db(current_date_str, sym, 'today_60min', summary_data_to_save)
+                print(f"Captured Today's 60min OI for {sym}.")
+
+        # Tomorrow's Interest (End of day) - Only capture at market close
+        if current_time.time() >= datetime.time(15, 30) and current_time.time() <= datetime.time(15,
+                                                                                                 45):  # Capture once between 3:30 and 3:45 PM
+            # This logic will need to differentiate between today's expiry and next day's expiry for "Tomorrow's Interest"
+            # For simplicity, I'm assuming "Tomorrow's Interest" refers to the OI changes at the end of the current day
+            # that might influence the next trading day.
+            # If it truly means the *next expiry* series, the logic here would need to filter df_current_strikes by expiry date.
+
+            # 15:15 to 15:30 IST (last 15 mins)
+            if current_hour == 15 and current_minute == 30:  # Capture at 3:30 for the last 15 mins
+                summary = self._calculate_oi_summary_for_interval(sym, current_time, 15, current_underlying,
+                                                                  df_current_strikes)
+                summary_data_to_save = {"TOMORROW_LAST_15": summary}
+                self._save_oi_summary_to_db(current_date_str, sym, 'tomorrow_15min', summary_data_to_save)
+                print(f"Captured Tomorrow's 15min OI for {sym}.")
+
+            # 15:00 to 15:30 IST (last 30 mins)
+            if current_hour == 15 and current_minute == 30:  # Capture at 3:30 for the last 30 mins
+                summary = self._calculate_oi_summary_for_interval(sym, current_time, 30, current_underlying,
+                                                                  df_current_strikes)
+                summary_data_to_save = {"TOMORROW_LAST_30": summary}
+                self._save_oi_summary_to_db(current_date_str, sym, 'tomorrow_30min', summary_data_to_save)
+                print(f"Captured Tomorrow's 30min OI for {sym}.")
+
+            # 14:30 to 15:30 IST (last 60 mins)
+            if current_hour == 15 and current_minute == 30:  # Capture at 3:30 for the last 60 mins
+                summary = self._calculate_oi_summary_for_interval(sym, current_time, 60, current_underlying,
+                                                                  df_current_strikes)
+                summary_data_to_save = {"TOMORROW_LAST_60": summary}
+                self._save_oi_summary_to_db(current_date_str, sym, 'tomorrow_60min', summary_data_to_save)
+                print(f"Captured Tomorrow's 60min OI for {sym}.")
+
+    def _save_oi_summary_to_db(self, date_str: str, symbol: str, summary_type: str, summary_data: Dict[str, Any]):
+        if not self.conn:
+            return
+        cur = None
+        try:
+            cur = self.conn.cursor()
+            summary_json = json.dumps(summary_data)
+            cur.execute(
+                """INSERT OR REPLACE INTO oi_first_last_summaries (date, symbol, type, summary) VALUES (?, ?, ?, ?)""",
+                (date_str, symbol, summary_type, summary_json)
+            )
+            self.conn.commit()
+            print(f"Saved OI summary for {symbol} ({summary_type}) for {date_str} to DB.")
+            # Clean up old data (e.g., older than 3 days)
+            three_days_ago = (datetime.datetime.now(self.ist_timezone) - datetime.timedelta(days=3)).strftime(
+                '%Y-%m-%d')
+            cur.execute("DELETE FROM oi_first_last_summaries WHERE date < ?", (three_days_ago,))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"SQLite DB save error for OI summary: {e}")
+            self.conn.rollback()
+        finally:
+            if cur:
+                cur.close()
+
+    def get_oi_summary_from_db_for_date(self, symbol: Optional[str] = None, date_str: Optional[str] = None) -> Dict[
+        str, Dict[str, Any]]:
+        """
+        Loads "Today's Interest" and "Tomorrow's Interest" summaries from the DB.
+        If symbol and date_str are provided, fetches for a specific day/symbol.
+        If not, fetches for the last 3 days for all symbols.
+        """
+        all_summaries = {}
+        if not self.conn:
+            return all_summaries
+        cur = None
+        try:
+            cur = self.conn.cursor()
+            query_params = []
+            query = """
+                SELECT date, symbol, type, summary FROM oi_first_last_summaries
+                WHERE 1=1
+            """
+            if date_str:
+                query += " AND date = ?"
+                query_params.append(date_str)
+            else:  # Fetch for last 3 days if no specific date
+                three_days_ago = (datetime.datetime.now(self.ist_timezone) - datetime.timedelta(days=3)).strftime(
+                    '%Y-%m-%d')
+                query += " AND date >= ?"
+                query_params.append(three_days_ago)
+
+            if symbol:
+                query += " AND symbol = ?"
+                query_params.append(symbol)
+
+            query += " ORDER BY date DESC, symbol, type"
+
+            cur.execute(query, tuple(query_params))
+
+            for row in cur.fetchall():
+                date = row['date']
+                sym = row['symbol']
+                summary_type = row['type']
+                summary_data_raw = json.loads(row['summary'])  # This is a dict like {"TODAY_FIRST_15": [...] }
+
+                if date not in all_summaries:
+                    all_summaries[date] = {}
+                if sym not in all_summaries[date]:
+                    all_summaries[date][sym] = {}
+
+                # Extract the actual summary list from the dict
+                if summary_type == 'today_15min':
+                    all_summaries[date][sym]['TODAY_FIRST_15'] = summary_data_raw.get('TODAY_FIRST_15', [])
+                elif summary_type == 'today_30min':
+                    all_summaries[date][sym]['TODAY_FIRST_30'] = summary_data_raw.get('TODAY_FIRST_30', [])
+                elif summary_type == 'today_60min':
+                    all_summaries[date][sym]['TODAY_FIRST_60'] = summary_data_raw.get('TODAY_FIRST_60', [])
+                elif summary_type == 'tomorrow_15min':
+                    all_summaries[date][sym]['TOMORROW_LAST_15'] = summary_data_raw.get('TOMORROW_LAST_15', [])
+                elif summary_type == 'tomorrow_30min':
+                    all_summaries[date][sym]['TOMORROW_LAST_30'] = summary_data_raw.get('TOMORROW_LAST_30', [])
+                elif summary_type == 'tomorrow_60min':
+                    all_summaries[date][sym]['TOMORROW_LAST_60'] = summary_data_raw.get('TOMORROW_LAST_60', [])
+
+            return all_summaries
+        except sqlite3.Error as e:
+            print(f"SQLite Error loading OI summaries from DB: {e}")
+            return {}
+        finally:
+            if cur:
+                cur.close()
+
 
 if __name__ == '__main__':
     analyzer = NseBseAnalyzer()
     print("WEB DASHBOARD LIVE → http://127.0.0.1:5000")
     socketio.run(app, host='0.0.0.0', port=5000)
+
