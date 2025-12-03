@@ -65,7 +65,7 @@
                 <h3 class="gainer-title">Top 10 Getting Better (Potential Buys)</h3>
                 <div class="table-container-small">
                     <table id="top-improving-table">
-                        <thead><tr><th>#</th><th>Stock</th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
+                        <thead><tr><th>#</th><th>Stock</th><th><th>Score</th><th>Sentiment</th><th>PCR</th></tr></thead>
                         <tbody><tr><td colspan="5">Waiting for data...</td></tr></tbody>
                     </table>
                 </div>
@@ -81,7 +81,6 @@
             </div>
         </div>
 
-        <!-- NEW: AI Bot Trades Section (moved from tab to main page) -->
         <div class="ai-bot-trades-section">
             <h3 style="margin-top: 20px;">DeepSeek Analysis Bot Trades</h3>
             <p>This table displays the latest trade recommendations from the DeepSeek AI Bot for NIFTY, FINNIFTY, BANKNIFTY, and F&O Equities based on their option chain data.</p>
@@ -91,9 +90,9 @@
                         <tr>
                             <th>Time</th>
                             <th>Symbol</th>
-                            <th>Status</th> <!-- NEW -->
-                            <th>P/L</th> <!-- NEW -->
-                            <th>Action Price</th> <!-- NEW -->
+                            <th>Status</th>
+                            <th>P/L</th>
+                            <th>Action Price</th>
                             <th>Trade</th>
                             <th>Strike(s)</th>
                             <th>Type</th>
@@ -102,8 +101,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <!-- Bot recommendations will be populated here by JavaScript -->
-                        <tr><td colspan="10">Waiting for AI Bot recommendations...</td></tr> <!-- Colspan adjusted -->
+                        <tr><td colspan="10">Waiting for AI Bot recommendations...</td></tr>
                     </tbody>
                 </table>
                 <div id="ai-bot-rationale-container" style="margin-top: 15px;">
@@ -120,7 +118,6 @@
                 <h2>NIFTY</h2>
                 <p>SP: <span id="nifty-sp">-</span></p>
                 <p>Value: <span id="nifty-value">-</span></p>
-                <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
                 <p>Call COI (Day): <span id="nifty-call-coi-daily">-K</span></p>
                 <p>Put COI (Day): <span id="nifty-put-coi-daily">-K</span></p>
                 <p>PCR: <span id="nifty-pcr">-</span></p>
@@ -128,14 +125,12 @@
                 <p>ML Sentiment: <span id="nifty-ml-sentiment">-</span></p>
                 <p>Reason: <span id="nifty-sentiment-reason">-</span></p>
                 <p>OI Changes: <span id="nifty-add-exit">-</span></p>
-                <!-- NEW: Display Diff. in OI for the day -->
                 <p>Diff. in OI (Day): <span id="nifty-diff-oi-daily">-</span></p>
             </div>
             <div class="card" id="FINNIFTY_summary">
                 <h2>FINNIFTY</h2>
                 <p>SP: <span id="finnifty-sp">-</span></p>
                 <p>Value: <span id="finnifty-value">-</span></p>
-                <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
                 <p>Call COI (Day): <span id="finnifty-call-coi-daily">-K</span></p>
                 <p>Put COI (Day): <span id="finnifty-put-coi-daily">-K</span></p>
                 <p>PCR: <span id="finnifty-pcr">-</span></p>
@@ -143,14 +138,12 @@
                 <p>ML Sentiment: <span id="finnifty-ml-sentiment">-</span></p>
                 <p>Reason: <span id="finnifty-sentiment-reason">-</span></p>
                 <p>OI Changes: <span id="finnifty-add-exit">-</span></p>
-                <!-- NEW: Display Diff. in OI for the day -->
                 <p>Diff. in OI (Day): <span id="finnifty-diff-oi-daily">-</span></p>
             </div>
             <div class="card" id="BANKNIFTY_summary">
                 <h2>BANKNIFTY</h2>
                 <p>SP: <span id="banknifty-sp">-</span></p>
                 <p>Value: <span id="banknifty-value">-</span></p>
-                <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
                 <p>Call COI (Day): <span id="banknifty-call-coi-daily">-K</span></p>
                 <p>Put COI (Day): <span id="banknifty-put-coi-daily">-K</span></p>
                 <p>PCR: <span id="banknifty-pcr">-</span></p>
@@ -158,7 +151,6 @@
                 <p>ML Sentiment: <span id="banknifty-ml-sentiment">-</span></p>
                 <p>Reason: <span id="banknifty-sentiment-reason">-</span></p>
                 <p>OI Changes: <span id="banknifty-add-exit">-</span></p>
-                <!-- NEW: Display Diff. in OI for the day -->
                 <p>Diff. in OI (Day): <span id="banknifty-diff-oi-daily">-</span></p>
             </div>
             <div class="card" id="SENSEX_summary">
@@ -191,10 +183,10 @@
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY_EQUITIES')" data-symbol="BHAVCOPY_EQUITIES">Bhavcopy (F&O)</button>
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY_INDICES')" data-symbol="BHAVCOPY_INDICES">Bhavcopy (Indices)</button>
             <button class="tablink" onclick="openTab(event, 'BHAVCOPY_STRATEGIES')" data-symbol="BHAVCOPY_STRATEGIES">Bhavcopy Strategies</button>
-            <!-- ADDED: News Tab -->
             <button class="tablink" onclick="openTab(event, 'NEWS')" data-symbol="NEWS">News</button>
-            <!-- NEW: OI Change Summaries Tab -->
-            <button class="tablink" onclick="openTab(event, 'OI_SUMMARIES')" data-symbol="OI_SUMMARIES">OI Summaries</button>
+            <!-- NEW TAB BUTTONS -->
+            <button class="tablink" onclick="openTab(event, 'LIVE_OI_SUMMARIES')" data-symbol="LIVE_OI_SUMMARIES">Live OI Summaries</button>
+            <button class="tablink" onclick="openTab(event, 'HISTORICAL_OI_SUMMARIES')" data-symbol="HISTORICAL_OI_SUMMARIES">Historical OI Summaries</button>
         </div>
 
         <div class="global-controls"><button class="clear-history-button" onclick="clearTodaysHistory(null)">Clear All Today's History</button></div>
@@ -208,7 +200,6 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
                             <th>Call COI (Day)</th>
                             <th>Put COI (Day)</th>
                             <th>PCR</th>
@@ -217,7 +208,6 @@
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
-                            <!-- NEW: Added Diff. in OI (Day) to history table -->
                             <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
@@ -232,18 +222,14 @@
                 <div class="chart-container"><canvas id="nifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-iv-skew-chart"></canvas></div>
-                <!-- NEW CHARTS START -->
                 <div class="chart-container"><canvas id="nifty-ce-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-ce-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-ce-coi-30min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-coi-30min-chart"></canvas></div>
-                <!-- FIX: Added 60-min COI charts for NIFTY -->
                 <div class="chart-container"><canvas id="nifty-ce-coi-60min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="nifty-pe-coi-60min-chart"></canvas></div>
-                <!-- END FIX -->
-                <!-- NEW CHARTS END -->
             </div>
             <h3>NIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="nifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">NIFTY Historical Data</h3>
@@ -260,7 +246,6 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
                             <th>Call COI (Day)</th>
                             <th>Put COI (Day)</th>
                             <th>PCR</th>
@@ -269,7 +254,6 @@
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
-                            <!-- NEW: Added Diff. in OI (Day) to historical table -->
                             <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
@@ -286,7 +270,6 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
                             <th>Call COI (Day)</th>
                             <th>Put COI (Day)</th>
                             <th>PCR</th>
@@ -295,7 +278,6 @@
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
-                            <!-- NEW: Added Diff. in OI (Day) to history table -->
                             <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
@@ -310,18 +292,14 @@
                 <div class="chart-container"><canvas id="finnifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-iv-skew-chart"></canvas></div>
-                <!-- NEW CHARTS START -->
                 <div class="chart-container"><canvas id="finnifty-ce-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-ce-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-ce-coi-30min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-coi-30min-chart"></canvas></div>
-                <!-- FIX: Added 60-min COI charts for FINNIFTY -->
                 <div class="chart-container"><canvas id="finnifty-ce-coi-60min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="finnifty-pe-coi-60min-chart"></canvas></div>
-                <!-- END FIX -->
-                <!-- NEW CHARTS END -->
             </div>
             <h3>FINNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="finnifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">FINNIFTY Historical Data</h3>
@@ -338,7 +316,6 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
                             <th>Call COI (Day)</th>
                             <th>Put COI (Day)</th>
                             <th>PCR</th>
@@ -347,7 +324,6 @@
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
-                            <!-- NEW: Added Diff. in OI (Day) to historical table -->
                             <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
@@ -364,7 +340,6 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
                             <th>Call COI (Day)</th>
                             <th>Put COI (Day)</th>
                             <th>PCR</th>
@@ -373,7 +348,6 @@
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
-                            <!-- NEW: Added Diff. in OI (Day) to history table -->
                             <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
@@ -388,18 +362,14 @@
                 <div class="chart-container"><canvas id="banknifty-ce-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-oi-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-iv-skew-chart"></canvas></div>
-                <!-- NEW CHARTS START -->
                 <div class="chart-container"><canvas id="banknifty-ce-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-coi-day-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-ce-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-coi-15min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-ce-coi-30min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-coi-30min-chart"></canvas></div>
-                <!-- FIX: Added 60-min COI charts for BANKNIFTY -->
                 <div class="chart-container"><canvas id="banknifty-ce-coi-60min-chart"></canvas></div>
                 <div class="chart-container"><canvas id="banknifty-pe-coi-60min-chart"></canvas></div>
-                <!-- END FIX -->
-                <!-- NEW CHARTS END -->
             </div>
             <h3>BANKNIFTY Option Chain (ATM ±10)</h3><div class="table-container"><table id="banknifty-table"><thead><tr><th>Call Buildup</th><th>Strike</th><th>Call OI</th><th>Call COI</th><th class="action-header">Call Action</th><th>Put OI</th><th>Put COI</th><th class="action-header">Put Action</th><th>Put Buildup</th></tr></thead><tbody></tbody></table></div>
             <h3 style="margin-top: 20px;">BANKNIFTY Historical Data</h3>
@@ -416,7 +386,6 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
                             <th>Call COI (Day)</th>
                             <th>Put COI (Day)</th>
                             <th>PCR</th>
@@ -425,7 +394,6 @@
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
-                            <!-- NEW: Added Diff. in OI (Day) to historical table -->
                             <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
@@ -458,19 +426,16 @@
                         <h2>Summary</h2>
                         <p>SP: <span id="equity-sp">-</span></p>
                         <p>Value: <span id="equity-value">-</span></p>
-                        <!-- MODIFIED: Changed to call_coi_daily and put_coi_daily for clarity -->
                         <p>Call COI (Day): <span id="equity-call-coi-daily">-K</span></p>
                         <p>Put COI (Day): <span id="equity-put-coi-daily">-K</span></p>
                         <p>PCR: <span id="equity-pcr">-</span></p>
-                        <p>Intraday PCR: <span id="equity-intraday-pcr-value">-</span></p> <!-- FIX: Added span tag for value, changed ID for consistency -->
+                        <p>Intraday PCR: <span id="equity-intraday-pcr-value">-</span></p>
                         <p>Sentiment (Rule-Based): <span id="equity-sentiment">-</span></p>
                         <p>Sentiment (ML-Based): <span id="equity-ml-sentiment">-</span></p>
                         <p>Reason: <span id="equity-sentiment-reason">-</span></p>
-                        <!-- NEW: Display Diff. in OI for the day -->
                         <p>Diff. in OI (Day): <span id="equity-diff-oi-daily">-</span></p>
                     </div>
                 </div>
-                <!-- Equity Charts -->
                 <h3>Equity Charts</h3>
                 <div class="chart-grid">
                     <div class="chart-container"><canvas id="equity-pcr-chart"></canvas></div>
@@ -479,18 +444,14 @@
                     <div class="chart-container"><canvas id="equity-ce-oi-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-oi-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-iv-skew-chart"></canvas></div>
-                    <!-- NEW CHARTS START -->
                     <div class="chart-container"><canvas id="equity-ce-coi-day-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-coi-day-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-ce-coi-15min-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-coi-15min-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-ce-coi-30min-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-coi-30min-chart"></canvas></div>
-                    <!-- FIX: Added 60-min COI charts for EQUITY -->
                     <div class="chart-container"><canvas id="equity-ce-coi-60min-chart"></canvas></div>
                     <div class="chart-container"><canvas id="equity-pe-coi-60min-chart"></canvas></div>
-                    <!-- END FIX -->
-                    <!-- NEW CHARTS END -->
                 </div>
                 <h3>Option Chain (ATM ±10)</h3>
                 <div class="table-container">
@@ -524,7 +485,6 @@
                             <th>Time</th>
                             <th>SP</th>
                             <th>Value</th>
-                            <!-- MODIFIED: Changed to Call COI (Day) and Put COI (Day) for clarity -->
                             <th>Call COI (Day)</th>
                             <th>Put COI (Day)</th>
                             <th>PCR</th>
@@ -533,7 +493,6 @@
                             <th>Sentiment (Rule-Based)</th>
                             <th>Sentiment (ML-Based)</th>
                             <th style="width: 30%;">OI Changes</th>
-                            <!-- NEW: Added Diff. in OI (Day) to historical table -->
                             <th>Diff. in OI (Day)</th>
                         </tr>
                     </thead>
@@ -542,10 +501,9 @@
             </div>
             </div>
             <div id="equity-loader" class="hidden" style="text-align: center; padding: 40px;">Loading...</div>
-            <div id="equity-error" class="hidden" style="text-align: center; padding: 40px; color: #F44336;"></div>
+            <div id="equity-error" style="text-align: center; padding: 40px; color: #F44336;"></div>
         </div>
 
-        <!-- NEW: BHAVCOPY F&O EQUITIES TAB -->
         <div id="BHAVCOPY_EQUITIES_tab" class="tabcontent">
             <h3 id="bhavcopy-equity-title">Bhavcopy Daily Scan - F&O Equities (<span id="bhavcopy-equity-date">Loading...</span>)</h3>
             <div class="bhavcopy-controls">
@@ -579,11 +537,9 @@
             </div>
         </div>
 
-        <!-- NEW: BHAVCOPY INDICES TAB -->
         <div id="BHAVCOPY_INDICES_tab" class="tabcontent">
             <h3 id="bhavcopy-indices-title">Bhavcopy Daily Scan - Indices (<span id="bhavcopy-indices-date">Loading...</span>)</h3>
             <div class="bhavcopy-controls">
-                <!-- Manual scan button is shared, so not duplicated here. -->
                 <div class="history-controls" style="justify-content: center;">
                     <label for="bhavcopy-indices-history-date">View Historical Date:</label>
                     <input type="date" id="bhavcopy-indices-history-date" class="history-date-picker">
@@ -609,8 +565,6 @@
             </div>
         </div>
 
-
-        <!-- NEW: Bhavcopy Strategies Tab -->
         <div id="BHAVCOPY_STRATEGIES_tab" class="tabcontent">
             <h3 style="margin-top: 20px;">Bhavcopy Derived Trading Strategies</h3>
             <p>Select a date to analyze Bhavcopy data for potential trading signals. The strategies below are generated based on the selected day's data.</p>
@@ -698,7 +652,6 @@
             </div>
         </div>
 
-        <!-- NEW: News Tab -->
         <div id="NEWS_tab" class="tabcontent">
             <h3 style="margin-top: 20px;">Latest Indian Market News Headlines</h3>
             <p id="news-status" style="text-align: center; margin-bottom: 20px;">Fetching latest news...</p>
@@ -721,15 +674,17 @@
             </div>
         </div>
 
-        <!-- NEW: OI Change Summaries Tab -->
-        <div id="OI_SUMMARIES_tab" class="tabcontent">
+        <!-- NEW: Live OI Summaries TAB (content remains the same) -->
+        <div id="LIVE_OI_SUMMARIES" class="tabcontent">
             <h3 style="margin-top: 20px;">Live OI Change Summaries</h3>
-            <p>This section displays significant OI shifts across different timeframes for NIFTY, FINNIFTY, BANKNIFTY, and currently selected F&O Equities.</p>
+            <p>This section displays significant OI shifts across different timeframes for all actively tracked symbols.</p>
             <div id="live-oi-summaries-container" class="oi-summary-grid">
-                <!-- OI summaries will be dynamically loaded here -->
                 <p style="text-align: center;">Waiting for live OI summary data...</p>
             </div>
+        </div>
 
+        <!-- NEW: Historical OI First & Last Hour Summaries TAB -->
+        <div id="HISTORICAL_OI_SUMMARIES" class="tabcontent">
             <h3 style="margin-top: 20px;">Historical OI First & Last Hour Summaries</h3>
             <div class="history-controls" style="justify-content: center; margin-top: 15px; margin-bottom: 20px;">
                 <label for="oi-summary-history-symbol-selector">Select Symbol:</label>
@@ -740,7 +695,6 @@
             </div>
             <div id="historical-oi-summaries-container">
                 <p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">Select a symbol and date to view historical OI summaries.</p>
-                <!-- Historical OI summaries will be dynamically loaded here -->
             </div>
         </div>
 
@@ -772,27 +726,30 @@
         document.querySelectorAll(".tabcontent").forEach(el => el.style.display = "none");
         document.querySelectorAll(".tablink").forEach(el => el.classList.remove("active"));
 
-        const tabId = `${symbol}_tab`;
-        const tabElement = document.getElementById(tabId);
+        let tabIdToOpen = '';
+        // Special handling for the new tabs where the symbol IS the tabId
+        if (symbol === 'LIVE_OI_SUMMARIES' || symbol === 'HISTORICAL_OI_SUMMARIES') {
+            tabIdToOpen = symbol;
+        } else {
+            // For existing tabs, append '_tab'
+            tabIdToOpen = `${symbol}_tab`;
+        }
+
+        const tabElement = document.getElementById(tabIdToOpen);
         if (tabElement) {
             tabElement.style.display = "block";
-            // Only add active class if evt.currentTarget exists (i.e., it's a direct click)
             if (evt && evt.currentTarget) {
                 evt.currentTarget.classList.add("active");
             } else {
-                // If called programmatically, find the button and add active class
                 const button = document.querySelector(`.tablink[data-symbol="${symbol}"]`);
                 if (button) button.classList.add('active');
             }
         }
 
-
-        // Only update charts for OI-based symbols (Nifty, Banknifty, Finnifty, Equity)
         if (OI_SYMBOLS.includes(symbol) || symbol === "EQUITY") {
             const currentSymbol = symbol === "EQUITY" ? $('#equity-symbol-selector').val() : symbol;
             if (currentSymbol && shared_data_cache[currentSymbol]) {
                 updateCharts(currentSymbol, shared_data_cache[currentSymbol]);
-                // Also update the summary card for the selected equity
                 if (symbol === "EQUITY") {
                     updateEquitySummaryCard(currentSymbol, shared_data_cache[currentSymbol]);
                 }
@@ -822,26 +779,38 @@
         if (symbol === "NEWS") {
             renderNewsTable(news_alerts);
         }
-        if (symbol === "OI_SUMMARIES") {
-            // Render live OI summaries first
-            if (shared_data_cache.live_oi_summary) { // Check if live OI summaries are in cache
-                renderLiveOiSummaries(shared_data_cache.live_oi_summary);
+        if (symbol === "LIVE_OI_SUMMARIES") { // Handle the new Live OI Summaries tab
+            if (shared_data_cache.oi_change_summaries) {
+                renderLiveOiSummaries(shared_data_cache.oi_change_summaries);
             } else {
                 const liveOiContainer = document.getElementById('live-oi-summaries-container');
                 if (liveOiContainer) liveOiContainer.innerHTML = `<p style="text-align: center;">Waiting for live OI summary data...</p>`;
             }
-
-            // Then handle historical - ensure selectors have values before attempting to load
+        }
+        if (symbol === "HISTORICAL_OI_SUMMARIES") { // Handle the new Historical OI Summaries tab
             const oiSummaryHistorySymbolSelector = $('#oi-summary-history-symbol-selector');
-            const selectedSymbol = oiSummaryHistorySymbolSelector.val();
-            const selectedDate = document.getElementById('oi-summary-history-date').value;
+            const oiSummaryHistoryDateInput = document.getElementById('oi-summary-history-date');
+            const today = moment().format('YYYY-MM-DD');
 
-            if (selectedSymbol && selectedDate) {
-                loadOiSummaryHistory(); // Call without args, it reads from selectors
-            } else {
-                const historicalOiContainer = document.getElementById('historical-oi-summaries-container');
-                if (historicalOiContainer) historicalOiContainer.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">Select a symbol and date to view historical OI summaries.</p>`;
+            // Set today's date in the input field
+            if (oiSummaryHistoryDateInput) oiSummaryHistoryDateInput.value = today;
+
+            // Determine the default symbol to pre-select
+            let defaultSymbolForHistory = "NIFTY";
+            const allOiSymbols = [...new Set([...OI_SYMBOLS, ...fno_stocks_list_global])].sort();
+            if (allOiSymbols.length > 0) {
+                if (!allOiSymbols.includes("NIFTY")) {
+                    defaultSymbolForHistory = allOiSymbols[0];
+                }
             }
+
+            // Set the default symbol in the dropdown only if it's not already set
+            if (oiSummaryHistorySymbolSelector.length && (oiSummaryHistorySymbolSelector.val() === null || oiSummaryHistorySymbolSelector.val() === "")) {
+                oiSummaryHistorySymbolSelector.val(defaultSymbolForHistory).trigger('change');
+            }
+
+            // Automatically load data for today with the default/selected symbol
+            loadOiSummaryHistory(true); // Pass true to indicate auto-load for today
         }
     }
 
@@ -927,7 +896,6 @@
 
 
     function updateCharts(symbol, liveData) {
-        // Ensure liveData is not null or undefined
         if (!liveData) {
             console.warn(`No liveData available for charts for ${symbol}`);
             return;
@@ -936,44 +904,36 @@
 
         const lower = symbol.toLowerCase();
 
-        // Only render charts if data is available and symbol is OI-based
         if (!OI_SYMBOLS.includes(symbol) && symbol !== "EQUITY") {
-            return; // No charts for YFinance symbols or non-OI-based equities
+            return;
         }
 
-        // Helper to safely get chart data, defaulting to empty array if not present
         const getChartData = (key) => liveData[key] || [];
 
-        // PCR Chart
         const pcrChartData = getChartData('pcr_chart_data');
         const pcrLabels = pcrChartData.map(d => d.TIME);
         const pcrData = pcrChartData.map(d => d.PCR);
         renderChart(`${lower}-pcr-chart`, 'line', pcrLabels, pcrData, `${symbol} PCR`, 'rgba(75, 192, 192, 0.2)', 'rgba(75, 192, 192, 1)');
 
-        // Intraday PCR Chart
         const intradayPcrLabels = pcrChartData.map(d => d.TIME);
         const intradayPcrData = pcrChartData.map(d => d.IntradayPCR);
         renderChart(`${lower}-intraday-pcr-chart`, 'line', intradayPcrLabels, intradayPcrData, `${symbol} Intraday PCR`, 'rgba(153, 102, 255, 0.2)', 'rgba(153, 102, 255, 1)');
 
-        // Max Pain Chart (Bar Chart)
         const mpChartData = getChartData('max_pain_chart_data');
         const mpLabels = mpChartData.map(d => d.StrikePrice);
         const mpData = mpChartData.map(d => d.TotalMaxPain);
         renderChart(`${lower}-max-pain-chart`, 'bar', mpLabels, mpData, `${symbol} Max Pain`, 'rgba(255, 159, 64, 0.5)', 'rgba(255, 159, 64, 1)');
 
-        // CE OI Chart (Bar Chart) - This is total OI
         const ceOiChartData = getChartData('ce_oi_chart_data');
         const ceLabels = ceOiChartData.map(d => d.strikePrice);
         const ceData = ceOiChartData.map(d => d.openInterest);
         renderChart(`${lower}-ce-oi-chart`, 'bar', ceLabels, ceData, `${symbol} CE OI (Total)`, 'rgba(255, 99, 132, 0.5)', 'rgba(255, 99, 132, 1)');
 
-        // PE OI Chart (Bar Chart) - This is total OI
         const peOiChartData = getChartData('pe_oi_chart_data');
         const peLabels = peOiChartData.map(d => d.strikePrice);
         const peData = peOiChartData.map(d => d.openInterest);
         renderChart(`${lower}-pe-oi-chart`, 'bar', peLabels, peData, `${symbol} PE OI (Total)`, 'rgba(54, 162, 235, 0.5)', 'rgba(54, 162, 235, 1)');
 
-        // IV Skew Chart (Line Chart)
         const ivSkewChartData = getChartData('iv_skew_chart_data');
         const ivSkewLabels = ivSkewChartData.map(d => d.strike);
         const callIvData = ivSkewChartData.map(d => d.call_iv);
@@ -992,7 +952,7 @@
                         {
                             label: 'Call IV',
                             data: callIvData,
-                            backgroundColor: 'rgba(255, 165, 0, 0.2)', // Orange for Call IV
+                            backgroundColor: 'rgba(255, 165, 0, 0.2)',
                             borderColor: 'rgba(255, 165, 0, 1)',
                             borderWidth: 1,
                             fill: false,
@@ -1000,7 +960,7 @@
                         {
                             label: 'Put IV',
                             data: putIvData,
-                            backgroundColor: 'rgba(0, 128, 0, 0.2)', // Green for Put IV
+                            backgroundColor: 'rgba(0, 128, 0, 0.2)',
                             borderColor: 'rgba(0, 128, 0, 1)',
                             borderWidth: 1,
                             fill: false,
@@ -1067,54 +1027,45 @@
             });
         }
 
-        // NEW CHARTS: CE Change in OI (for the day)
         const ceCoiDayChartData = getChartData('ce_coi_day_chart_data');
         const ceCoiDayLabels = ceCoiDayChartData.map(d => d.strikePrice);
         const ceCoiDayData = ceCoiDayChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-ce-coi-day-chart`, 'bar', ceCoiDayLabels, ceCoiDayData, `${symbol} CE COI (Day)`, 'rgba(255, 206, 86, 0.5)', 'rgba(255, 206, 86, 1)');
 
-        // NEW CHARTS: PE Change in OI (for the day)
         const peCoiDayChartData = getChartData('pe_coi_day_chart_data');
         const peCoiDayLabels = peCoiDayChartData.map(d => d.strikePrice);
         const peCoiDayData = peCoiDayChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-pe-coi-day-chart`, 'bar', peCoiDayLabels, peCoiDayData, `${symbol} PE COI (Day)`, 'rgba(75, 192, 192, 0.5)', 'rgba(75, 192, 192, 1)');
 
-        // NEW CHARTS: CE Change in OI (last 15 mins)
         const ceCoi15MinChartData = getChartData('ce_coi_15min_chart_data');
         const ceCoi15MinLabels = ceCoi15MinChartData.map(d => d.strikePrice);
         const ceCoi15MinData = ceCoi15MinChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-ce-coi-15min-chart`, 'bar', ceCoi15MinLabels, ceCoi15MinData, `${symbol} CE COI (15 min)`, 'rgba(255, 100, 100, 0.5)', 'rgba(255, 100, 100, 1)');
 
-        // NEW CHARTS: PE Change in OI (last 15 mins)
         const peCoi15MinChartData = getChartData('pe_coi_15min_chart_data');
         const peCoi15MinLabels = peCoi15MinChartData.map(d => d.strikePrice);
         const peCoi15MinData = peCoi15MinChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-pe-coi-15min-chart`, 'bar', peCoi15MinLabels, peCoi15MinData, `${symbol} PE COI (15 min)`, 'rgba(100, 255, 100, 0.5)', 'rgba(100, 255, 100, 1)');
 
-        // NEW CHARTS: CE Change in OI (last 30 mins)
         const ceCoi30MinChartData = getChartData('ce_coi_30min_chart_data');
         const ceCoi30MinLabels = ceCoi30MinChartData.map(d => d.strikePrice);
         const ceCoi30MinData = ceCoi30MinChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-ce-coi-30min-chart`, 'bar', ceCoi30MinLabels, ceCoi30MinData, `${symbol} CE COI (30 min)`, 'rgba(200, 50, 50, 0.5)', 'rgba(200, 50, 50, 1)');
 
-        // NEW CHARTS: PE Change in OI (last 30 mins)
         const peCoi30MinChartData = getChartData('pe_coi_30min_chart_data');
         const peCoi30MinLabels = peCoi30MinChartData.map(d => d.strikePrice);
         const peCoi30MinData = peCoi30MinChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-pe-coi-30min-chart`, 'bar', peCoi30MinLabels, peCoi30MinData, `${symbol} PE COI (30 min)`, 'rgba(50, 200, 50, 0.5)', 'rgba(50, 200, 50, 1)');
 
-        // FIX: Added 60-min COI charts for NIFTY
         const ceCoi60MinChartData = getChartData('ce_coi_60min_chart_data');
         const ceCoi60MinLabels = ceCoi60MinChartData.map(d => d.strikePrice);
         const ceCoi60MinData = ceCoi60MinChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-ce-coi-60min-chart`, 'bar', ceCoi60MinLabels, ceCoi60MinData, `${symbol} CE COI (60 min)`, 'rgba(150, 150, 250, 0.5)', 'rgba(150, 150, 250, 1)');
 
-        // FIX: Added 60-min COI charts for NIFTY
         const peCoi60MinChartData = getChartData('pe_coi_60min_chart_data');
         const peCoi60MinLabels = peCoi60MinChartData.map(d => d.strikePrice);
         const peCoi60MinData = peCoi60MinChartData.map(d => d.changeinOpenInterest);
         renderChart(`${lower}-pe-coi-60min-chart`, 'bar', peCoi60MinLabels, peCoi60MinData, `${symbol} PE COI (60 min)`, 'rgba(250, 150, 150, 0.5)', 'rgba(250, 150, 150, 1)');
-        // END FIX
     }
 
 
@@ -1123,13 +1074,12 @@
         if (typeof num === 'string' && num.includes('%')) return num;
         const parsedNum = parseFloat(num);
         if (!isNaN(parsedNum)) {
-            // Check if it's an integer value, then format without decimals if requested
             if (decimals === 0 && Number.isInteger(parsedNum)) {
                  return parsedNum.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
             }
             return parsedNum.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
         }
-        return num; // Return original if not a valid number after all checks
+        return num;
     }
 
     function getChangeColorClass(value) {
@@ -1146,12 +1096,11 @@
         return 'neutral';
     }
 
-    // MODIFIED: addHistoryItemToTable to correctly map YFinance data
     function addHistoryItemToTable(tbody, item, symbol, prepend = false) {
         const tr = document.createElement('tr');
-        if (YF_ASSETS.includes(symbol)) { // For YFinance assets
-            const changeVal = item.sp; // This is actually 'change' from backend
-            const pctChangeVal = item.pcr; // This is actually 'percentage_change' from backend
+        if (YF_ASSETS.includes(symbol)) {
+            const changeVal = item.sp;
+            const pctChangeVal = item.pcr;
             tr.innerHTML = `
                 <td>${item.time}</td>
                 <td>${formatNumber(item.value)}</td>
@@ -1161,7 +1110,7 @@
                 <td>${item.ml_sentiment || 'N/A'}</td>
                 <td>${item.sentiment_reason || 'N/A'}</td>
             `;
-        } else { // For OI_SYMBOLS and Equity F&O
+        } else {
             const intradayPcr = item.intraday_pcr || 0.0;
             const intradayPcrClass = intradayPcr > 1.2 ? 'positive' : (intradayPcr < 0.8 && intradayPcr !== 0) ? 'negative' : 'neutral';
             const diffOiDailyClass = getChangeColorClass(item.diff_oi_daily);
@@ -1177,7 +1126,7 @@
                 <td class="${item.sentiment.includes('Bullish') ? 'positive' : (item.sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.sentiment}</td>
                 <td class="${item.ml_sentiment && item.ml_sentiment.includes('Bullish') ? 'positive' : (item.ml_sentiment && item.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral')}">${item.ml_sentiment || 'N/A'}</td>
                 <td>${item.add_exit || '-'}</td>
-                <td class="${diffOiDailyClass}">${formatNumber(item.diff_oi_daily, 0)}</td> <!-- NEW: Display Diff. in OI (Day) -->
+                <td class="${diffOiDailyClass}">${formatNumber(item.diff_oi_daily, 0)}</td>
             `;
         }
         if (prepend) tbody.prepend(tr); else tbody.appendChild(tr);
@@ -1193,7 +1142,7 @@
                 return;
             }
         }
-        const lower = effectiveSymbol.toLowerCase(); // Use effectiveSymbol here for consistency with IDs
+        const lower = effectiveSymbol.toLowerCase();
         const dateInput = document.getElementById(`${lower}-history-date`);
         const historicalTbody = document.querySelector(`#${lower}-historical-data-table tbody`);
         if (!dateInput || !historicalTbody) return;
@@ -1201,8 +1150,7 @@
         const selectedDate = dateInput.value;
         if (!selectedDate) { alert("Please select a date."); return; }
 
-        // MODIFIED: Colspan adjusted for ml_sentiment, sentiment_reason, and diff_oi_daily
-        const colspan = YF_ASSETS.includes(effectiveSymbol) ? 7 : 12; // 7 for YFinance, 12 for OI-based
+        const colspan = YF_ASSETS.includes(effectiveSymbol) ? 7 : 12;
         historicalTbody.innerHTML = `<tr><td colspan="${colspan}">Loading...</td></tr>`;
         try {
             const response = await fetch(`/history/${effectiveSymbol}/${selectedDate}`);
@@ -1213,11 +1161,10 @@
                 historicalTbody.innerHTML = `<tr><td colspan="${colspan}" class="negative">${data.error || 'No data found for this date.'}</td></tr>`;
                 return;
             }
-            // Sort history for display (newest first, as it's typically how historical data is presented)
             const sortedHistory = data.history.sort((a, b) => {
                 const timeA = moment(a.time, "HH:mm");
                 const timeB = moment(b.time, "HH:mm");
-                return timeB.diff(timeA); // Newest first
+                return timeB.diff(timeA);
             });
             sortedHistory.forEach(item => addHistoryItemToTable(historicalTbody, item, effectiveSymbol, false));
         } catch (error) {
@@ -1271,7 +1218,6 @@
         const indicesTbody = document.querySelector('#bhavcopy-indices-table tbody');
         const noIndicesDataMessage = document.getElementById('no-bhavcopy-indices-data');
 
-        // Clear existing data and hide no-data messages
         if (equityTbody) equityTbody.innerHTML = '';
         if (indicesTbody) indicesTbody.innerHTML = '';
         if (noEquityDataMessage) noEquityDataMessage.style.display = 'none';
@@ -1423,7 +1369,7 @@
             const response = await fetch('/api/bhavcopy');
             const data = await response.json();
             console.log("Received initial Bhavcopy data from /api/bhavcopy:", data);
-            updateBhavcopyTables(data); // Call without specific type to update both
+            updateBhavcopyTables(data);
         } catch (error) {
             console.error("Error fetching initial Bhavcopy data:", error);
             const equityStatusEl = document.getElementById('bhavcopy-equity-status');
@@ -1536,7 +1482,7 @@
         }
         data.forEach(item => {
             const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${item.Symbol}</td><td>${item['Near Month Delivery %']}</td><td>${item['Next Month OI Increase %']}</td><td>${item.Signal}</td>`;
+            tr.innerHTML = `<td>${item.Symbol}</td><td>${item['Near Month Delivery %']}</td><td>${item['Next Month OI Increase %']}</td><td>${item['Signal']}</td>`;
             tbody.appendChild(tr);
         });
     }
@@ -1683,7 +1629,7 @@
         }
     }
 
-    // NEW: Function to render live OI summaries (MODIFIED)
+    // FIX START: Updated renderLiveOiSummaries function
     function renderLiveOiSummaries(oiSummariesData) {
         const container = document.getElementById('live-oi-summaries-container');
         if (!container) return;
@@ -1694,10 +1640,31 @@
             return;
         }
 
-        // Iterate over each symbol in the OI summaries data
-        for (const symbol in oiSummariesData) {
+        // Define the order for indices
+        const indexOrder = ["NIFTY", "FINNIFTY", "BANKNIFTY"]; // Ensure these are exactly as they appear in your data keys
+
+        // Separate indices from other symbols (stocks)
+        const indexSymbols = [];
+        const stockSymbols = [];
+        Object.keys(oiSummariesData).forEach(symbol => {
+            if (indexOrder.includes(symbol)) {
+                indexSymbols.push(symbol);
+            } else {
+                stockSymbols.push(symbol);
+            }
+        });
+
+        // Sort index symbols according to indexOrder, then sort stock symbols alphabetically
+        // This ensures NIFTY, FINNIFTY, BANKNIFTY appear in that specific order
+        indexSymbols.sort((a, b) => indexOrder.indexOf(a) - indexOrder.indexOf(b));
+        stockSymbols.sort(); // Sort stocks alphabetically
+
+        // Combine them: indices first, then stocks
+        const sortedSymbols = [...indexSymbols, ...stockSymbols]; // This is the crucial part for ordering
+
+        sortedSymbols.forEach(symbol => {
             const symbolData = oiSummariesData[symbol];
-            if (Object.keys(symbolData).length === 0) continue; // Skip if no data for symbol
+            if (!symbolData || Object.keys(symbolData).length === 0) return;
 
             const symbolDiv = document.createElement('div');
             symbolDiv.className = 'oi-summary-symbol-card';
@@ -1708,7 +1675,7 @@
             table.innerHTML = `
                 <thead>
                     <tr>
-                        <th>Interval</th>
+                        <th>Shift Interval</th>
                         <th>Type</th>
                         <th>Strike</th>
                         <th>OI Change</th>
@@ -1719,20 +1686,19 @@
             `;
             const tbody = table.querySelector('tbody');
 
-            // Timeframes to display
             const timeframes = ['15min', '30min', '60min'];
 
             timeframes.forEach(tf => {
-                const tfSummary = symbolData[tf]; // This is the dict {major_shifts: [], net_summary: {}}
-                const majorShifts = tfSummary ? tfSummary.major_shifts : null;
+                const tfSummary = symbolData[tf];
+                // Check if major_shifts array exists and is not empty before accessing its elements
+                const majorShifts = tfSummary && tfSummary.major_shifts ? tfSummary.major_shifts : [];
                 const netSummary = tfSummary ? tfSummary.net_summary : null;
 
-                // Add a header row for the interval (e.g., "15MIN Interval")
                 const intervalHeaderRow = document.createElement('tr');
-                intervalHeaderRow.innerHTML = `<td colspan="5" style="background-color: #282828; font-weight: bold; text-align: left;">${tf.toUpperCase()} Interval</td>`;
+                intervalHeaderRow.innerHTML = `<td colspan="5" style="background-color: #282828; font-weight: bold; text-align: left;">${tf.toUpperCase()} INTERVAL</td>`;
                 tbody.appendChild(intervalHeaderRow);
 
-                if (majorShifts && majorShifts.length > 0 && majorShifts[0].status !== "No data for this interval.") {
+                if (majorShifts.length > 0 && majorShifts[0].status && !majorShifts[0].status.includes("No data for this interval.")) {
                     majorShifts.forEach(item => {
                         const tr = document.createElement('tr');
                         const statusClass = item.status.includes('Long Buildup') || item.status.includes('Fresh OI Added') ? 'positive' :
@@ -1747,17 +1713,16 @@
                         tbody.appendChild(tr);
                     });
                 } else {
-                    // Add a row indicating no data for this timeframe's major shifts
+                    // Added a more specific message when no major shifts are detected
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
-                        <td>${tf}</td>
-                        <td colspan="4">No significant shifts</td>
+                        <td>${tf.toUpperCase()}</td>
+                        <td colspan="4" class="neutral">No significant shifts detected.</td>
                     `;
                     tbody.appendChild(tr);
                 }
 
-                // Add the net summary row for each interval
-                if (netSummary) {
+                if (netSummary && netSummary.net_status && !netSummary.net_status.includes("No data for this interval.")) {
                     const netOiChangeFormatted = netSummary.net_oi_total_change !== "N/A" ? (netSummary.net_oi_total_change > 0 ? `+${netSummary.net_oi_total_change.toLocaleString()}` : netSummary.net_oi_total_change.toLocaleString()) : "N/A";
                     const netStatusClass = netSummary.net_status.includes('Bullish') ? 'positive' :
                                            (netSummary.net_status.includes('Bearish') ? 'negative' : 'neutral');
@@ -1766,162 +1731,237 @@
                     netRow.innerHTML = `
                         <td><strong>${netSummary.interval}</strong></td>
                         <td><strong>Net (${netSummary.net_type})</strong></td>
-                        <td>-</td> <!-- No specific strike for net -->
+                        <td>-</td>
                         <td class="${netStatusClass}"><strong>${netOiChangeFormatted}</strong></td>
                         <td class="${netStatusClass}"><strong>${netSummary.net_status}</strong></td>
+                    `;
+                    tbody.appendChild(netRow);
+                } else {
+                    const netRow = document.createElement('tr');
+                    netRow.classList.add('table-info');
+                    netRow.innerHTML = `
+                        <td><strong>${tf.toUpperCase()}</strong></td>
+                        <td><strong>Net</strong></td>
+                        <td>-</td>
+                        <td colspan="2" class="neutral">No net data for this interval.</td>
                     `;
                     tbody.appendChild(netRow);
                 }
             });
             symbolDiv.appendChild(table);
             container.appendChild(symbolDiv);
-        }
+        });
     }
+    // FIX END: Updated renderLiveOiSummaries function
 
-    // NEW: Function to render historical OI first/last hour summaries (MODIFIED)
+
     function renderHistoricalOiSummaries(historicalData) {
         const container = document.getElementById('historical-oi-summaries-container');
         if (!container) return;
         container.innerHTML = ''; // Clear previous content
+
+        const statusElement = document.getElementById('historical-oi-summary-status');
+        if (statusElement) statusElement.style.display = 'none';
 
         if (!historicalData || Object.keys(historicalData).length === 0) {
             container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">No historical OI summary data found for the selected date and symbol.</p>`;
             return;
         }
 
-        // historicalData is structured as {date: {symbol: {type: summary_dict}}}
-        for (const date in historicalData) {
-            const dateData = historicalData[date];
-            for (const symbol in dateData) {
-                const symbolData = dateData[symbol];
-                if (Object.keys(symbolData).length === 0) continue;
+        const date = Object.keys(historicalData)[0];
+        const symbol = Object.keys(historicalData[date])[0];
+        const symbolData = historicalData[date][symbol];
 
-                const symbolDateDiv = document.createElement('div');
-                symbolDateDiv.className = 'oi-summary-symbol-card';
-                symbolDateDiv.innerHTML = `<h4>${symbol} - ${moment(date).format('DD MMM YYYY')}</h4>`;
-
-                const table = document.createElement('table');
-                table.className = 'oi-summary-table';
-                table.innerHTML = `
-                    <thead>
-                        <tr>
-                            <th>Type</th>
-                            <th>Interval</th>
-                            <th>Strike</th>
-                            <th>OI Change</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                `;
-                const tbody = table.querySelector('tbody');
-
-                const types = ['TODAY_FIRST_15', 'TODAY_FIRST_30', 'TODAY_FIRST_60', 'TOMORROW_LAST_15', 'TOMORROW_LAST_30', 'TOMORROW_LAST_60'];
-
-                types.forEach(typeKey => {
-                    const tfSummary = symbolData[typeKey]; // This is now the dict with major_shifts and net_summary
-                    const majorShifts = tfSummary ? tfSummary.major_shifts : null;
-                    const netSummary = tfSummary ? tfSummary.net_summary : null;
-
-                    // Add a header row for the typeKey
-                    const typeHeaderRow = document.createElement('tr');
-                    typeHeaderRow.innerHTML = `<td colspan="5" style="background-color: #282828; font-weight: bold; text-align: left;">${typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'Today\'s First').replace('TOMORROW LAST', 'Tomorrow\'s Last')}</td>`;
-                    tbody.appendChild(typeHeaderRow);
-
-                    if (majorShifts && majorShifts.length > 0 && majorShifts[0].status !== "No data for this interval.") {
-                        majorShifts.forEach(item => {
-                            const tr = document.createElement('tr');
-                            const statusClass = item.status.includes('Long Buildup') || item.status.includes('Fresh OI Added') ? 'positive' :
-                                                (item.status.includes('Short Buildup') || item.status.includes('OI Exited') ? 'negative' : 'neutral');
-                            tr.innerHTML = `
-                                <td>${typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'Today\'s First').replace('TOMORROW LAST', 'Tomorrow\'s Last')}</td>
-                                <td>${item.interval}</td>
-                                <td>${item.strike !== 'N/A' ? formatNumber(item.strike, 0) : 'N/A'}</td>
-                                <td class="${statusClass}">${item.oi_change !== 'N/A' ? formatNumber(item.oi_change, 0) : 'N/A'}</td>
-                                <td class="${statusClass}">${item.status}</td>
-                            `;
-                            tbody.appendChild(tr);
-                        });
-                    } else {
-                         const tr = document.createElement('tr');
-                         tr.innerHTML = `
-                             <td>${typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'Today\'s First').replace('TOMORROW LAST', 'Tomorrow\'s Last')}</td>
-                             <td colspan="4">No significant shifts</td>
-                         `;
-                         tbody.appendChild(tr);
-                    }
-
-                    // Add the net summary row for each interval
-                    if (netSummary) {
-                        const netOiChangeFormatted = netSummary.net_oi_total_change !== "N/A" ? (netSummary.net_oi_total_change > 0 ? `+${netSummary.net_oi_total_change.toLocaleString()}` : netSummary.net_oi_total_change.toLocaleString()) : "N/A";
-                        const netStatusClass = netSummary.net_status.includes('Bullish') ? 'positive' :
-                                               (netSummary.net_status.includes('Bearish') ? 'negative' : 'neutral');
-                        const netRow = document.createElement('tr');
-                        netRow.classList.add('table-info');
-                        netRow.innerHTML = `
-                            <td><strong>${typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'Today\'s First').replace('TOMORROW LAST', 'Tomorrow\'s Last')}</strong></td>
-                            <td><strong>Net (${netSummary.net_type})</strong></td>
-                            <td>-</td>
-                            <td class="${netStatusClass}"><strong>${netOiChangeFormatted}</strong></td>
-                            <td class="${netStatusClass}"><strong>${netSummary.net_status}</strong></td>
-                        `;
-                        tbody.appendChild(netRow);
-                    }
-                });
-                symbolDateDiv.appendChild(table);
-                container.appendChild(symbolDateDiv);
-            }
-        }
-    }
-
-    async function loadOiSummaryHistory() {
-        const symbolSelector = document.getElementById('oi-summary-history-symbol-selector');
-        const dateInput = document.getElementById('oi-summary-history-date');
-        const selectedSymbol = symbolSelector ? symbolSelector.value : null;
-        const selectedDate = dateInput ? dateInput.value : null;
-
-        const statusEl = document.getElementById('historical-oi-summary-status');
-        const container = document.getElementById('historical-oi-summaries-container');
-
-        if (!selectedSymbol || !selectedDate) {
-            if (statusEl) {
-                statusEl.textContent = "Please select both a symbol and a date.";
-                statusEl.style.color = '#F44336';
-            }
-            if (container) container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">Select a symbol and date to view historical OI summaries.</p>`;
+        if (!symbolData || Object.keys(symbolData).length === 0) {
+            container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">No historical OI summary data found for ${symbol} on ${date}.</p>`;
             return;
         }
 
-        if (statusEl) {
-            statusEl.textContent = `Loading historical OI summaries for ${selectedSymbol} on ${selectedDate}...`;
-            statusEl.style.color = '#FFC107';
+        const symbolDiv = document.createElement('div');
+        symbolDiv.className = 'oi-summary-symbol-card'; // Re-using the same card styling
+        symbolDiv.innerHTML = `<h4>${symbol} - ${moment(date).format('DD MMM YYYY')}</h4>`;
+
+        // --- Today's First Hour OI Activity Table ---
+        const firstIntervalsDiv = document.createElement('div');
+        firstIntervalsDiv.className = 'oi-summary-sub-section';
+        firstIntervalsDiv.innerHTML = '<h5>Today\'s First Hour OI Activity</h5>';
+        const firstTable = document.createElement('table');
+        firstTable.className = 'oi-summary-table';
+        firstTable.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Interval</th>
+                    <th>Strike</th>
+                    <th>OI Change</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        const firstTbody = firstTable.querySelector('tbody');
+
+        // --- Today's Last Hour OI Activity Table ---
+        const lastIntervalsDiv = document.createElement('div');
+        lastIntervalsDiv.className = 'oi-summary-sub-section';
+        lastIntervalsDiv.innerHTML = '<h5>Today\'s Last Hour OI Activity</h5>';
+        const lastTable = document.createElement('table');
+        lastTable.className = 'oi-summary-table';
+        lastTable.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Interval</th>
+                    <th>Strike</th>
+                    <th>OI Change</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        const lastTbody = lastTable.querySelector('tbody');
+
+
+        const firstTypes = ['TODAY_FIRST_15', 'TODAY_FIRST_30', 'TODAY_FIRST_60'];
+        const lastTypes = ['TODAY_LAST_15', 'TODAY_LAST_30', 'TODAY_LAST_60']; // Corrected to TODAY_LAST
+
+        // Helper to append rows to a tbody
+        const appendRows = (tbodyElement, typeKey, tfSummary, displayTypeKey) => {
+            const majorShifts = tfSummary ? tfSummary.major_shifts : [];
+            const netSummary = tfSummary ? tfSummary.net_summary : null;
+
+            // Add a sub-header row for each interval type within the table
+            const intervalTypeHeaderRow = document.createElement('tr');
+            intervalTypeHeaderRow.innerHTML = `<td colspan="5" style="background-color: #3a3a3a; font-weight: bold; text-align: left; padding-left: 15px;">${displayTypeKey} Interval</td>`;
+            tbodyElement.appendChild(intervalTypeHeaderRow);
+
+
+            if (majorShifts && majorShifts.length > 0 && majorShifts[0].status && !majorShifts[0].status.includes("No data for this interval.")) {
+                majorShifts.forEach(item => {
+                    const tr = document.createElement('tr');
+                    const statusClass = item.status.includes('Long Buildup') || item.status.includes('Fresh OI Added') ? 'positive' :
+                                        (item.status.includes('Short Buildup') || item.status.includes('OI Exited') ? 'negative' : 'neutral');
+                    tr.innerHTML = `
+                        <td>${item.type}</td>
+                        <td>${item.interval}</td>
+                        <td>${item.strike !== 'N/A' ? formatNumber(item.strike, 0) : 'N/A'}</td>
+                        <td class="${statusClass}">${item.oi_change !== 'N/A' ? formatNumber(item.oi_change, 0) : 'N/A'}</td>
+                        <td class="${statusClass}">${item.status}</td>
+                    `;
+                    tbodyElement.appendChild(tr);
+                });
+            } else {
+                 const tr = document.createElement('tr');
+                 tr.innerHTML = `
+                     <td colspan="5" class="neutral" style="text-align: center;">No significant shifts for this interval.</td>
+                 `;
+                 tbodyElement.appendChild(tr);
+            }
+
+            if (netSummary && netSummary.net_status && !netSummary.net_status.includes("No data for this interval.")) {
+                const netOiChangeFormatted = netSummary.net_oi_total_change !== "N/A" ? (netSummary.net_oi_total_change > 0 ? `+${netSummary.net_oi_total_change.toLocaleString()}` : netSummary.net_oi_total_change.toLocaleString()) : "N/A";
+                const netStatusClass = netSummary.net_status.includes('Bullish') ? 'positive' :
+                                       (netSummary.net_status.includes('Bearish') ? 'negative' : 'neutral');
+                const netRow = document.createElement('tr');
+                netRow.classList.add('table-info', 'net-summary-row'); // Add net-summary-row class
+                netRow.innerHTML = `
+                    <td><strong>Net (${netSummary.net_type})</strong></td>
+                    <td><strong>${netSummary.interval}</strong></td>
+                    <td>-</td>
+                    <td class="${netStatusClass}"><strong>${netOiChangeFormatted}</strong></td>
+                    <td class="${netStatusClass}"><strong>${netSummary.net_status}</strong></td>
+                `;
+                tbodyElement.appendChild(netRow);
+            } else {
+                const netRow = document.createElement('tr');
+                netRow.classList.add('table-info', 'net-summary-row'); // Add net-summary-row class
+                netRow.innerHTML = `
+                    <td colspan="5" class="neutral" style="text-align: center;">No net data for this interval.</td>
+                `;
+                tbodyElement.appendChild(netRow);
+            }
+             // Add a visual separator between intervals
+            const separatorRow = document.createElement('tr');
+            separatorRow.innerHTML = `<td colspan="5" style="border-bottom: 2px solid #555; padding: 0;"></td>`;
+            tbodyElement.appendChild(separatorRow);
+        };
+
+        firstTypes.forEach(typeKey => {
+            const tfSummaryWrapper = symbolData[typeKey];
+            const tfSummary = tfSummaryWrapper ? tfSummaryWrapper[typeKey] : null;
+            const displayTypeKey = typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'First');
+            appendRows(firstTbody, typeKey, tfSummary, displayTypeKey);
+        });
+
+        lastTypes.forEach(typeKey => {
+            const tfSummaryWrapper = symbolData[typeKey];
+            const tfSummary = tfSummaryWrapper ? tfSummaryWrapper[typeKey] : null;
+            const displayTypeKey = typeKey.replace(/_/g, ' ').replace('TODAY LAST', 'Last');
+            appendRows(lastTbody, typeKey, tfSummary, displayTypeKey);
+        });
+
+        firstIntervalsDiv.appendChild(firstTable);
+        lastIntervalsDiv.appendChild(lastTable);
+        symbolDiv.appendChild(firstIntervalsDiv);
+        symbolDiv.appendChild(lastIntervalsDiv);
+        container.appendChild(symbolDiv);
+    }
+
+    async function loadOiSummaryHistory(autoLoadToday = false) {
+        const oiSummaryHistorySymbolSelector = $('#oi-summary-history-symbol-selector');
+        const oiSummaryHistoryDateInput = document.getElementById('oi-summary-history-date');
+        const historicalOiSummariesContainer = document.getElementById('historical-oi-summaries-container');
+        let historicalOiSummaryStatus = document.getElementById('historical-oi-summary-status');
+
+        const selectedSymbol = oiSummaryHistorySymbolSelector.val();
+        let selectedDate = oiSummaryHistoryDateInput.value; // Get current value from input
+        const today = moment().format('YYYY-MM-DD');
+
+        // Ensure status element exists
+        if (!historicalOiSummaryStatus) {
+            historicalOiSummaryStatus = document.createElement('p');
+            historicalOiSummaryStatus.id = 'historical-oi-summary-status';
+            historicalOiSummariesContainer.appendChild(historicalOiSummaryStatus);
         }
-        if (container) container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">Loading...</p>`; // Placeholder for loading
+        historicalOiSummaryStatus.style.display = 'block';
+
+
+        // Logic to prioritize today's data on autoLoad (tab open)
+        if (autoLoadToday) {
+            // If the symbol selector has a value, use it. Otherwise, use a default (NIFTY).
+            // The dropdown should already be initialized with a default by this point.
+            if (!selectedSymbol) { // Should not happen if select2 is initialized properly
+                 historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Initializing symbol list...</p>`;
+                 return;
+            }
+            selectedDate = today; // Force selectedDate to today for auto-load
+            oiSummaryHistoryDateInput.value = today; // Update input field to show today
+        }
+
+        if (!selectedSymbol) {
+            historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Please select a symbol.</p>`;
+            return;
+        }
+        if (!selectedDate) {
+            historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Please select a date.</p>`;
+            return;
+        }
+
+        historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Loading historical OI summaries for ${selectedSymbol} on ${selectedDate}...</p>`;
+
 
         try {
             const response = await fetch(`/api/oi_summary_history/${selectedSymbol}/${selectedDate}`);
             const data = await response.json();
 
-            if (data.error) {
-                if (statusEl) {
-                    statusEl.textContent = data.error;
-                    statusEl.style.color = '#F44336';
-                }
-                if (container) container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;" class="negative">${data.error}</p>`;
+            if (data.error || Object.keys(data).length === 0) {
+                historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="negative" style="text-align: center; padding: 20px;">${data.error || 'No historical OI summary data found for this date and symbol.'}</p>`;
             } else {
-                if (statusEl) {
-                    statusEl.textContent = `Historical OI summaries for ${selectedSymbol} on ${selectedDate} loaded successfully.`;
-                    statusEl.style.color = '#4CAF50';
-                }
                 renderHistoricalOiSummaries(data);
             }
         } catch (error) {
-            if (statusEl) {
-                statusEl.textContent = 'Failed to load historical OI summaries.';
-                statusEl.style.color = '#F44336';
-            }
-            if (container) container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;" class="negative">Failed to load historical OI summaries. Check console for errors.</p>`;
-            console.error("Error loading historical OI summaries:", error);
+            console.error("Error loading historical OI summary:", error);
+            historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="negative" style="text-align: center; padding: 20px;">Failed to load historical OI summaries.</p>`;
         }
     }
 
@@ -1930,19 +1970,14 @@
         console.log("Received initial_todays_history:", data);
         if (!data.history) return;
         Object.keys(data.history).forEach(sym => {
-            // Only attempt to update tables for symbols that have a dedicated HTML element
-            // This includes NIFTY, FINNIFTY, BANKNIFTY
-            // Equity tab's history is handled separately when a stock is selected
             if (OI_SYMBOLS.includes(sym)) {
                 const historyTbody = document.querySelector(`#${sym.toLowerCase()}-todays-history-table tbody`);
                 if (historyTbody) {
                     historyTbody.innerHTML = '';
-                    // Sorting by time in ascending order for initial load to ensure correct order
                     const sortedHistory = data.history[sym].sort((a, b) => {
-                        // Assuming item.time is in "HH:MM" format
                         const timeA = moment(a.time, "HH:mm");
                         const timeB = moment(b.time, "HH:mm");
-                        return timeA.diff(timeB);
+                        return timeB.diff(timeA);
                     });
                     sortedHistory.forEach(item => addHistoryItemToTable(historyTbody, item, sym, false));
                 }
@@ -1953,16 +1988,18 @@
     socket.on('todays_history_append', (data) => {
         console.log("Received todays_history_append:", data);
         if (data.symbol && data.item) {
-            // Only append to history tables for symbols that have a dedicated HTML element
             if (OI_SYMBOLS.includes(data.symbol)) {
                 const historyTbody = document.querySelector(`#${data.symbol.toLowerCase()}-todays-history-table tbody`);
-                if (historyTbody) addHistoryItemToTable(historyTbody, data.item, data.symbol, true);
+                if (historyTbody) {
+                    addHistoryItemToTable(historyTbody, data.item, data.symbol, true);
+                }
             }
-            // If the symbol is the currently selected equity, also update its history table
             const currentEquitySymbol = $('#equity-symbol-selector').val();
             if (data.symbol === currentEquitySymbol) {
                  const equityHistoryTbody = document.querySelector('#equity-historical-data-table tbody');
-                 if (equityHistoryTbody) addHistoryItemToTable(equityHistoryTbody, data.item, data.symbol, true);
+                 if (equityHistoryTbody) {
+                    addHistoryItemToTable(equityHistoryTbody, data.item, data.symbol, true);
+                 }
             }
         }
     });
@@ -2020,14 +2057,12 @@
         const timeElement = document.getElementById('time');
         if (timeElement) timeElement.textContent = new Date().toLocaleTimeString();
 
-        // Update ticker for ALL_SYMBOLS
         ALL_SYMBOLS.forEach(sym => {
             const lower = sym.toLowerCase().replace(/-/g, '');
             let tickerValue = '-';
             let tickerChange = '-';
             let tickerChangeClass = 'neutral';
 
-            // Prioritize live_feed_summary for YFinance assets (which have 'change' and 'percentage_change')
             if (YF_ASSETS.includes(sym) && data.live_feed_summary && data.live_feed_summary[sym]) {
                 const feed = data.live_feed_summary[sym];
                 if (typeof feed.current_value !== 'undefined' && feed.current_value !== null) {
@@ -2038,22 +2073,15 @@
                     tickerChangeClass = getChangeColorClass(changeValue);
                 }
             }
-            // For OI_SYMBOLS (NIFTY, FINNIFTY, BANKNIFTY) use data.live[sym].summary
             else if (OI_SYMBOLS.includes(sym) && data.live && data.live[sym] && data.live[sym].summary) {
                 const summary = data.live[sym].summary;
                 if (typeof summary.value !== 'undefined' && summary.value !== null) {
-                    tickerValue = formatNumber(summary.value, 2); // Assuming value is the main price
-                    // Calculate change and percentage change from current and previous value if available
-                    // This assumes `shared_data_cache` has the previous value, or `summary` itself has it.
-                    // For now, let's just show value and PCR in ticker for now if change not directly available
-                    // Or, we need to store previous 'value' in shared_data_cache to calculate change
-                    // For now, let's use a simple representation.
-                    tickerChange = `PCR: ${formatNumber(summary.pcr)}`; // Show PCR in change spot
-                    tickerChangeClass = getChangeColorClass(summary.pcr - 1); // Simple color based on PCR vs 1
+                    tickerValue = formatNumber(summary.value, 2);
+                    tickerChange = `PCR: ${formatNumber(summary.pcr)}`;
+                    tickerChangeClass = getChangeColorClass(summary.pcr - 1);
                 }
             }
 
-            // Update the elements
             const valEl = document.getElementById(`ticker-${lower}-value`);
             const chgEl = document.getElementById(`ticker-${lower}-change`);
             const valElClone = document.getElementById(`ticker-${lower}-value-clone`);
@@ -2081,14 +2109,13 @@
                 const lower = sym.toLowerCase();
                 const s = liveData.pulse_summary;
 
-                // FIX: Check for existence of elements before accessing
                 const callOiBar = document.getElementById(`${lower}-total-call-oi-bar`);
                 const putOiBar = document.getElementById(`${lower}-total-put-oi-bar`);
                 const callOiLabel = document.getElementById(`${lower}-total-call-oi-label`);
                 const putOiLabel = document.getElementById(`${lower}-total-put-oi-label`);
 
                 if (callOiBar && putOiBar && callOiLabel && putOiLabel) {
-                    const totalOI = s.total_call_oi + s.total_put_oi; // These are total OI, not COI
+                    const totalOI = s.total_call_oi + s.total_put_oi;
                     const callOIPct = totalOI > 0 ? (s.total_call_oi / totalOI * 100) : 50;
                     callOiBar.style.width = `${callOIPct}%`;
                     putOiBar.style.width = `${100 - callOIPct}%`;
@@ -2097,7 +2124,6 @@
                 }
 
 
-                // Using total_call_coi and total_put_coi from pulse_summary for daily change
                 const callCoiBar = document.getElementById(`${lower}-total-call-coi-bar`);
                 const putCoiBar = document.getElementById(`${lower}-total-put-coi-bar`);
                 const callCoiLabel = document.getElementById(`${lower}-total-call-coi-label`);
@@ -2109,22 +2135,18 @@
                     callCoiBar.style.width = `${callCOIPct}%`;
                     putCoiBar.style.width = `${100 - callCOIPct}%`;
                     callCoiLabel.textContent = formatNumber(s.total_call_coi, 0);
-                    putCoiLabel.textContent = formatNumber(s.total_put_coi, 0);
+                    putOiLabel.textContent = formatNumber(s.total_put_coi, 0);
                 }
             });
 
-            // This is the key change: Always update charts for the active symbol
             const activeTabElement = document.querySelector('.tablink.active');
             if (activeTabElement) {
                 const activeSymbol = activeTabElement.dataset.symbol;
-                // Only update charts if the active tab is an OI_SYMBOL or EQUITY and has live data
                 if ((OI_SYMBOLS.includes(activeSymbol) || activeSymbol === "EQUITY")) {
                     const currentEquitySymbol = activeSymbol === "EQUITY" ? $('#equity-symbol-selector').val() : activeSymbol;
                     if (currentEquitySymbol && data.live[currentEquitySymbol]) {
-                         // Cache the live data for the active symbol
                         shared_data_cache[currentEquitySymbol] = data.live[currentEquitySymbol];
                         updateCharts(currentEquitySymbol, data.live[currentEquitySymbol]);
-                        // Also update the summary card for the selected equity
                         if (activeSymbol === "EQUITY") {
                             updateEquitySummaryCard(currentEquitySymbol, data.live[currentEquitySymbol]);
                         }
@@ -2139,34 +2161,31 @@
                 if (liveData.summary) {
                     const summaryCard = document.getElementById(`${sym}_summary`);
                     if (summaryCard) {
-                         // FIX: Add null checks for elements
                          if(document.getElementById(`${lower}-sp`)) document.getElementById(`${lower}-sp`).textContent = formatNumber(liveData.summary.sp, 0);
                          const valueEl = summaryCard.querySelector(`#${lower}-value`);
                          if(valueEl) valueEl.textContent = formatNumber(liveData.summary.value);
-                         // MODIFIED: Update to use new call_coi_daily/put_coi_daily keys
                          if(document.getElementById(`${lower}-call-coi-daily`)) document.getElementById(`${lower}-call-coi-daily`).textContent = formatNumber(liveData.summary.call_coi_daily, 1) + 'K';
                          if(document.getElementById(`${lower}-put-coi-daily`)) document.getElementById(`${lower}-put-coi-daily`).textContent = formatNumber(liveData.summary.put_coi_daily, 1) + 'K';
-                         // NEW: Update diff_oi_daily
-                         const diffOiEl = document.getElementById(`${lower}-diff-oi-daily`);
+                         const diffOiEl = summaryCard.querySelector(`#${lower}-diff-oi-daily`);
                          if(diffOiEl) {
                              diffOiEl.textContent = formatNumber(liveData.summary.diff_oi_daily, 0);
                              diffOiEl.classList.remove('positive', 'negative', 'neutral');
                              diffOiEl.classList.add(getChangeColorClass(liveData.summary.diff_oi_daily));
                          }
                          if(document.getElementById(`${lower}-pcr`)) document.getElementById(`${lower}-pcr`).textContent = formatNumber(liveData.summary.pcr);
-                         const sentimentEl = document.getElementById(`${lower}-sentiment`);
+                         const sentimentEl = summaryCard.querySelector(`#${lower}-sentiment`);
                          if(sentimentEl) {
                              sentimentEl.textContent = liveData.summary.sentiment;
                              sentimentEl.classList.remove('positive', 'negative', 'neutral');
                              sentimentEl.classList.add(liveData.summary.sentiment.includes('Bullish') ? 'positive' : (liveData.summary.sentiment.includes('Bearish') ? 'negative' : 'neutral'));
                          }
-                         const mlSentimentEl = document.getElementById(`${lower}-ml-sentiment`);
+                         const mlSentimentEl = summaryCard.querySelector(`#${lower}-ml-sentiment`);
                          if(mlSentimentEl) {
                             mlSentimentEl.textContent = liveData.summary.ml_sentiment;
                             mlSentimentEl.classList.remove('positive', 'negative', 'neutral');
                             mlSentimentEl.classList.add(liveData.summary.ml_sentiment && liveData.summary.ml_sentiment.includes('Bullish') ? 'positive' : (liveData.summary.ml_sentiment && liveData.summary.ml_sentiment.includes('Bearish') ? 'negative' : 'neutral'));
                          }
-                         const sentimentReasonEl = document.getElementById(`${lower}-sentiment-reason`);
+                         const sentimentReasonEl = summaryCard.querySelector(`#${lower}-sentiment-reason`);
                          if(sentimentReasonEl) {
                             sentimentReasonEl.textContent = liveData.summary.sentiment_reason || 'N/A';
                          }
@@ -2206,7 +2225,7 @@
                         });
                     }
                 }
-                shared_data_cache[sym] = liveData; // Always update cache for all symbols
+                shared_data_cache[sym] = liveData;
             });
         }
 
@@ -2257,23 +2276,21 @@
                 }
             }
         }
-        // NEW: Update live OI summaries
+        // Update live OI summaries cache and render if Live OI tab is active
         if (data.oi_change_summaries) {
-            shared_data_cache.live_oi_summary = data.oi_change_summaries; // Cache the live OI summaries
-            const oiSummariesTabContent = document.getElementById('OI_SUMMARIES_tab');
-            if (oiSummariesTabContent && oiSummariesTabContent.style.display === 'block') {
+            shared_data_cache.oi_change_summaries = data.oi_change_summaries;
+            const liveOiSummariesTabContent = document.getElementById('LIVE_OI_SUMMARIES'); // Correct ID
+            if (liveOiSummariesTabContent && liveOiSummariesTabContent.style.display === 'block') {
                 renderLiveOiSummaries(data.oi_change_summaries);
             }
         }
     });
 
-    // New function to update the Equity summary card specifically
     function updateEquitySummaryCard(symbol, liveData) {
         const lower = symbol.toLowerCase();
         const summary = liveData.summary;
         if (!summary) return;
 
-        // FIX: Add null checks for elements
         const spEl = document.getElementById('equity-sp');
         if(spEl) spEl.textContent = formatNumber(summary.sp, 0);
 
@@ -2352,14 +2369,13 @@
         }
         const pulseSummary = equityData.pulse_summary;
 
-        // FIX: Check for existence of elements before accessing
         const callOiBar = document.getElementById('equity-total-call-oi-bar');
         const putOiBar = document.getElementById('equity-total-put-oi-bar');
         const callOiLabel = document.getElementById('equity-total-call-oi-label');
         const putOiLabel = document.getElementById('equity-total-put-oi-label');
 
         if (pulseSummary && callOiBar && putOiBar && callOiLabel && putOiLabel) {
-            const totalOI = pulseSummary.total_call_oi + pulseSummary.total_put_oi; // These are total OI, not COI
+            const totalOI = pulseSummary.total_call_oi + pulseSummary.total_put_oi;
             const callOIPct = totalOI > 0 ? (pulseSummary.total_call_oi / totalOI * 100) : 50;
             callOiBar.style.width = `${callOIPct}%`;
             putOiBar.style.width = `${100 - callOIPct}%`;
@@ -2367,7 +2383,6 @@
             putOiLabel.textContent = formatNumber(pulseSummary.total_put_oi, 0);
         }
 
-        // Using total_call_coi and total_put_coi from pulse_summary for daily change
         const callCoiBar = document.getElementById('equity-total-call-coi-bar');
         const putCoiBar = document.getElementById('equity-total-put-coi-bar');
         const callCoiLabel = document.getElementById('equity-total-call-coi-label');
@@ -2379,13 +2394,13 @@
             callCoiBar.style.width = `${callCOIPct}%`;
             putCoiBar.style.width = `${100 - callCOIPct}%`;
             callCoiLabel.textContent = formatNumber(pulseSummary.total_call_coi, 0);
-            putCoiLabel.textContent = formatNumber(pulseSummary.total_put_coi, 0);
+            putOiLabel.textContent = formatNumber(pulseSummary.total_put_coi, 0);
         }
 
-        updateEquitySummaryCard(symbol, equityData); // Update the summary card
+        updateEquitySummaryCard(symbol, equityData);
 
         const tableBody = document.querySelector('#equity-table tbody');
-        if (tableBody) { // FIX: Add null check for tableBody
+        if (tableBody) {
             tableBody.innerHTML = '';
             equityData.strikes.forEach(row => {
                 const tr = document.createElement('tr');
@@ -2420,10 +2435,9 @@
 
     socket.on('first_last_oi_summaries', (data) => {
         console.log("Received first_last_oi_summaries:", data);
-        // This event is for initial connection. If historical OI summaries tab is open, render it.
-        const oiSummariesTabContent = document.getElementById('OI_SUMMARIES_tab');
-        if (oiSummariesTabContent && oiSummariesTabContent.style.display === 'block') {
-            renderHistoricalOiSummaries(data); // Render initial historical summaries
+        const historicalOiSummariesTabContent = document.getElementById('HISTORICAL_OI_SUMMARIES'); // Correct ID
+        if (historicalOiSummariesTabContent && historicalOiSummariesTabContent.style.display === 'block') {
+            renderHistoricalOiSummaries(data);
         }
     });
 
@@ -2433,13 +2447,12 @@
         document.querySelectorAll('.history-date-picker').forEach(input => input.value = today);
 
         const pulseContainer = document.getElementById('market-pulse-container');
-        if (pulseContainer) { // FIX: Add null check for pulseContainer
+        if (pulseContainer) {
             OI_SYMBOLS.forEach(sym => {
                 pulseContainer.appendChild(createPulseCard(sym));
             });
         }
 
-        // Initialize OI Summary History Symbol Selector
         const oiSummaryHistorySymbolSelector = $('#oi-summary-history-symbol-selector');
         // Fetch fno_stocks_list_global first, then combine
         fetch('/api/stocks')
@@ -2447,31 +2460,31 @@
             .then(stocks => {
                 console.log("Fetched stock list:", stocks);
                 fno_stocks_list_global = stocks; // Store globally
-                const allOiSymbols = [...new Set([...OI_SYMBOLS, ...fno_stocks_list_global])]; // Combine
+                const allOiSymbols = [...new Set([...OI_SYMBOLS, ...fno_stocks_list_global])].sort(); // Combine and sort
                 if (oiSummaryHistorySymbolSelector.length) { // Check if element exists
-                    oiSummaryHistorySymbolSelector.select2({
+                    oiSummaryHistorySymbolSelector.empty().select2({ // Clear existing options and initialize
                         placeholder: "Select Symbol",
                         allowClear: true,
                         data: allOiSymbols.map(sym => ({ id: sym, text: sym }))
                     });
                     // Set default selected symbol if any
                     if (allOiSymbols.length > 0) {
-                        oiSummaryHistorySymbolSelector.val(allOiSymbols[0]).trigger('change');
+                        oiSummaryHistorySymbolSelector.val("NIFTY").trigger('change'); // Default to NIFTY
                     }
                 }
             })
             .catch(error => {
                 console.error("Error fetching stock list for OI summary selector:", error);
-                // Fallback if API fails
-                const allOiSymbols = [...new Set([...OI_SYMBOLS])];
+                // Fallback if API fails (populate with just OI_SYMBOLS)
+                const allOiSymbols = [...new Set([...OI_SYMBOLS])].sort();
                 if (oiSummaryHistorySymbolSelector.length) { // Check if element exists
-                    oiSummaryHistorySymbolSelector.select2({
+                    oiSummaryHistorySymbolSelector.empty().select2({
                         placeholder: "Select Symbol",
                         allowClear: true,
                         data: allOiSymbols.map(sym => ({ id: sym, text: sym }))
                     });
                     if (allOiSymbols.length > 0) {
-                        oiSummaryHistorySymbolSelector.val(allOiSymbols[0]).trigger('change');
+                        oiSummaryHistorySymbolSelector.val("NIFTY").trigger('change'); // Default to NIFTY
                     }
                 }
             });
@@ -2495,41 +2508,21 @@
 
 
         const equitySelector = $('#equity-symbol-selector');
-        if (equitySelector.length) { // Check if element exists
+        if (equitySelector.length) {
             equitySelector.select2({
                 placeholder: "Select a stock",
                 allowClear: true
             });
         }
 
-
-        // Re-fetch stocks for the main equity selector if not already done
-        if (fno_stocks_list_global.length === 0) {
-             fetch('/api/stocks')
-                .then(response => response.json())
-                .then(stocks => {
-                    console.log("Fetched stock list for main equity selector:", stocks);
-                    fno_stocks_list_global = stocks; // Ensure global is updated
-                    if (equitySelector.length) {
-                        stocks.forEach(stock => {
-                            const option = new Option(stock, stock, false, false);
-                            equitySelector.append(option);
-                        });
-                        equitySelector.trigger('change');
-                    }
-                })
-                .catch(error => {
-                    console.error("Error fetching stock list:", error);
-                });
-        } else {
-            // If already fetched by the OI summary selector, just populate
-            if (equitySelector.length) {
-                fno_stocks_list_global.forEach(stock => {
-                    const option = new Option(stock, stock, false, false);
-                    equitySelector.append(option);
-                });
-                equitySelector.trigger('change');
-            }
+        // This block ensures equity selector is populated if fno_stocks_list_global is already available
+        // It's a fallback/initial population if the fetch above is not the first thing to run.
+        if (fno_stocks_list_global.length > 0 && equitySelector.find('option').length <= 1) { // Check if already populated
+            fno_stocks_list_global.forEach(stock => {
+                const option = new Option(stock, stock, false, false);
+                equitySelector.append(option);
+            });
+            equitySelector.trigger('change');
         }
 
 
