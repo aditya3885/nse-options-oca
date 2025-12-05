@@ -81,35 +81,7 @@
             </div>
         </div>
 
-        <div class="ai-bot-trades-section">
-            <h3 style="margin-top: 20px;">DeepSeek Analysis Bot Trades</h3>
-            <p>This table displays the latest trade recommendations from the DeepSeek AI Bot for NIFTY, FINNIFTY, BANKNIFTY, and F&O Equities based on their option chain data.</p>
-            <div class="table-container">
-                <table id="ai-bot-trades-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Symbol</th>
-                            <th>Status</th>
-                            <th>P/L</th>
-                            <th>Action Price</th>
-                            <th>Trade</th>
-                            <th>Strike(s)</th>
-                            <th>Type</th>
-                            <th>Risk %</th>
-                            <th>Exit Rule</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr><td colspan="10">Waiting for AI Bot recommendations...</td></tr>
-                    </tbody>
-                </table>
-                <div id="ai-bot-rationale-container" style="margin-top: 15px;">
-                    <h4>Latest Rationale:</h4>
-                    <p id="ai-bot-rationale" style="font-style: italic;"></p>
-                </div>
-            </div>
-        </div>
+        <!-- Removed AI Bot Trades from here -->
 
         <div id="market-pulse-container" class="market-pulse-container"></div>
 
@@ -186,7 +158,9 @@
             <button class="tablink" onclick="openTab(event, 'NEWS')" data-symbol="NEWS">News</button>
             <!-- NEW TAB BUTTONS -->
             <button class="tablink" onclick="openTab(event, 'LIVE_OI_SUMMARIES')" data-symbol="LIVE_OI_SUMMARIES">Live OI Summaries</button>
-            <button class="tablink" onclick="openTab(event, 'HISTORICAL_OI_SUMMARIES')" data-symbol="HISTORICAL_OI_SUMMARIES">Historical OI Summaries</button>
+            <button class="tablink" onclick="openTab(event, 'HISTORICAL_OI_SUMMARIES')" data-symbol="HISTORICAL_OI_SUMMARIES">Historical OI Summary</button>
+            <!-- NEW: AI BOT TRADES TAB BUTTON -->
+            <button class="tablink" onclick="openTab(event, 'AI_BOT_TRADES')" data-symbol="AI_BOT_TRADES">AI Bot Trades</button>
         </div>
 
         <div class="global-controls"><button class="clear-history-button" onclick="clearTodaysHistory(null)">Clear All Today's History</button></div>
@@ -675,7 +649,7 @@
         </div>
 
         <!-- NEW: Live OI Summaries TAB (content remains the same) -->
-        <div id="LIVE_OI_SUMMARIES" class="tabcontent">
+        <div id="LIVE_OI_SUMMARIES_tab" class="tabcontent"> <!-- Corrected ID -->
             <h3 style="margin-top: 20px;">Live OI Change Summaries</h3>
             <p>This section displays significant OI shifts across different timeframes for all actively tracked symbols.</p>
             <div id="live-oi-summaries-container" class="oi-summary-grid">
@@ -683,18 +657,48 @@
             </div>
         </div>
 
-        <!-- NEW: Historical OI First & Last Hour Summaries TAB -->
-        <div id="HISTORICAL_OI_SUMMARIES" class="tabcontent">
-            <h3 style="margin-top: 20px;">Historical OI First & Last Hour Summaries</h3>
+        <!-- MODIFIED: Historical OI First & Last Hour Summaries TAB with date picker -->
+        <div id="HISTORICAL_OI_SUMMARIES_tab" class="tabcontent"> <!-- Corrected ID -->
+            <h3 style="margin-top: 20px;">OI First & Last Hour Summaries</h3>
             <div class="history-controls" style="justify-content: center; margin-top: 15px; margin-bottom: 20px;">
-                <label for="oi-summary-history-symbol-selector">Select Symbol:</label>
-                <select id="oi-summary-history-symbol-selector" style="width: 150px;"></select>
-                <label for="oi-summary-history-date">Select Date:</label>
-                <input type="date" id="oi-summary-history-date" class="history-date-picker">
+                <label for="historical-oi-summary-date">Select Date:</label>
+                <input type="date" id="historical-oi-summary-date" class="history-date-picker">
                 <button onclick="loadOiSummaryHistory()">Load Historical OI Summary</button>
             </div>
-            <div id="historical-oi-summaries-container">
-                <p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">Select a symbol and date to view historical OI summaries.</p>
+            <p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">Select a date and click "Load Historical OI Summary" to view data.</p>
+            <div id="historical-oi-summaries-container" class="oi-summary-grid">
+                <!-- Data will be rendered here by JavaScript -->
+            </div>
+        </div>
+
+        <!-- NEW: AI BOT TRADES TAB CONTENT -->
+        <div id="AI_BOT_TRADES_tab" class="tabcontent">
+            <h3 style="margin-top: 20px;">DeepSeek Analysis Bot Trades</h3>
+            <p>This table displays the latest trade recommendations from the DeepSeek AI Bot for NIFTY, FINNIFTY, BANKNIFTY, and F&O Equities based on their option chain data.</p>
+            <div class="table-container">
+                <table id="ai-bot-trades-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Symbol</th>
+                            <th>Status</th>
+                            <th>P/L</th>
+                            <th>Action Price</th>
+                            <th>Trade</th>
+                            <th>Strike(s)</th>
+                            <th>Type</th>
+                            <th>Risk %</th>
+                            <th>Exit Rule</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="10">Waiting for AI Bot recommendations...</td></tr>
+                    </tbody>
+                </table>
+                <div id="ai-bot-rationale-container" style="margin-top: 15px;">
+                    <h4>Latest Rationale:</h4>
+                    <p id="ai-bot-rationale" style="font-style: italic;"></p>
+                </div>
             </div>
         </div>
 
@@ -716,6 +720,7 @@
     const chartInstances = {}; // Object to store Chart.js instances
     const shared_data_cache = {};
     let fno_stocks_list_global = []; // Global variable to store fetched F&O stocks
+    let ai_bot_trade_history_cache = []; // Cache for AI bot trades
 
     const ALL_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY", "SENSEX", "INDIAVIX", "GOLD", "SILVER", "BTC-USD", "USD-INR"];
     const OI_SYMBOLS = ["NIFTY", "FINNIFTY", "BANKNIFTY"]; // Indices that use Option Chain data
@@ -728,12 +733,8 @@
 
         let tabIdToOpen = '';
         // Special handling for the new tabs where the symbol IS the tabId
-        if (symbol === 'LIVE_OI_SUMMARIES' || symbol === 'HISTORICAL_OI_SUMMARIES') {
-            tabIdToOpen = symbol;
-        } else {
-            // For existing tabs, append '_tab'
-            tabIdToOpen = `${symbol}_tab`;
-        }
+        // All new tabs follow the pattern ${symbol}_tab
+        tabIdToOpen = `${symbol}_tab`;
 
         const tabElement = document.getElementById(tabIdToOpen);
         if (tabElement) {
@@ -779,7 +780,8 @@
         if (symbol === "NEWS") {
             renderNewsTable(news_alerts);
         }
-        if (symbol === "LIVE_OI_SUMMARIES") { // Handle the new Live OI Summaries tab
+        if (symbol === "LIVE_OI_SUMMARIES") {
+            // Ensure this renders immediately if data is already present in the cache
             if (shared_data_cache.oi_change_summaries) {
                 renderLiveOiSummaries(shared_data_cache.oi_change_summaries);
             } else {
@@ -787,30 +789,30 @@
                 if (liveOiContainer) liveOiContainer.innerHTML = `<p style="text-align: center;">Waiting for live OI summary data...</p>`;
             }
         }
-        if (symbol === "HISTORICAL_OI_SUMMARIES") { // Handle the new Historical OI Summaries tab
-            const oiSummaryHistorySymbolSelector = $('#oi-summary-history-symbol-selector');
-            const oiSummaryHistoryDateInput = document.getElementById('oi-summary-history-date');
+        if (symbol === "HISTORICAL_OI_SUMMARIES") {
+            // Reset state for historical OI summaries tab
             const today = moment().format('YYYY-MM-DD');
+            const dateInput = document.getElementById('historical-oi-summary-date');
+            if (dateInput) dateInput.value = today;
 
-            // Set today's date in the input field
-            if (oiSummaryHistoryDateInput) oiSummaryHistoryDateInput.value = today;
-
-            // Determine the default symbol to pre-select
-            let defaultSymbolForHistory = "NIFTY";
-            const allOiSymbols = [...new Set([...OI_SYMBOLS, ...fno_stocks_list_global])].sort();
-            if (allOiSymbols.length > 0) {
-                if (!allOiSymbols.includes("NIFTY")) {
-                    defaultSymbolForHistory = allOiSymbols[0];
-                }
+            const statusEl = document.getElementById('historical-oi-summary-status');
+            if (statusEl) {
+                statusEl.textContent = 'Select a date and click "Load Historical OI Summary" to view data.';
+                statusEl.style.color = '';
             }
-
-            // Set the default symbol in the dropdown only if it's not already set
-            if (oiSummaryHistorySymbolSelector.length && (oiSummaryHistorySymbolSelector.val() === null || oiSummaryHistorySymbolSelector.val() === "")) {
-                oiSummaryHistorySymbolSelector.val(defaultSymbolForHistory).trigger('change');
+            const container = document.getElementById('historical-oi-summaries-container');
+            if (container) container.innerHTML = ''; // Clear previous content
+        }
+        if (symbol === "AI_BOT_TRADES") {
+            // If the AI bot trade history is already populated by the socket update, render it.
+            if (ai_bot_trade_history_cache && ai_bot_trade_history_cache.length > 0) {
+                renderAiBotTrades(ai_bot_trade_history_cache);
+            } else {
+                const aiBotTradesTbody = document.querySelector('#ai-bot-trades-table tbody');
+                if (aiBotTradesTbody) aiBotTradesTbody.innerHTML = `<tr><td colspan="10">Waiting for AI Bot recommendations...</td></tr>`;
+                const aiBotRationaleEl = document.getElementById('ai-bot-rationale');
+                if (aiBotRationaleEl) aiBotRationaleEl.innerHTML = 'No active recommendations.';
             }
-
-            // Automatically load data for today with the default/selected symbol
-            loadOiSummaryHistory(true); // Pass true to indicate auto-load for today
         }
     }
 
@@ -1179,7 +1181,7 @@
         if (buildup.includes('Short Buildup')) return 'buildup-short';
         if (buildup.includes('Short Covering')) return 'buildup-short-covering';
         if (buildup.includes('Long Unwinding')) return 'buildup-long-unwinding';
-        if (buildup.includes('Fresh OI Added')) return 'buildup-long';
+        if (buildup.includes('Fresh OI Added')) return 'builup-long';
         if (buildup.includes('OI Exited')) return 'buildup-short';
         return '';
     }
@@ -1755,209 +1757,135 @@
     // FIX END: Updated renderLiveOiSummaries function
 
 
-    function renderHistoricalOiSummaries(historicalData) {
+    // MODIFIED: New function to render the combined historical OI summaries table
+    function renderHistoricalOiSummariesTable(historicalData) {
         const container = document.getElementById('historical-oi-summaries-container');
         if (!container) return;
         container.innerHTML = ''; // Clear previous content
 
         const statusElement = document.getElementById('historical-oi-summary-status');
-        if (statusElement) statusElement.style.display = 'none';
+        const dateInput = document.getElementById('historical-oi-summary-date');
+        const selectedDate = dateInput ? dateInput.value : null;
 
         if (!historicalData || Object.keys(historicalData).length === 0) {
-            container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">No historical OI summary data found for the selected date and symbol.</p>`;
+            container.innerHTML = `<p id="historical-oi-summary-status" class="negative" style="text-align: center; margin-bottom: 20px;">No historical OI summary data found for ${selectedDate ? moment(selectedDate).format('DD MMM YYYY') : 'the selected date'}.</p>`;
+            if (statusElement) statusElement.style.display = 'none';
             return;
         }
 
-        const date = Object.keys(historicalData)[0];
-        const symbol = Object.keys(historicalData[date])[0];
-        const symbolData = historicalData[date][symbol];
+        const dataDate = Object.keys(historicalData)[0]; // Assuming the key is the date
+        const allSymbolsData = historicalData[dataDate];
 
-        if (!symbolData || Object.keys(symbolData).length === 0) {
-            container.innerHTML = `<p id="historical-oi-summary-status" style="text-align: center; margin-bottom: 20px;">No historical OI summary data found for ${symbol} on ${date}.</p>`;
-            return;
+        // Update the status message to confirm data loaded
+        if (statusElement) {
+            statusElement.textContent = `OI Summaries for ${moment(dataDate).format('DD MMM YYYY')}`;
+            statusElement.style.color = '#4CAF50';
         }
 
-        const symbolDiv = document.createElement('div');
-        symbolDiv.className = 'oi-summary-symbol-card'; // Re-using the same card styling
-        symbolDiv.innerHTML = `<h4>${symbol} - ${moment(date).format('DD MMM YYYY')}</h4>`;
 
-        // --- Today's First Hour OI Activity Table ---
-        const firstIntervalsDiv = document.createElement('div');
-        firstIntervalsDiv.className = 'oi-summary-sub-section';
-        firstIntervalsDiv.innerHTML = '<h5>Today\'s First Hour OI Activity</h5>';
-        const firstTable = document.createElement('table');
-        firstTable.className = 'oi-summary-table';
-        firstTable.innerHTML = `
+        // Define the desired order: NIFTY, FINNIFTY, BANKNIFTY, then other equities sorted alphabetically
+        const indexOrder = ["NIFTY", "FINNIFTY", "BANKNIFTY"];
+        let sortedSymbols = Object.keys(allSymbolsData).sort((a, b) => {
+            const aIsIndex = indexOrder.includes(a);
+            const bIsIndex = indexOrder.includes(b);
+
+            if (aIsIndex && !bIsIndex) return -1; // Indices first
+            if (!aIsIndex && bIsIndex) return 1;
+            if (aIsIndex && bIsIndex) return indexOrder.indexOf(a) - indexOrder.indexOf(b); // Sort indices by predefined order
+            return a.localeCompare(b); // Sort other equities alphabetically
+        });
+
+        const timeframes = ['TODAY_FIRST_15', 'TODAY_FIRST_30', 'TODAY_FIRST_60', 'TODAY_LAST_15', 'TODAY_LAST_30', 'TODAY_LAST_60'];
+
+        const table = document.createElement('table');
+        table.className = 'oi-summary-historical-table'; // New class for this specific table
+        let thead = `
             <thead>
                 <tr>
-                    <th>Type</th>
-                    <th>Interval</th>
-                    <th>Strike</th>
-                    <th>OI Change</th>
-                    <th>Status</th>
+                    <th rowspan="2">Symbol</th>
+                    <th colspan="3">First 15 min</th>
+                    <th colspan="3">First 30 min</th>
+                    <th colspan="3">First 60 min</th>
+                    <th colspan="3">Last 15 min</th>
+                    <th colspan="3">Last 30 min</th>
+                    <th colspan="3">Last 60 min</th>
+                </tr>
+                <tr>
+                    <th>Net OI Change</th><th>Net Status</th><th>Price Change</th>
+                    <th>Net OI Change</th><th>Net Status</th><th>Price Change</th>
+                    <th>Net OI Change</th><th>Net Status</th><th>Price Change</th>
+                    <th>Net OI Change</th><th>Net Status</th><th>Price Change</th>
+                    <th>Net OI Change</th><th>Net Status</th><th>Price Change</th>
+                    <th>Net OI Change</th><th>Net Status</th><th>Price Change</th>
                 </tr>
             </thead>
             <tbody></tbody>
         `;
-        const firstTbody = firstTable.querySelector('tbody');
+        table.innerHTML = thead;
+        const tbody = table.querySelector('tbody');
 
-        // --- Today's Last Hour OI Activity Table ---
-        const lastIntervalsDiv = document.createElement('div');
-        lastIntervalsDiv.className = 'oi-summary-sub-section';
-        lastIntervalsDiv.innerHTML = '<h5>Today\'s Last Hour OI Activity</h5>';
-        const lastTable = document.createElement('table');
-        lastTable.className = 'oi-summary-table';
-        lastTable.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Type</th>
-                    <th>Interval</th>
-                    <th>Strike</th>
-                    <th>OI Change</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        `;
-        const lastTbody = lastTable.querySelector('tbody');
+        sortedSymbols.forEach(symbol => {
+            const symbolData = allSymbolsData[symbol];
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${symbol}</td>`;
 
+            timeframes.forEach(tfKey => {
+                const tfSummaryWrapper = symbolData[tfKey];
+                const tfSummary = tfSummaryWrapper ? tfSummaryWrapper[tfKey] : null; // Get the actual summary object
+                let netOiChange = 'N/A';
+                let netStatus = 'N/A';
+                let priceChange = 'N/A';
+                let netStatusClass = 'neutral';
 
-        const firstTypes = ['TODAY_FIRST_15', 'TODAY_FIRST_30', 'TODAY_FIRST_60'];
-        const lastTypes = ['TODAY_LAST_15', 'TODAY_LAST_30', 'TODAY_LAST_60']; // Corrected to TODAY_LAST
+                if (tfSummary && tfSummary.net_summary) {
+                    netOiChange = tfSummary.net_summary.net_oi_total_change !== "N/A" ? formatNumber(tfSummary.net_summary.net_oi_total_change, 0) : 'N/A';
+                    netStatus = tfSummary.net_summary.net_status;
+                    priceChange = (tfSummary.net_summary.price_change !== undefined && tfSummary.net_summary.price_change !== null) ? formatNumber(tfSummary.net_summary.price_change) : 'N/A';
 
-        // Helper to append rows to a tbody
-        const appendRows = (tbodyElement, typeKey, tfSummary, displayTypeKey) => {
-            const majorShifts = tfSummary ? tfSummary.major_shifts : [];
-            const netSummary = tfSummary ? tfSummary.net_summary : null;
-
-            // Add a sub-header row for each interval type within the table
-            const intervalTypeHeaderRow = document.createElement('tr');
-            intervalTypeHeaderRow.innerHTML = `<td colspan="5" style="background-color: #3a3a3a; font-weight: bold; text-align: left; padding-left: 15px;">${displayTypeKey} Interval</td>`;
-            tbodyElement.appendChild(intervalTypeHeaderRow);
-
-
-            if (majorShifts && majorShifts.length > 0 && majorShifts[0].status && !majorShifts[0].status.includes("No data for this interval.")) {
-                majorShifts.forEach(item => {
-                    const tr = document.createElement('tr');
-                    const statusClass = item.status.includes('Long Buildup') || item.status.includes('Fresh OI Added') ? 'positive' :
-                                        (item.status.includes('Short Buildup') || item.status.includes('OI Exited') ? 'negative' : 'neutral');
-                    tr.innerHTML = `
-                        <td>${item.type}</td>
-                        <td>${item.interval}</td>
-                        <td>${item.strike !== 'N/A' ? formatNumber(item.strike, 0) : 'N/A'}</td>
-                        <td class="${statusClass}">${item.oi_change !== 'N/A' ? formatNumber(item.oi_change, 0) : 'N/A'}</td>
-                        <td class="${statusClass}">${item.status}</td>
-                    `;
-                    tbodyElement.appendChild(tr);
-                });
-            } else {
-                 const tr = document.createElement('tr');
-                 tr.innerHTML = `
-                     <td colspan="5" class="neutral" style="text-align: center;">No significant shifts for this interval.</td>
-                 `;
-                 tbodyElement.appendChild(tr);
-            }
-
-            if (netSummary && netSummary.net_status && !netSummary.net_status.includes("No data for this interval.")) {
-                const netOiChangeFormatted = netSummary.net_oi_total_change !== "N/A" ? (netSummary.net_oi_total_change > 0 ? `+${netSummary.net_oi_total_change.toLocaleString()}` : netSummary.net_oi_total_change.toLocaleString()) : "N/A";
-                const netStatusClass = netSummary.net_status.includes('Bullish') ? 'positive' :
-                                       (netSummary.net_status.includes('Bearish') ? 'negative' : 'neutral');
-                const netRow = document.createElement('tr');
-                netRow.classList.add('table-info', 'net-summary-row'); // Add net-summary-row class
-                netRow.innerHTML = `
-                    <td><strong>Net (${netSummary.net_type})</strong></td>
-                    <td><strong>${netSummary.interval}</strong></td>
-                    <td>-</td>
-                    <td class="${netStatusClass}"><strong>${netOiChangeFormatted}</strong></td>
-                    <td class="${netStatusClass}"><strong>${netSummary.net_status}</strong></td>
-                `;
-                tbodyElement.appendChild(netRow);
-            } else {
-                const netRow = document.createElement('tr');
-                netRow.classList.add('table-info', 'net-summary-row'); // Add net-summary-row class
-                netRow.innerHTML = `
-                    <td colspan="5" class="neutral" style="text-align: center;">No net data for this interval.</td>
-                `;
-                tbodyElement.appendChild(netRow);
-            }
-             // Add a visual separator between intervals
-            const separatorRow = document.createElement('tr');
-            separatorRow.innerHTML = `<td colspan="5" style="border-bottom: 2px solid #555; padding: 0;"></td>`;
-            tbodyElement.appendChild(separatorRow);
-        };
-
-        firstTypes.forEach(typeKey => {
-            const tfSummaryWrapper = symbolData[typeKey];
-            const tfSummary = tfSummaryWrapper ? tfSummaryWrapper[typeKey] : null;
-            const displayTypeKey = typeKey.replace(/_/g, ' ').replace('TODAY FIRST', 'First');
-            appendRows(firstTbody, typeKey, tfSummary, displayTypeKey);
+                    netStatusClass = netStatus.includes('Bullish') ? 'positive' :
+                                     (netStatus.includes('Bearish') ? 'negative' : 'neutral');
+                }
+                tr.innerHTML += `<td class="${netStatusClass}">${netOiChange}</td><td class="${netStatusClass}">${netStatus}</td><td class="${getChangeColorClass(priceChange)}">${priceChange}</td>`;
+            });
+            tbody.appendChild(tr);
         });
 
-        lastTypes.forEach(typeKey => {
-            const tfSummaryWrapper = symbolData[typeKey];
-            const tfSummary = tfSummaryWrapper ? tfSummaryWrapper[typeKey] : null;
-            const displayTypeKey = typeKey.replace(/_/g, ' ').replace('TODAY LAST', 'Last');
-            appendRows(lastTbody, typeKey, tfSummary, displayTypeKey);
-        });
-
-        firstIntervalsDiv.appendChild(firstTable);
-        lastIntervalsDiv.appendChild(lastTable);
-        symbolDiv.appendChild(firstIntervalsDiv);
-        symbolDiv.appendChild(lastIntervalsDiv);
-        container.appendChild(symbolDiv);
+        container.appendChild(table);
+        if (statusElement) statusElement.style.display = 'block'; // Make sure status is visible
+        console.log("Historical OI summaries table rendered.");
     }
 
-    async function loadOiSummaryHistory(autoLoadToday = false) {
-        const oiSummaryHistorySymbolSelector = $('#oi-summary-history-symbol-selector');
-        const oiSummaryHistoryDateInput = document.getElementById('oi-summary-history-date');
+    // MODIFIED: loadOiSummaryHistory function to fetch all data for selected date
+    async function loadOiSummaryHistory() {
+        const dateInput = document.getElementById('historical-oi-summary-date');
+        const selectedDate = dateInput.value;
+
+        if (!selectedDate) {
+            alert("Please select a date to load historical OI summaries.");
+            return;
+        }
+
         const historicalOiSummariesContainer = document.getElementById('historical-oi-summaries-container');
         let historicalOiSummaryStatus = document.getElementById('historical-oi-summary-status');
 
-        const selectedSymbol = oiSummaryHistorySymbolSelector.val();
-        let selectedDate = oiSummaryHistoryDateInput.value; // Get current value from input
-        const today = moment().format('YYYY-MM-DD');
-
-        // Ensure status element exists
         if (!historicalOiSummaryStatus) {
             historicalOiSummaryStatus = document.createElement('p');
             historicalOiSummaryStatus.id = 'historical-oi-summary-status';
             historicalOiSummariesContainer.appendChild(historicalOiSummaryStatus);
         }
         historicalOiSummaryStatus.style.display = 'block';
-
-
-        // Logic to prioritize today's data on autoLoad (tab open)
-        if (autoLoadToday) {
-            // If the symbol selector has a value, use it. Otherwise, use a default (NIFTY).
-            // The dropdown should already be initialized with a default by this point.
-            if (!selectedSymbol) { // Should not happen if select2 is initialized properly
-                 historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Initializing symbol list...</p>`;
-                 return;
-            }
-            selectedDate = today; // Force selectedDate to today for auto-load
-            oiSummaryHistoryDateInput.value = today; // Update input field to show today
-        }
-
-        if (!selectedSymbol) {
-            historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Please select a symbol.</p>`;
-            return;
-        }
-        if (!selectedDate) {
-            historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Please select a date.</p>`;
-            return;
-        }
-
-        historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Loading historical OI summaries for ${selectedSymbol} on ${selectedDate}...</p>`;
+        historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="neutral" style="text-align: center; padding: 20px;">Loading OI summaries for ${moment(selectedDate).format('DD MMM YYYY')}...</p>`;
 
 
         try {
-            const response = await fetch(`/api/oi_summary_history/${selectedSymbol}/${selectedDate}`);
+            // MODIFIED: Fetch from the new API route with date parameter
+            const response = await fetch(`/api/oi_summary_history?date=${selectedDate}`);
             const data = await response.json();
 
             if (data.error || Object.keys(data).length === 0) {
-                historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="negative" style="text-align: center; padding: 20px;">${data.error || 'No historical OI summary data found for this date and symbol.'}</p>`;
+                historicalOiSummariesContainer.innerHTML = `<p id="historical-oi-summary-status" class="negative" style="text-align: center; padding: 20px;">${data.error || 'No historical OI summary data found for this date.'}</p>`;
             } else {
-                renderHistoricalOiSummaries(data);
+                renderHistoricalOiSummariesTable(data); // Call the new rendering function
             }
         } catch (error) {
             console.error("Error loading historical OI summary:", error);
@@ -2229,61 +2157,23 @@
             });
         }
 
+        // AI Bot Trades: Cache and Render if tab is active
         if (data.ai_bot_trade_history) {
-            const aiBotTradesTbody = document.querySelector('#ai-bot-trades-table tbody');
-            if (aiBotTradesTbody) {
-                aiBotTradesTbody.innerHTML = '';
-                let latestRationale = {};
-
-                const sortedHistory = data.ai_bot_trade_history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-                sortedHistory.forEach(trade => {
-                    const tr = document.createElement('tr');
-                    const recClass = trade.recommendation === "BUY" ? "positive" : (trade.recommendation === "SELL" ? "negative" : (trade.status === "Exit" ? "neutral" : "neutral"));
-                    const pnlClass = getPnLClass(trade.pnl);
-
-                    tr.innerHTML = `
-                        <td>${moment.tz(trade.timestamp, 'Asia/Kolkata').format('HH:mm:ss')}</td>
-                        <td>${trade.symbol}</td>
-                        <td class="${trade.status === "Entry" ? "positive" : (trade.status === "Exit" ? "negative" : "neutral")}">${trade.status}</td>
-                        <td class="${pnlClass}">${trade.pnl !== 0.0 ? formatNumber(trade.pnl) : '-'}</td>
-                        <td>${trade.action_price !== 0.0 ? formatNumber(trade.action_price) : '-'}</td>
-                        <td class="${recClass}">${trade.trade}</td>
-                        <td>${trade.strikes}</td>
-                        <td>${trade.type}</td>
-                        <td>${trade.risk_pct}</td>
-                        <td>${trade.exit_rule}</td>
-                    `;
-                    aiBotTradesTbody.appendChild(tr);
-
-                    if (!latestRationale[trade.symbol]) {
-                        latestRationale[trade.symbol] = trade.rationale;
-                    }
-                });
-
-
-                let combinedRationaleText = '';
-                Object.keys(latestRationale).sort().forEach(sym => {
-                    combinedRationaleText += `<b>${sym}:</b> ${latestRationale[sym]}<br>`;
-                });
-                const aiBotRationaleEl = document.getElementById('ai-bot-rationale');
-                if (aiBotRationaleEl) aiBotRationaleEl.innerHTML = combinedRationaleText;
-
-
-                if (aiBotTradesTbody.children.length === 0) {
-                    aiBotTradesTbody.innerHTML = `<tr><td colspan="10">Waiting for AI Bot recommendations...</td></tr>`;
-                    if (aiBotRationaleEl) aiBotRationaleEl.innerHTML = 'No active recommendations.';
-                }
+            ai_bot_trade_history_cache = data.ai_bot_trade_history; // Cache the data
+            const aiBotTradesTabContent = document.getElementById('AI_BOT_TRADES_tab');
+            if (aiBotTradesTabContent && aiBotTradesTabContent.style.display === 'block') {
+                renderAiBotTrades(ai_bot_trade_history_cache);
             }
         }
         // Update live OI summaries cache and render if Live OI tab is active
         if (data.oi_change_summaries) {
             shared_data_cache.oi_change_summaries = data.oi_change_summaries;
-            const liveOiSummariesTabContent = document.getElementById('LIVE_OI_SUMMARIES'); // Correct ID
+            const liveOiSummariesTabContent = document.getElementById('LIVE_OI_SUMMARIES_tab');
             if (liveOiSummariesTabContent && liveOiSummariesTabContent.style.display === 'block') {
                 renderLiveOiSummaries(data.oi_change_summaries);
             }
         }
+        // Removed the 'first_last_oi_summaries' socket listener as it's now an on-demand historical tab
     });
 
     function updateEquitySummaryCard(symbol, liveData) {
@@ -2433,13 +2323,7 @@
         }
     });
 
-    socket.on('first_last_oi_summaries', (data) => {
-        console.log("Received first_last_oi_summaries:", data);
-        const historicalOiSummariesTabContent = document.getElementById('HISTORICAL_OI_SUMMARIES'); // Correct ID
-        if (historicalOiSummariesTabContent && historicalOiSummariesTabContent.style.display === 'block') {
-            renderHistoricalOiSummaries(data);
-        }
-    });
+    // Removed the 'first_last_oi_summaries' socket listener as it's now an on-demand historical tab
 
     document.addEventListener('DOMContentLoaded', () => {
         console.log("DOMContentLoaded fired.");
@@ -2453,49 +2337,25 @@
             });
         }
 
-        const oiSummaryHistorySymbolSelector = $('#oi-summary-history-symbol-selector');
-        // Fetch fno_stocks_list_global first, then combine
+        // The fetch for fno_stocks_list_global is still needed for the Equity tab.
         fetch('/api/stocks')
             .then(response => response.json())
             .then(stocks => {
                 console.log("Fetched stock list:", stocks);
                 fno_stocks_list_global = stocks; // Store globally
-                const allOiSymbols = [...new Set([...OI_SYMBOLS, ...fno_stocks_list_global])].sort(); // Combine and sort
-                if (oiSummaryHistorySymbolSelector.length) { // Check if element exists
-                    oiSummaryHistorySymbolSelector.empty().select2({ // Clear existing options and initialize
-                        placeholder: "Select Symbol",
-                        allowClear: true,
-                        data: allOiSymbols.map(sym => ({ id: sym, text: sym }))
+                const equitySelector = $('#equity-symbol-selector');
+                if (equitySelector.length && equitySelector.find('option').length <= 1) { // Check if already populated
+                    fno_stocks_list_global.forEach(stock => {
+                        const option = new Option(stock, stock, false, false);
+                        equitySelector.append(option);
                     });
-                    // Set default selected symbol if any
-                    if (allOiSymbols.length > 0) {
-                        oiSummaryHistorySymbolSelector.val("NIFTY").trigger('change'); // Default to NIFTY
-                    }
+                    equitySelector.trigger('change');
                 }
             })
             .catch(error => {
-                console.error("Error fetching stock list for OI summary selector:", error);
-                // Fallback if API fails (populate with just OI_SYMBOLS)
-                const allOiSymbols = [...new Set([...OI_SYMBOLS])].sort();
-                if (oiSummaryHistorySymbolSelector.length) { // Check if element exists
-                    oiSummaryHistorySymbolSelector.empty().select2({
-                        placeholder: "Select Symbol",
-                        allowClear: true,
-                        data: allOiSymbols.map(sym => ({ id: sym, text: sym }))
-                    });
-                    if (allOiSymbols.length > 0) {
-                        oiSummaryHistorySymbolSelector.val("NIFTY").trigger('change'); // Default to NIFTY
-                    }
-                }
+                console.error("Error fetching stock list for equity selector:", error);
+                // Fallback if API fails, equity selector might remain empty or with old data.
             });
-
-        // Add event listener for when the symbol changes
-        if (oiSummaryHistorySymbolSelector.length) {
-             oiSummaryHistorySymbolSelector.on('change', function() {
-                loadOiSummaryHistory(); // Reload history for the new symbol
-            });
-        }
-
 
         // Ensure NIFTY tab is opened first
         const niftyOpenButton = document.getElementById("NIFTYOpen");
@@ -2514,17 +2374,6 @@
                 allowClear: true
             });
         }
-
-        // This block ensures equity selector is populated if fno_stocks_list_global is already available
-        // It's a fallback/initial population if the fetch above is not the first thing to run.
-        if (fno_stocks_list_global.length > 0 && equitySelector.find('option').length <= 1) { // Check if already populated
-            fno_stocks_list_global.forEach(stock => {
-                const option = new Option(stock, stock, false, false);
-                equitySelector.append(option);
-            });
-            equitySelector.trigger('change');
-        }
-
 
         loadInitialBhavcopyData();
         console.log("loadInitialBhavcopyData called from DOMContentLoaded.");

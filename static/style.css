@@ -237,9 +237,13 @@ th {
     background: #1e1e1e;
     padding: 10px;
     border-radius: 8px;
+    /* Added for vertical alignment and wrapping on smaller screens */
+    flex-wrap: wrap;
+    justify-content: center;
 }
 .history-controls label {
     font-weight: bold;
+    white-space: nowrap; /* Prevent label from breaking */
 }
 .history-controls input[type="date"] {
     padding: 8px;
@@ -249,6 +253,8 @@ th {
     color: #fff;
     font-family: inherit;
     outline: none;
+    flex-grow: 1; /* Allow date input to grow */
+    min-width: 150px; /* Ensure it's not too small */
 }
 .history-controls button {
     padding: 8px 15px;
@@ -259,6 +265,7 @@ th {
     cursor: pointer;
     font-size: 14px;
     transition: background-color 0.2s;
+    white-space: nowrap; /* Prevent button text from breaking */
 }
 .history-controls button:hover {
     background-color: #0056b3;
@@ -706,9 +713,6 @@ footer {
     font-size: 1.1em;
 }
 
-/* Removed oi-summary-symbol-card-live as it's not being used in the JS.
-   The .oi-summary-symbol-card class is being re-used and styled below. */
-
 .oi-interval-section {
     margin-bottom: 15px;
     border: 1px solid #444;
@@ -895,6 +899,52 @@ footer {
     border-bottom: 2px solid #555;
 }
 
+/* NEW: Styling for the combined historical OI summary table */
+.oi-summary-historical-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8em; /* Slightly smaller font for more data in view */
+    color: #ccc;
+    margin-top: 20px;
+    border: 1px solid #333;
+    border-radius: 8px;
+    overflow: hidden; /* Ensures rounded corners apply to content */
+}
+
+.oi-summary-historical-table thead {
+    background-color: #333;
+    color: #fff;
+}
+
+.oi-summary-historical-table th,
+.oi-summary-historical-table td {
+    border: 1px solid #444;
+    padding: 8px 4px; /* Reduced padding */
+    text-align: center;
+    vertical-align: middle;
+}
+
+.oi-summary-historical-table th {
+    font-weight: bold;
+    background-color: #3a3a3a; /* Slightly lighter header background */
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.oi-summary-historical-table tbody tr:nth-child(even) {
+    background-color: #2f2f2f;
+}
+
+.oi-summary-historical-table tbody tr:hover {
+    background-color: #3a3a3a;
+}
+
+/* Ensure color classes apply */
+.oi-summary-historical-table td.positive { color: #4CAF50; }
+.oi-summary-historical-table td.negative { color: #F44336; }
+.oi-summary-historical-table td.neutral { color: #fff; }
+
 
 /* Responsive adjustments for smaller screens */
 @media (max-width: 900px) { /* Adjusted breakpoint for 2-column to 1-column transition */
@@ -974,5 +1024,41 @@ footer {
     }
     .oi-toggle-details {
         margin-left: 0;
+    }
+
+    /* Historical OI Summary table adjustments for small screens */
+    .oi-summary-historical-table {
+        font-size: 0.7em; /* Even smaller font */
+        display: block; /* Allows horizontal scrolling */
+        overflow-x: auto; /* Enable horizontal scrolling */
+        white-space: nowrap; /* Prevent wrapping of cells */
+    }
+
+    .oi-summary-historical-table thead tr:nth-child(1) th {
+        padding: 5px 2px; /* Adjust padding for top header row */
+    }
+
+    .oi-summary-historical-table th,
+    .oi-summary-historical-table td {
+        padding: 5px 2px; /* Reduced padding */
+        min-width: 60px; /* Minimum width for columns */
+        box-sizing: border-box; /* Include padding/border in width */
+    }
+
+    .oi-summary-historical-table th:nth-child(1),
+    .oi-summary-historical-table td:nth-child(1) {
+        min-width: 80px; /* Wider for symbol */
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        background-color: #3a3a3a; /* Match header/body background */
+        border-right: 1px solid #444;
+    }
+
+    .oi-summary-historical-table tbody tr:nth-child(even) td:nth-child(1) {
+        background-color: #2f2f2f; /* Match even row background */
+    }
+    .oi-summary-historical-table tbody tr:hover td:nth-child(1) {
+        background-color: #3a3a3a; /* Match hover background */
     }
 }
